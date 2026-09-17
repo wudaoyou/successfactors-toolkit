@@ -1,9 +1,9 @@
 """Validate bootstrap hygiene and version syntax; no dependencies or live access."""
 
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(
@@ -13,8 +13,16 @@ SEMVER = re.compile(
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
 )
 PRIVATE_DIRS = {
-    "secrets", "certs", "tenants", "results", "logs",
-    ".codex", ".agents", ".claude", ".superpowers", ".cursor",
+    "secrets",
+    "certs",
+    "tenants",
+    "results",
+    "logs",
+    ".codex",
+    ".agents",
+    ".claude",
+    ".superpowers",
+    ".cursor",
 }
 PRIVATE_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules"}
 PRIVATE_SUFFIXES = {".pem", ".key", ".crt", ".p12", ".pfx", ".zip", ".log"}
@@ -24,9 +32,7 @@ def main():
     errors = []
     if not SEMVER.fullmatch((ROOT / "VERSION").read_text().strip()):
         errors.append("VERSION must contain a valid SemVer identifier.")
-    names = subprocess.check_output(
-        ["git", "ls-files", "-z"], cwd=ROOT
-    ).decode().split("\0")
+    names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
     for name in filter(None, names):
         path = Path(name)
         if (

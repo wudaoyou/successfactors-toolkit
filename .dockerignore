@@ -1,0 +1,12 @@
+# Only explicitly needed runtime files enter the build context.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!VERSION
+!LICENSE
+!NOTICE
+!licenses/
+!licenses/**
+!successfactors_toolkit/
+!successfactors_toolkit/**/*.py

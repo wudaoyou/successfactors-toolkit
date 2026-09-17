@@ -1,0 +1,15 @@
+services:
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - .env
+    environment:
+      TENANT_KEYS_DIR: /data/tenants
+    volumes:
+      - tenant_keys:/data/tenants
+    restart: unless-stopped
+
+volumes:
+  tenant_keys:
