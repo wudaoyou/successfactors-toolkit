@@ -1,5 +1,5 @@
 fastapi==0.141.1
-uvicorn[standard]==0.47.0
+uvicorn[standard]==0.53.0
 httpx[http2]==0.28.1
 pydantic-settings==2.15.0
 python-dotenv==1.2.2
