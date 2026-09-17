@@ -1,0 +1,49 @@
+# Python and development outputs
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Credentials, tenant data, and generated exports
+.env
+.env.*
+!.env.example
+secrets/
+certs/
+tenants/
+results/
+logs/
+*.log
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.zip
+
+# Local coding-assistant configuration
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.codex/
+.agents/
+.claude/
+.superpowers/
+.cursor/
+.cursorrules
+.github/copilot-instructions.md
+.github/instructions/
+.github/prompts/
+
+# Editor and operating-system state
+.DS_Store
+.idea/
+.vscode/
+*.swp
