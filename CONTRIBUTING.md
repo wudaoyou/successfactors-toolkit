@@ -18,11 +18,10 @@ Use `feature/`, `fix/`, or `docs/` for branch names. Open a draft PR early for
 work in progress. Do not push normal development directly to `main` or
 `develop`.
 
-PRs must pass the required `repository-checks` status, resolve review conversations,
-and receive one independent approving review before merging. New commits dismiss
-stale approval. Repository administrators retain an explicit bootstrap or recovery
-bypass; using it is exceptional and must be explained in the PR. Authors cannot
-satisfy their own approval requirement.
+PRs must pass the required `repository-checks` status and resolve review
+conversations before merging. Contributions from outside the maintainer team are
+reviewed by a maintainer; new commits dismiss stale approval. `main` and `develop`
+cannot be pushed to directly, force-pushed, or deleted.
 
 | Source | Target | Merge method |
 | --- | --- | --- |
