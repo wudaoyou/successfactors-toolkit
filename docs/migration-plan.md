@@ -41,8 +41,8 @@ Routine steps do not require a new approval between each one. Follow the existin
 PR review requirement for merges; keep live tenant access, live mutations, and
 public publication separate from offline implementation and testing.
 
-**Current state:** step 1 is complete. Application migration has not started.
-**Next action:** step 2, migration inventory and file allowlist.
+**Current state:** steps 1 and 2 are complete. Application migration is next.
+**Next action:** step 3, runnable core application migration.
 
 ### 1. Repository foundation
 
@@ -60,11 +60,11 @@ No application code or application release is included in this milestone.
 
 ### 2. Migration inventory and file allowlist
 
-- [ ] Record the source revision and identify any intended uncommitted inputs.
-- [ ] Classify generic runtime code, tests, scripts, dependencies, and Docker files.
-- [ ] Write `docs/migration-manifest.md` with source-to-target paths and actions:
+- [x] Record the source revision and identify any intended uncommitted inputs.
+- [x] Classify generic runtime code, tests, scripts, dependencies, and Docker files.
+- [x] Write `docs/migration-manifest.md` with source-to-target paths and actions:
   retain, sanitize, or exclude. Record counts using the corrected MCP scope.
-- [ ] Inventory notices needed for existing MIT code and third-party components.
+- [x] Inventory notices needed for existing MIT code and third-party components.
 
 Acceptance: every proposed migrated file has a disposition; real payloads,
 customer integrations, local assistant configuration, and Git history are
@@ -185,3 +185,6 @@ Add a concise entry whenever a numbered step completes:
 For incomplete work, record the failed or pending check and the next concrete
 action. Never check a box merely because a file was copied, a command was planned,
 or a PR was opened.
+
+Step 2 evidence: `docs/migration-manifest.md` records the pinned source, all 30
+allowed mappings, 81 exclusions, license inventory, and unchanged source status.

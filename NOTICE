@@ -1,0 +1,8 @@
+SuccessFactors Toolkit
+Copyright 2026 Justin Gong
+
+This distribution includes generic application code, tests, and helper scripts
+adapted from the MIT-licensed source snapshot identified in
+docs/migration-manifest.md. The original copyright and permission notice is
+preserved in licenses/legacy-MIT.txt. Modifications in this distribution are
+provided under Apache-2.0. Third-party dependencies retain their own licenses.
