@@ -28,7 +28,7 @@ logs/
 *.pfx
 *.zip
 
-# Local coding-assistant configuration
+# Local assistant/editor configuration
 AGENTS.md
 CLAUDE.md
 GEMINI.md

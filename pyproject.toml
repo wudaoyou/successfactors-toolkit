@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "successfactors-toolkit"
+dynamic = ["version"]
+description = "SAP SuccessFactors OData v2 and EC Compound Employee access as a FastAPI service and an MCP server."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "licenses/*"]
+authors = [{ name = "Justin Gong" }]
+keywords = ["sap", "successfactors", "odata", "compound-employee", "fastapi", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "fastapi>=0.136.1",
+    "uvicorn[standard]>=0.47.0",
+    "httpx[http2]>=0.28.1",
+    "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.2.2",
+    "lxml>=6.1.1",
+    "signxml>=4.4.0",
+    "cryptography>=48.0.1",
+    "python-multipart>=0.0.31",
+    "mcp>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.1.1", "ruff>=0.12.12"]
+
+[project.urls]
+Homepage = "https://github.com/wudaoyou/successfactors-toolkit"
+Repository = "https://github.com/wudaoyou/successfactors-toolkit"
+Issues = "https://github.com/wudaoyou/successfactors-toolkit/issues"
+Changelog = "https://github.com/wudaoyou/successfactors-toolkit/blob/main/CHANGELOG.md"
+
+[project.scripts]
+successfactors-mcp = "successfactors_toolkit.mcp_server:main"
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+
+[tool.setuptools.packages.find]
+include = ["successfactors_toolkit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

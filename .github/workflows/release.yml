@@ -22,14 +22,21 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
       - name: Verify release candidate
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           test "$RELEASE_TAG" = "v$(cat VERSION)"
           git merge-base --is-ancestor HEAD origin/main
-          test -f app/main.py
+          test -f successfactors_toolkit/main.py
           python3 scripts/check_repository.py
+      - name: Build distribution
+        run: |
+          pip install build
+          python -m build
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -39,4 +46,4 @@ jobs:
           if [[ "$RELEASE_TAG" == *-* ]]; then
             flags+=(--prerelease)
           fi
-          gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${flags[@]}"
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${flags[@]}" dist/*
