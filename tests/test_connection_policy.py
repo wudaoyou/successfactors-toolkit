@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from successfactors_toolkit.config import Settings, get_settings
 from successfactors_toolkit.main import app
+from successfactors_toolkit.models.common import ODataConnectionConfig
 from successfactors_toolkit.services import saml_bearer
 from successfactors_toolkit.services.connection_policy import (
     ConnectionPolicyError,
@@ -25,6 +26,8 @@ def settings(tmp_path):
         _env_file=None,
         sf_host="api.example.invalid",
         sf_allowed_hosts=["partner.example.invalid"],
+        sf_company_id="demo",
+        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
         tenant_keys_dir=str(tmp_path / "tenants"),
     )
 
@@ -247,3 +250,59 @@ def test_caller_headers_cannot_retarget_or_reauthorize_the_request():
     assert "authorization" not in http.headers
     # Harmless caller headers still get through.
     assert http.headers["Accept"] == "application/json;odata=verbose"
+
+
+@pytest.mark.parametrize(
+    ("path", "version"),
+    [
+        ("../../sfapi/v1/soap", "v2"),
+        ("%2e%2e/%2e%2e/sfapi/v1/soap", "v2"),
+        ("..%2f..%2fsfapi/v1/soap", "v2"),
+        ("%252e%252e/%252e%252e/sfapi/v1/soap", "v2"),
+        ("..\\..\\sfapi\\v1\\soap", "v2"),
+        ("%2e%2e%5c%2e%2e%5csfapi", "v2"),
+        ("https://evil.invalid/", "v2"),
+        ("User", "../sfapi"),
+        ("User", "v2/../../sfapi"),
+        ("User", "%76%32"),
+    ],
+)
+def test_odata_request_cannot_escape_the_api_root(settings, path, version):
+    http = _RecordingHTTPClient()
+    client = ODataClient(settings, http)
+
+    with pytest.raises(ConnectionPolicyError):
+        asyncio.run(
+            client.request(
+                "GET",
+                path,
+                conn=ODataConnectionConfig(odata_version=version),
+            )
+        )
+
+    assert http.url == ""
+
+
+@pytest.mark.parametrize(
+    "path", ["User", "/User", "$metadata", "EmpJob/$metadata", "User?$top=10", "User('a%2Fb')"]
+)
+def test_odata_request_preserves_safe_paths(settings, path):
+    http = _RecordingHTTPClient()
+    client = ODataClient(settings, http)
+    resolved = client._resolve(None)
+    client._tokens[client._token_key(resolved)] = ("tok", float("inf"))
+
+    asyncio.run(client.request("GET", path))
+
+    assert http.url.startswith("https://api.example.invalid/odata/v2/")
+
+
+def test_odata_request_preserves_v4(settings):
+    http = _RecordingHTTPClient()
+    client = ODataClient(settings, http)
+    resolved = client._resolve(ODataConnectionConfig(odata_version="v4"))
+    client._tokens[client._token_key(resolved)] = ("tok", float("inf"))
+
+    asyncio.run(client.request("GET", "User", conn=ODataConnectionConfig(odata_version="v4")))
+
+    assert http.url == "https://api.example.invalid/odata/v4/User"

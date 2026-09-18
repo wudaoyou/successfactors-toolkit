@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from successfactors_toolkit.main import app
+from successfactors_toolkit.main import _MAX_REQUEST_BODY_BYTES, app
 
 
 def test_rest_startup_health_openapi_and_shutdown():
@@ -47,3 +47,24 @@ def test_results_dir_defaults_to_results_and_follows_the_environment(monkeypatch
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "payloads"))
     get_settings.cache_clear()
     assert get_settings().results_dir == tmp_path / "payloads"
+
+
+def test_oversized_request_is_rejected_before_authentication_and_parsing():
+    body = b"x" * (_MAX_REQUEST_BODY_BYTES + 1)
+    with TestClient(app) as client:
+        declared = client.post(
+            "/api/odata/execute",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+        streamed_request = client.build_request(
+            "POST",
+            "/api/odata/execute",
+            content=iter((body[:1], body[1:])),
+            headers={"Content-Type": "application/json"},
+        )
+        assert "content-length" not in streamed_request.headers
+        streamed = client.send(streamed_request)
+
+    assert declared.status_code == 413
+    assert streamed.status_code == 413

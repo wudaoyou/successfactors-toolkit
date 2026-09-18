@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
 from successfactors_toolkit.config import get_settings
 from successfactors_toolkit.routers import odata, sfapi, tenants
@@ -16,6 +17,7 @@ from successfactors_toolkit.services.odata_client import ODataClient
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
 
 _VERSION = (Path(__file__).parent.parent / "VERSION").read_text().strip()
+_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
 
 
 @asynccontextmanager
@@ -48,6 +50,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=_MAX_REQUEST_BODY_BYTES)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
