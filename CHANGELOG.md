@@ -4,6 +4,13 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Security
+
+- Restrict authenticated OData requests to the configured `/odata/v2` or
+  `/odata/v4` API root.
+- Reject request bodies larger than 10 MiB before FastAPI parses JSON or
+  multipart content.
+
 ## [0.1.0-rc.1] - 2026-09-17
 
 This release candidate contains the first migration of the REST API, MCP

@@ -24,14 +24,14 @@ import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 import httpx
 
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.models.common import ODataConnectionConfig
 from successfactors_toolkit.services import saml_bearer
-from successfactors_toolkit.services.connection_policy import check_host
+from successfactors_toolkit.services.connection_policy import ConnectionPolicyError, check_host
 from successfactors_toolkit.services.credentials import load_key_pem
 
 _MUTATING = {"POST", "PATCH", "PUT", "DELETE"}
@@ -43,6 +43,7 @@ _IDEMPOTENT_FOR_5XX_RETRY = {"GET", "HEAD"}
 _TOKEN_EXPIRY_SLACK_SECONDS = 60
 _MAX_RETRIES = 3
 _MAX_RETRY_AFTER_SECONDS = 60.0
+_ODATA_VERSIONS = {"v2", "v4"}
 
 
 def _eff(override: str | None, default: str) -> str:
@@ -71,6 +72,39 @@ def _extract_skiptoken(next_url: str) -> str | None:
     qs = parse_qs(urlparse(next_url).query)
     vals = qs.get("$skiptoken")
     return vals[0] if vals else None
+
+
+def _odata_url(host: str, version: str, path: str) -> str:
+    """Build an OData URL without letting caller input escape its API root."""
+    if version not in _ODATA_VERSIONS:
+        raise ConnectionPolicyError("OData version must be 'v2' or 'v4'.")
+    if "\\" in path or any(ord(char) < 32 for char in path):
+        raise ConnectionPolicyError("OData path contains invalid characters.")
+    try:
+        parts = urlsplit(path)
+    except ValueError as exc:
+        raise ConnectionPolicyError("OData path is not valid.") from exc
+    if parts.scheme or parts.netloc:
+        raise ConnectionPolicyError("OData path must be relative.")
+
+    decoded_path = parts.path
+    for _ in range(4):
+        if "\\" in decoded_path or any(ord(char) < 32 for char in decoded_path):
+            raise ConnectionPolicyError("OData path contains invalid characters.")
+        if any(segment in {".", ".."} for segment in decoded_path.split("/")):
+            raise ConnectionPolicyError("OData path must stay inside the configured API root.")
+        unquoted = unquote(decoded_path)
+        if unquoted == decoded_path:
+            break
+        decoded_path = unquoted
+    else:
+        raise ConnectionPolicyError("OData path has too many encoding layers.")
+
+    prefix = f"/odata/{version}/"
+    url = httpx.URL(f"https://{host}{prefix}{path.lstrip('/')}")
+    if not url.path.startswith(prefix):
+        raise ConnectionPolicyError("OData path must stay inside the configured API root.")
+    return str(url)
 
 
 class ODataClient:
@@ -163,7 +197,7 @@ class ODataClient:
     ) -> dict[str, Any]:
         r = self._resolve(conn)
         base_url = f"https://{r['host']}/odata/{r['version']}"
-        url = f"{base_url}/{path.lstrip('/')}"
+        url = _odata_url(r["host"], r["version"], path)
         m = method.upper()
 
         # $metadata is served as EDMX XML only (§5.5.2.2): asking for JSON gets
