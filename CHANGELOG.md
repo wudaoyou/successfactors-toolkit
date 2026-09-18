@@ -4,6 +4,24 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.1.0-rc.2] - 2026-09-17
+
+### Security
+
+- Restrict authenticated OData requests to the configured `/odata/v2` or
+  `/odata/v4` API root.
+- Reject request bodies larger than 10 MiB before FastAPI parses JSON or
+  multipart content.
+
+### Changed
+
+- Dependency updates: cryptography 50.0.1 (fixes a high-severity advisory
+  affecting 44.x–49.x), signxml 5.1.0, fastapi 0.141.1, uvicorn 0.53.0,
+  pydantic-settings 2.15.0, lxml 6.1.3, python-dotenv 1.2.3,
+  python-multipart 0.0.32, ruff 0.16.7.
+- Dependabot now groups GitHub Actions bumps and pip minor/patch bumps into
+  single weekly pull requests.
+
 ## [0.1.0-rc.1] - 2026-09-17
 
 This release candidate contains the first migration of the REST API, MCP

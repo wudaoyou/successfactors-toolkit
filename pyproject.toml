@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "fastapi>=0.136.1",
+    "starlette>=1.6.0",
     "uvicorn[standard]>=0.47.0",
     "httpx[http2]>=0.28.1",
     "pydantic-settings>=2.14.2",
