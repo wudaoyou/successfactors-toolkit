@@ -23,7 +23,7 @@ This guide is for macOS or Linux, local Docker, and an AI client that can launch
 ## 1. Download the Docker image
 
 Start Docker Desktop or your local Docker service. Open the
-[v0.1.0 release](https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0)
+[v0.1.1 release](https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1)
 and copy the exact image reference from its `image-reference.txt` asset.
 Replace the digest placeholder below with that release's SHA-256 digest.
 Install the [GitHub CLI](https://cli.github.com/) and sign in with
@@ -36,7 +36,7 @@ IMAGE='docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIG
 gh attestation verify "oci://$IMAGE" \
   --repo wudaoyou/successfactors-toolkit \
   --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.0 && docker pull "$IMAGE"
+  --source-ref refs/tags/v0.1.1 && docker pull "$IMAGE"
 ```
 
 Continue only if verification succeeds. Use the same verified digest reference

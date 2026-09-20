@@ -4,7 +4,12 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-09-20
+## [0.1.1] - 2026-09-20
+
+### Fixed
+
+- Allow extra MCP initialization time during emulated multi-platform release
+  checks while preserving the native test timeout and all assertions.
 
 ### Added
 
@@ -32,6 +37,12 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - Protect versioned Docker images against overwrite, publish their fixed
   digest and signed build provenance, and document verification before
   mounting credentials.
+
+## [0.1.0] - 2026-09-20
+
+The release tag was created, but publication stopped at the multi-platform
+MCP initialization timeout before any image was pushed or GitHub Release
+created. The tag is retained unchanged; 0.1.1 supersedes this attempt.
 
 ## [0.1.0-rc.2] - 2026-09-17
 
@@ -127,7 +138,8 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1
+[0.1.0]: https://github.com/wudaoyou/successfactors-toolkit/tree/v0.1.0
 [0.1.0-rc.2]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0-rc.1
