@@ -23,11 +23,12 @@ import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 from lxml import etree
 from mcp.server.mcpserver import MCPServer
+from pydantic import Field
 
 from successfactors_toolkit.config import get_settings
 from successfactors_toolkit.models.common import ODataConnectionConfig, SFAPIConnectionConfig
@@ -41,6 +42,7 @@ from successfactors_toolkit.services.tenant_store import TenantStore
 # Below this size a metadata summary is small enough to hand the model directly
 # instead of making it open the file — the usual case for a single entity.
 _INLINE_LIMIT = 20_000
+_PREVIEW_INLINE_LIMIT = 16 * 1024
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]")
 # Prefixes seen in the wild include SOAP-ENV, soapenv and S — the hyphen is why
@@ -311,7 +313,7 @@ async def odata_query(
     company_id: str = "",
     params: dict[str, Any] | None = None,
     max_pages: int = 10,
-    preview: int = 0,
+    preview: Annotated[int, Field(ge=0, le=20, description="Inline records; maximum 20.")] = 0,
 ) -> dict[str, Any]:
     """Run an OData v2 query, following __next until exhausted or max_pages.
 
@@ -321,12 +323,12 @@ async def odata_query(
     fromDate=1900-01-01 and toDate=9999-12-31 in params.
 
     Records are written to a JSON file; the tool returns counts, the field names
-    of the first record, and the path. preview>0 additionally returns that many
-    records inline — this may be HR data, so ask for it only when the values
-    themselves are needed.
+    of the first record, and the path. preview accepts 0-20; values above zero
+    return that many records inline only when their serialized UTF-8 size is at
+    most 16 KiB. Otherwise, inspect the saved file locally.
     """
-    if not 1 <= max_pages <= 10000 or preview < 0:
-        raise ValueError("max_pages must be 1-10000 and preview must be nonnegative.")
+    if not 1 <= max_pages <= 10000 or not 0 <= preview <= 20:
+        raise ValueError("max_pages must be 1-10000 and preview must be 0-20.")
     odata, _ = _clients()
     conn = ODataConnectionConfig(company_id=company_id or None)
     r = await odata.extract_all(path=path, conn=conn, params=params, max_pages=max_pages)
@@ -357,7 +359,16 @@ async def odata_query(
         ),
     }
     if preview > 0:
-        out["preview"] = results[:preview]
+        preview_records = results[:preview]
+        if (
+            len(json.dumps(preview_records, ensure_ascii=False, default=str).encode("utf-8"))
+            <= _PREVIEW_INLINE_LIMIT
+        ):
+            out["preview"] = preview_records
+        else:
+            out["preview_error"] = (
+                "Requested preview exceeds the 16 KiB inline limit; inspect the saved file locally."
+            )
     return out
 
 

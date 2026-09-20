@@ -14,9 +14,11 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     permissions:
       contents: write
+      attestations: write
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,7 +27,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Verify release candidate
+      - name: Verify release tag
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -37,13 +39,106 @@ jobs:
         run: |
           pip install build
           python -m build
+      - name: Check Docker Hub publication prerequisites
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test -n "$DOCKERHUB_TOKEN" || { echo "Configure the DOCKERHUB_TOKEN repository secret."; exit 1; }
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || { echo "Release tag is not a valid Docker tag."; exit 1; }
+      - name: Enable the containerd image store
+        uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5
+        with:
+          daemon-config: |
+            {"features": {"containerd-snapshotter": true}}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build and load both release platforms
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64,linux/arm64
+          tags: wudaoyou/successfactors-toolkit:${{ github.ref_name }}
+      - name: Verify MCP initialization and tools on both platforms
+        env:
+          IMAGE: wudaoyou/successfactors-toolkit:${{ github.ref_name }}
+        run: |
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm --platform "$platform" \
+              --mount "type=bind,source=$PWD/tests/test_mcp_stdio.py,target=/app/tests/test_mcp_stdio.py,readonly" \
+              "$IMAGE" python -c '
+          import runpy
+          import tempfile
+          from pathlib import Path
+          test = runpy.run_path("/app/tests/test_mcp_stdio.py")
+          with tempfile.TemporaryDirectory() as directory:
+              test["test_mcp_stdio_initialization_discovery_and_tenant_call"](Path(directory))
+          '
+          done
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          username: wudaoyou
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Refuse an already published Docker Hub tag
+        env:
+          DOCKERHUB_USERNAME: wudaoyou
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/check_docker_tag_absent.py wudaoyou/successfactors-toolkit "$RELEASE_TAG"
+      - name: Publish the tested multi-platform image
+        id: publish
+        env:
+          IMAGE: wudaoyou/successfactors-toolkit:${{ github.ref_name }}
+        run: |
+          docker push "$IMAGE"
+          docker buildx imagetools inspect "$IMAGE" --raw | jq -e '
+            [.manifests[].platform | "\(.os)/\(.architecture)"] |
+            index("linux/amd64") != null and index("linux/arm64") != null'
+          digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{.Manifest.Digest}}')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "Published image digest is invalid."; exit 1; }
+          image="docker.io/wudaoyou/successfactors-toolkit@$digest"
+          printf '%s\n' "$image" > dist/image-reference.txt
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Attest the published image
+        id: attest
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: docker.io/wudaoyou/successfactors-toolkit
+          subject-digest: ${{ steps.publish.outputs.digest }}
+      - name: Verify published image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.publish.outputs.image }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh attestation verify "oci://$IMAGE" --repo "$REPOSITORY" \
+            --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA"
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
+          IMAGE: ${{ steps.publish.outputs.image }}
         run: |
           flags=()
           if [[ "$RELEASE_TAG" == *-* ]]; then
             flags+=(--prerelease)
           fi
-          gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${flags[@]}" dist/*
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          ## Container image
+
+          $IMAGE
+
+          Verify its provenance with:
+
+          \`gh attestation verify oci://$IMAGE --repo wudaoyou/successfactors-toolkit --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml --source-ref refs/tags/$RELEASE_TAG\`
+          EOF
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes \
+            --notes-file "$RUNNER_TEMP/release-notes.md" "${flags[@]}" dist/*

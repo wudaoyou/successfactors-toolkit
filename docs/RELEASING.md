@@ -35,12 +35,79 @@
    ```
 
 5. The release workflow verifies version/tag agreement, that the tag is on
-   `main`, repository checks, and that application code exists, then creates
-   a GitHub Release. Versions with a hyphen (e.g. `-rc.1`) are marked
-   prerelease.
+   `main`, repository checks, and that application code exists. It builds Python
+   packages, tests and publishes the Docker image, signs and verifies its
+   provenance, then creates a GitHub Release only after those steps succeed.
+   Versions with a hyphen (e.g. `-rc.1`) are marked prerelease.
 6. After a release or hotfix, merge `main` back into `develop` before
    starting the next development cycle.
 
-Runtime package and container publication are deferred until their builds
-are implemented.
-</content>
+## Docker Hub publication
+
+The release job publishes
+`wudaoyou/successfactors-toolkit:<release-tag>` (including the `v` prefix)
+for `linux/amd64` and `linux/arm64`. It builds and loads both platforms once,
+then checks MCP initialization, tool discovery, and a local tenant-list call
+on each platform using the existing stdio test. The arm64 check uses QEMU.
+These smoke tests make no live SuccessFactors requests. The workflow pushes
+the same tested images without rebuilding, verifies both published platforms,
+captures the published manifest digest, and only then creates the GitHub
+Release with the Python distributions.
+
+The containerd image store enables loading both platforms, following
+[Docker's multi-platform GitHub Actions guidance](https://docs.docker.com/build/ci/github-actions/multi-platform/).
+
+Before the first image release:
+
+1. Create a **public** Docker Hub repository named
+   `wudaoyou/successfactors-toolkit` so users can pull it without signing in.
+2. Create a Docker Hub access token with the read/write access needed to push
+   that repository. In GitHub repository **Settings → Secrets and variables →
+   Actions**, save it as `DOCKERHUB_TOKEN`. Never put the token in chat or Git.
+3. In Docker Hub **Repository Settings**, select **Specific tags immutable**
+   with the expression `^v.*$`. This repository is configured that way, so all
+   release tags are immutable. Keep the setting in place before publishing.
+4. Merge the workflow through the normal development and release process,
+   then publish a new approved release tag. Do not move an existing Git tag.
+
+Only the exact release tag is published; release candidates do not become
+`latest`. Before the push, the workflow authenticates to Docker Hub and looks
+up the tag manifest. Only Docker's authenticated `MANIFEST_UNKNOWN` response
+allows the push; an existing tag, missing repository, authentication failure,
+or network/error response stops the job. This is not a tag reservation, so the
+Docker Hub immutability setting remains the final overwrite protection.
+
+After the push, the workflow records the actual multi-platform manifest digest
+as `docker.io/wudaoyou/successfactors-toolkit@sha256:...` in the
+`image-reference.txt` release asset and in the generated release notes. It then
+creates a signed GitHub SLSA provenance attestation with the official pinned
+[`actions/attest`](https://github.com/actions/attest) action and verifies it
+against this repository and `.github/workflows/release.yml` before creating the
+GitHub Release.
+
+Python packages remain attached to the GitHub Release; publication to a Python
+package registry is still deferred. Docker Hub and GitHub are not an atomic
+transaction. If the push succeeds but digest capture, signing, or signature
+verification fails, the image is a partial publication and no GitHub Release is
+created. Do not rerun or overwrite that tag: recover the missing release only
+from the approved commit and verified existing image, or prepare a new version.
+
+After a successful push, verify the published tag:
+
+```sh
+# Copy the exact digest-pinned reference from the image-reference.txt release asset.
+image="docker.io/wudaoyou/successfactors-toolkit@sha256:..."
+docker login docker.io
+gh attestation verify "oci://$image" --repo wudaoyou/successfactors-toolkit \
+  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
+  --source-ref refs/tags/vX.Y.Z
+docker buildx imagetools inspect "$image"
+docker pull "$image"
+```
+
+Confirm that both architectures are present and exercise the documented MCP
+configuration against the pulled image. Update the user guide with the
+verified tag only after this succeeds.
+Never rebuild and overwrite an already published version tag; use a new
+version for corrections. If publication fails, inspect Docker Hub before any
+recovery action to determine whether the tag was already pushed.
