@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SuccessFactors Toolkit · Docker MCP Guide</title><style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    .toc li {
+      list-style: none;
+    }
+    .toc ul {
+      padding-left: 1.3em;
+    }
+    .toc > ul {
+      padding-left: 0;
+    }
+    .toc a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+
+
+      html {
+        color: #1a1a1a;
+        background-color: #fdfdfd;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 36em;
+        padding-left: 50px;
+        padding-right: 50px;
+        padding-top: 50px;
+        padding-bottom: 50px;
+        hyphens: auto;
+        overflow-wrap: break-word;
+        text-rendering: optimizeLegibility;
+        font-kerning: normal;
+      }
+      @media (max-width: 600px) {
+        body {
+          font-size: 0.9em;
+          padding: 12px;
+        }
+        h1 {
+          font-size: 1.8em;
+        }
+      }
+      @media print {
+        html {
+          background-color: white;
+        }
+        body {
+          background-color: transparent;
+          color: black;
+          font-size: 12pt;
+        }
+        p, h2, h3 {
+          orphans: 3;
+          widows: 3;
+        }
+        h2, h3, h4 {
+          page-break-after: avoid;
+        }
+      }
+      p {
+        margin: 1em 0;
+      }
+      a {
+        color: #1a1a1a;
+      }
+      a:visited {
+        color: #1a1a1a;
+      }
+      img {
+        max-width: 100%;
+      }
+      svg {
+        height: auto;
+        max-width: 100%;
+      }
+      h1, h2, h3, h4, h5, h6 {
+        margin-top: 1.4em;
+      }
+      h5, h6 {
+        font-size: 1em;
+        font-style: italic;
+      }
+      h6 {
+        font-weight: normal;
+      }
+      ol, ul {
+        padding-left: 1.7em;
+        margin-top: 1em;
+      }
+      li > ol, li > ul {
+        margin-top: 0;
+      }
+      blockquote {
+        margin: 1em 0 1em 1.7em;
+        padding-left: 1em;
+        border-left: 2px solid #e6e6e6;
+        color: #606060;
+      }
+      code {
+        font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+        font-size: 85%;
+        margin: 0;
+        hyphens: manual;
+      }
+      pre {
+        margin: 1em 0;
+        overflow: auto;
+      }
+      pre code {
+        padding: 0;
+        overflow: visible;
+        overflow-wrap: normal;
+      }
+      .sourceCode {
+       background-color: transparent;
+       overflow: visible;
+      }
+      hr {
+        background-color: #1a1a1a;
+        border: none;
+        height: 1px;
+        margin: 1em 0;
+      }
+      table {
+        margin: 1em 0;
+        border-collapse: collapse;
+        width: 100%;
+        overflow-x: auto;
+        display: block;
+        font-variant-numeric: lining-nums tabular-nums;
+      }
+      table caption {
+        margin-bottom: 0.75em;
+      }
+      tbody {
+        margin-top: 0.5em;
+        border-top: 1px solid #1a1a1a;
+        border-bottom: 1px solid #1a1a1a;
+      }
+      th {
+        border-top: 1px solid #1a1a1a;
+        padding: 0.25em 0.5em 0.25em 0.5em;
+      }
+      td {
+        padding: 0.125em 0.5em 0.25em 0.5em;
+      }
+      header {
+        margin-bottom: 4em;
+        text-align: center;
+      }
+      .toc li {
+        list-style: none;
+      }
+      .toc ul {
+        padding-left: 1.3em;
+      }
+      .toc > ul {
+        padding-left: 0;
+      }
+      .toc a:not(:hover) {
+        text-decoration: none;
+      }
+      code{white-space: pre-wrap;}
+      span.smallcaps{font-variant: small-caps;}
+      div.columns{display: flex; gap: min(4vw, 1.5em);}
+      div.column{flex: auto; overflow-x: auto;}
+      div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+      /* The extra [class] is a hack that increases specificity enough to
+         override a similar rule in reveal.js */
+      ul.task-list[class]{list-style: none;}
+      ul.task-list li input[type="checkbox"] {
+        font-size: inherit;
+        width: 0.8em;
+        margin: 0 0.8em 0.2em -1.6em;
+        vertical-align: middle;
+      }
+      .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+
+
+    :root{color-scheme:light;--ink:#172c35;--muted:#52676f;--accent:#086858;--line:#dce5e5;--paper:#fff;--bg:#f3f6f5}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{max-width:none;padding:0;margin:0;color:var(--ink);background:var(--bg);font:16px/1.85 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;overflow-wrap:anywhere}.language-panel>header,.language-panel>section,.language-panel>p,.language-panel>div,.language-panel>ul,.language-panel>ol,.language-panel>table,.language-panel>pre,.language-panel>blockquote,.language-panel>h1,.language-panel>h2,.language-panel>h3{margin-left:340px;margin-right:auto;max-width:920px}.language-panel>header{padding-top:48px}.title-block{display:none}.language-panel>h1{font-size:34px;line-height:1.45;letter-spacing:-1px;padding-top:36px;margin-bottom:20px}h2{font-size:25px;line-height:1.5;padding-top:40px;border-top:1px solid var(--line);margin-top:48px;margin-bottom:20px}h3{font-size:20px;margin-top:32px}p{margin-top:14px;margin-bottom:18px}a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:3px solid #d09232;outline-offset:4px}strong{font-weight:650}.toc{position:fixed;top:0;left:0;bottom:0;width:292px;background:#e9f0ee;border-right:1px solid var(--line);padding:36px 24px;overflow:auto;font-size:13px;line-height:1.6}.toc:before{content:attr(data-label);display:block;color:var(--accent);font-weight:750;letter-spacing:1px;margin-bottom:28px}.toc ul{list-style:none;padding:0}.toc>ul>li{margin:16px 0}.toc ul ul{padding-left:12px;border-left:2px solid #ccdcd6;margin-top:8px}.toc ul ul li{margin:8px 0}.toc a{text-decoration:none;color:var(--ink)}.toc a:hover{color:var(--accent);text-decoration:underline}pre{background:#132e35;color:#edf6f3;padding:22px 24px;border-radius:12px;overflow:auto;font-size:13px;line-height:1.75;overflow-wrap:normal}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.89em;background:#e7eeeb;border-radius:4px;padding:2px 5px;color:#17554b}pre code{background:none;color:inherit;padding:0;font-size:inherit}blockquote{background:#e7f2ed;border-left:4px solid var(--accent);padding:12px 24px;border-radius:0 10px 10px 0}blockquote p{margin:8px 0}table{width:calc(100% - 380px);border-collapse:collapse;font-size:14px;background:var(--paper);margin-top:22px;margin-bottom:28px}th,td{padding:14px 16px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}th{background:#e1ece7;color:#184d42;font-weight:650}tr:nth-child(even) td{background:#fafcfb}.language-panel>ul,.language-panel>ol{padding-left:24px}li{margin:9px 0}.language-panel>p:last-child{font-size:13px;color:var(--muted);padding:24px 0 64px;border-top:1px solid var(--line)}.hero{background:var(--accent);color:white;padding:30px 34px!important;border-radius:0 0 18px 18px}.hero .eyebrow{font-size:12px;letter-spacing:2px;opacity:.8}.hero .headline{font-size:32px;line-height:1.4;font-weight:700;margin:12px 0}.hero .steps{font-size:15px;opacity:.9}.hero a{color:white} @media(min-width:1400px){.language-panel>header,.language-panel>section,.language-panel>p,.language-panel>div,.language-panel>ul,.language-panel>ol,.language-panel>table,.language-panel>pre,.language-panel>blockquote,.language-panel>h1,.language-panel>h2,.language-panel>h3{margin-left:calc(292px + (100vw - 292px - 920px)/2)}}@media(max-width:1050px){.toc{position:static;width:auto;border-right:0;border-bottom:1px solid var(--line);padding:22px 24px}.toc>ul{display:grid;grid-template-columns:1fr 1fr;gap:0 22px}.toc ul ul{display:none}.language-panel>header,.language-panel>section,.language-panel>p,.language-panel>div,.language-panel>ul,.language-panel>ol,.language-panel>table,.language-panel>pre,.language-panel>blockquote,.language-panel>h1,.language-panel>h2,.language-panel>h3{margin-left:24px;margin-right:24px;max-width:none}table{width:calc(100% - 48px)}.language-panel>h1{font-size:28px}.hero{border-radius:0 0 14px 14px}}@media(max-width:600px){body{font-size:15px}.toc{font-size:12px}.language-panel>header,.language-panel>section,.language-panel>p,.language-panel>div,.language-panel>ul,.language-panel>ol,.language-panel>table,.language-panel>pre,.language-panel>blockquote,.language-panel>h1,.language-panel>h2,.language-panel>h3{margin-left:16px;margin-right:16px}.language-panel>h1,.hero .headline{font-size:25px}h2{font-size:22px}pre{padding:16px;font-size:12px}table{display:block;width:calc(100% - 32px);overflow-x:auto}th,td{min-width:120px;padding:12px}td:last-child{min-width:240px}.hero{padding:24px!important}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media print{.toc,.hero{display:none}body{background:white;font-size:11pt}.language-panel>header,.language-panel>section,.language-panel>p,.language-panel>div,.language-panel>ul,.language-panel>ol,.language-panel>table,.language-panel>pre,.language-panel>blockquote,.language-panel>h1,.language-panel>h2,.language-panel>h3{margin-left:0;margin-right:0;max-width:none}table{width:100%;display:table}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f3f2;color:#172c35}h2,h3{break-after:avoid}tr,blockquote{break-inside:avoid}a{color:inherit}.language-panel>h1{padding-top:0}}
+
+    header.hero{text-align:left;margin-top:0;margin-bottom:30px}
+    .toc>ul>li>a{display:none}
+    .toc>ul>li>ul{padding-left:0;border-left:0}
+    @media(max-width:1050px){.toc>ul{display:block}.toc>ul>li>ul{display:grid;grid-template-columns:1fr 1fr;gap:4px 20px}}
+
+.language-panel[hidden]{display:none!important}
+@media(min-width:1051px){.toc{top:60px}}
+.language-picker{position:relative;z-index:2;display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:12px 24px;background:#fff;border-bottom:1px solid var(--line);font-size:14px}
+.language-picker select{font:inherit;color:var(--ink);background:#fff;border:1px solid #9aafa6;border-radius:6px;padding:7px 32px 7px 12px}
+.language-picker select:focus-visible{outline:3px solid #d09232;outline-offset:3px}
+@media print{.language-picker{display:none}}
+</style></head><body>
+<div class="language-picker"><label for="guide-language">Language / 语言</label><select id="guide-language"><option value="en" selected>English</option><option value="zh-CN">中文</option></select></div>
+<div class="language-panel" id="panel-en" lang="en"><header class="hero"><div class="eyebrow">SUCCESSFACTORS TOOLKIT · QUICK START</div><div class="headline">From connection to export in four steps.</div><div class="steps">Start Docker → Configure credentials → Ask AI → Export files</div></header>
+<header id="title-block-header" class="title-block">
+<h1 class="title">SuccessFactors Toolkit · Docker MCP Guide</h1>
+</header>
+<nav id="TOC" role="doc-toc" class="toc" data-label="SUCCESSFACTORS / USER GUIDE">
+<ul>
+<li><a href="#successfactors-toolkit-docker-mcp-guide" id="toc-successfactors-toolkit-docker-mcp-guide">SuccessFactors Toolkit:
+Docker MCP Guide</a>
+<ul>
+<li><a href="#what-the-current-version-supports" id="toc-what-the-current-version-supports">What the current version
+supports</a></li>
+<li><a href="#1-download-the-docker-image" id="toc-1-download-the-docker-image">1. Download the Docker image</a></li>
+<li><a href="#2-configure-credentials" id="toc-2-configure-credentials">2. Configure credentials</a></li>
+<li><a href="#3-connect-your-ai-client-to-docker-mcp" id="toc-3-connect-your-ai-client-to-docker-mcp">3. Connect your AI
+client to Docker MCP</a></li>
+<li><a href="#4-ask-questions" id="toc-4-ask-questions">4. Ask
+questions</a></li>
+<li><a href="#5-export-files-and-choose-a-folder" id="toc-5-export-files-and-choose-a-folder">5. Export files and choose a
+folder</a></li>
+<li><a href="#6-three-minute-recording-script" id="toc-6-three-minute-recording-script">6. Three-minute recording
+script</a></li>
+<li><a href="#7-before-recording" id="toc-7-before-recording">7. Before
+recording</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="successfactors-toolkit-docker-mcp-guide">SuccessFactors Toolkit:
+Docker MCP Guide</h1>
+<p>Run MCP with Docker, configure credentials, ask questions, and export
+results.</p>
+<p>This guide is for macOS or Linux, local Docker, and an AI client that
+can launch a stdio MCP server. All values are placeholders. Use a test
+tenant and synthetic data when recording a demonstration.</p>
+<blockquote>
+<p><strong>Data security: prefer local deployment.</strong> We recommend
+local Docker and a local AI client rather than online AI platforms or
+third-party hosted MCP services for sensitive employee data and
+credentials. Keep credentials and exports on your machine. Do not upload
+private keys or employee payloads to online platforms.</p>
+<p><strong>A local client is not necessarily a local model.</strong> If
+the client calls a cloud model, prompts, tool responses, previews, and
+file contents supplied to that model may leave your machine. If HR data
+must remain within your controlled environment, use a locally hosted
+model and local file-processing tools, and check the client's outbound
+data handling. Local Docker alone does not guarantee this. The toolkit
+still connects to your configured SuccessFactors tenant to query
+data.</p>
+</blockquote>
+<h2 id="what-the-current-version-supports">What the current version
+supports</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Action</th>
+<th>How it works</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Start MCP with Docker</td>
+<td>Run <code>python -m successfactors_toolkit.mcp_server</code> in the
+project image. The existing <code>docker compose up</code> starts the
+REST API, not MCP.</td>
+</tr>
+<tr class="even">
+<td>Configure credentials</td>
+<td>Store connection settings in an environment file and PEM keys and
+certificates in a designated folder. Make them available through
+Docker.</td>
+</tr>
+<tr class="odd">
+<td>Ask questions</td>
+<td>The AI client calls tools for tenants, metadata, OData, and Compound
+Employee.</td>
+</tr>
+<tr class="even">
+<td>Export JSON or XML</td>
+<td>OData queries write JSON; Compound Employee writes one XML file per
+page.</td>
+</tr>
+<tr class="odd">
+<td>Export CSV or other formats</td>
+<td>Requires local file access and conversion tools in the AI client.
+This MCP has no generic format-conversion tool.</td>
+</tr>
+<tr class="even">
+<td>Save under data</td>
+<td>This guide sets <code>RESULTS_DIR=/data</code>, placing raw files in
+the host's <code>data/mcp/</code> folder. The unconfigured program
+default is <code>results/mcp/</code>.</td>
+</tr>
+<tr class="odd">
+<td>Request another folder in chat</td>
+<td>The AI client saves or converts files in an authorized local folder.
+MCP query tools have no per-call destination argument.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="1-download-the-docker-image">1. Download the Docker image</h2>
+<p>Start Docker Desktop or your local Docker service. Open the <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0">v0.1.0 release</a> and copy the exact image reference from <code>image-reference.txt</code>. Replace the digest placeholder below with that release's SHA-256 digest. Install the <a href="https://cli.github.com/">GitHub CLI</a> and sign in with <code>gh auth login</code>. If registry authentication is requested, use <code>docker login</code> with your Docker Hub account. Verify signed build provenance before pulling or mounting credentials:</p>
+<pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST&#x27;
+gh attestation verify &quot;oci://$IMAGE&quot; \
+  --repo wudaoyou/successfactors-toolkit \
+  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.0 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
+<p>Continue only if verification succeeds. Use the same verified digest in the configuration below; JSON does not expand <code>$IMAGE</code>. A digest pins the exact image. A signature establishes build origin, not the absence of vulnerabilities.</p>
+<p>No source checkout, Python installation, or local image build is needed. Images are downloaded from <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> for Intel/AMD (<code>linux/amd64</code>) and Apple Silicon (<code>linux/arm64</code>).</p>
+<p>The AI agent starts the downloaded image locally. Downloading from Docker Hub does not host your MCP there or upload mounted credentials and exports. A local AI client may still use a cloud model; the data-security guidance above applies.</p>
+<p>You do not need to start the REST API or expose port 8000. Use <code>python -m</code> inside this image: the Dockerfile installs dependencies and copies source files, but does not install the project's <code>successfactors-mcp</code> console command.</p>
+<h3>Developer fallback: build locally</h3>
+<p>When developing the toolkit, run this from the repository directory:</p>
+<pre class="sh"><code>docker build -t successfactors-toolkit:local .</code></pre>
+<p>For this fallback only, replace <code>docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST</code> in the client configuration with <code>successfactors-toolkit:local</code>.</p>
+<h2 id="2-configure-credentials">2. Configure credentials</h2>
+<p>Create a working directory outside the repository:</p>
+<pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
+chmod 700 "$HOME/sf-toolkit/credentials"</code></pre>
+<p>Use this layout. Replace <code>demo</code> with your actual company
+ID consistently in folder names, filenames, and configuration.</p>
+<pre class="text"><code>~/sf-toolkit/
+├── credentials/
+│   ├── sf.env
+│   └── tenants/
+│       └── demo/
+│           ├── sf_private_key_demo.pem
+│           └── sf_saml_signing_demo.crt
+└── data/
+    └── mcp/                      # Created on the first export</code></pre>
+<p>Place your matching PEM private key and X.509 certificate in this
+folder using the names shown. Register the certificate with the
+corresponding SuccessFactors OAuth2 Client Application. The technical
+user needs access to the target APIs and data. Keep the private key on
+your machine; do not paste it into chat.</p>
+<p>If you need a key pair, see <a href="../README.md#connect-to-successfactors">Connect to
+SuccessFactors</a>. Use <code>scripts/generate-keypair.sh</code>, then
+register the certificate in SF. Placing files manually does not run the
+REST upload endpoint's key-pair and expiry validation; verify that the
+files match and the certificate is valid.</p>
+<p>Create <code>~/sf-toolkit/credentials/sf.env</code> with your
+connection settings:</p>
+<pre class="dotenv"><code>SF_HOST=your-api-host.sapsf.com
+SF_CLIENT_KEY=REPLACE_WITH_OAUTH_CLIENT_API_KEY
+SF_USER_ID=APIUSER
+SF_COMPANY_ID=demo
+SF_TOKEN_URL=https://your-api-host.sapsf.com/oauth/token
+SF_ODATA_VERSION=v2
+TENANT_KEYS_DIR=/credentials/tenants
+RESULTS_DIR=/data</code></pre>
+<p><code>SF_HOST</code> excludes <code>https://</code>;
+<code>SF_TOKEN_URL</code> includes the scheme and
+<code>/oauth/token</code>. Follow the project's convention that the
+technical user matches the certificate CN. Enter literal values in the
+environment file; do not rely on <code>$VARIABLE</code> expansion.</p>
+<p>Set file permissions:</p>
+<pre class="sh"><code>chmod 600 "$HOME/sf-toolkit/credentials/sf.env" \
+  "$HOME/sf-toolkit/credentials/tenants/demo/sf_private_key_demo.pem"</code></pre>
+<p>This workflow starts MCP directly over stdio. <code>API_KEY</code>
+and <code>ADMIN_API_KEY</code> control REST access and are not required
+here.</p>
+<h2 id="3-connect-your-ai-client-to-docker-mcp">3. Connect your AI
+client to Docker MCP</h2>
+<p>Find your local user and group IDs:</p>
+<pre class="sh"><code>id -u
+id -g</code></pre>
+<p>Add this configuration to a client that accepts
+<code>mcpServers</code> JSON. For other clients, enter the same command
+and arguments in their MCP configuration interface.</p>
+<p>Replace <code>/Users/YOUR_NAME/sf-toolkit</code> with your actual
+absolute path; on Linux it is typically
+<code>/home/YOUR_NAME/sf-toolkit</code>. Replace
+<code>YOUR_UID:YOUR_GID</code> with the two IDs above, such as
+<code>501:20</code>. JSON arguments do not execute <code>$(id -u)</code>
+or expand <code>~</code>.</p>
+<pre class="json"><code>{
+  "mcpServers": {
+    "successfactors": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--user", "YOUR_UID:YOUR_GID",
+        "--env-file", "/Users/YOUR_NAME/sf-toolkit/credentials/sf.env",
+        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/credentials/tenants,target=/credentials/tenants,readonly",
+        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/data,target=/data",
+        "docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST",
+        "python", "-m", "successfactors_toolkit.mcp_server"
+      ]
+    }
+  }
+}</code></pre>
+<p>The local UID/GID lets the container read your private key and write
+exports as the file owner without loosening private-key permissions.
+Create the directories first and allow Docker Desktop to share them.</p>
+<p>Reload your client's MCP configuration. The client launches
+<code>docker run</code> and communicates over standard input and output:
+keep <code>-i</code> and do not add <code>-t</code> or <code>-d</code>.
+If a desktop client cannot find Docker, replace <code>command</code>
+with the absolute path returned by <code>command -v docker</code>.</p>
+<p>The connected client should discover five tools:
+<code>list_tenants</code>, <code>odata_metadata</code>,
+<code>compare_metadata</code>, <code>odata_query</code>, and
+<code>ce_query</code>.</p>
+<h2 id="4-ask-questions">4. Ask questions</h2>
+<p>First, confirm the local configuration:</p>
+<blockquote>
+<p>List the tenants configured for this SuccessFactors MCP and tell me
+the default company ID. Do not display credential contents.</p>
+</blockquote>
+<p>A successful tenant listing verifies MCP and local configuration, not
+SF authentication or query permissions. Follow it with a small live
+request:</p>
+<blockquote>
+<p>Check EmpJob metadata in tenant demo. Tell me whether userId and
+jobCode exist.</p>
+</blockquote>
+<p>Then specify the tenant, object, and scope for your business
+question:</p>
+<blockquote>
+<p>Query the current EmpJob records for userId DEMO001 in tenant demo.
+Select only userId, startDate, jobCode, and company. Save the results
+and tell me the record count and file location. Do not display employee
+details in chat.</p>
+</blockquote>
+<p><code>demo</code> and <code>DEMO001</code> are placeholders. For
+historical data, specify the date range; effective-dated entities
+otherwise usually return the current time slice.</p>
+<p>Request a small preview explicitly when you need to inspect values;
+<code>preview</code> is capped at 20 records and 16 KiB serialized UTF-8.
+Record counts outside 0–20 are rejected before querying. When a valid request exceeds the byte limit, the full results stay in the saved file and the response includes <code>preview_error</code>.
+By default, MCP stores records on disk and returns counts and file paths.</p>
+<h2 id="5-export-files-and-choose-a-folder">5. Export files and choose a
+folder</h2>
+<h3 id="json-native-odata-output">JSON: native OData output</h3>
+<blockquote>
+<p>Keep the EmpJob query results as JSON. Confirm whether pagination
+finished and tell me the total record count and the file's location on
+my computer.</p>
+</blockquote>
+<p>OData queries already write JSON. A returned path such as
+<code>/data/mcp/odata_query_…json</code> maps to
+<code>~/sf-toolkit/data/mcp/odata_query_…json</code> on your computer.
+Filenames are generated automatically.</p>
+<h3 id="xml-native-compound-employee-output">XML: native Compound
+Employee output</h3>
+<blockquote>
+<p>Query Compound Employee for person_id_external DEMO001 in tenant
+demo. Preserve the original XML. Report the page count, whether the
+results were truncated, and each file's location on my computer.</p>
+</blockquote>
+<p>Each page is saved separately; the tool does not merge pages into one
+XML file. <code>person_id_external</code> and <code>userId</code> are
+different identifiers. Use the identifier appropriate to your
+request.</p>
+<h3 id="csv-conversion-by-a-file-capable-ai-client">CSV: conversion by a
+file-capable AI client</h3>
+<p>Give your AI client access to the local
+<code>~/sf-toolkit/data</code> folder and tools that can execute
+conversion code or perform equivalent file processing. Connecting this
+MCP alone does not let a chat client read or convert local files.</p>
+<p>Example request:</p>
+<blockquote>
+<p>Convert the JSON file from the previous query to CSV with columns
+userId, startDate, jobCode, and company. Use UTF-8, preserve leading
+zeros in IDs, and correctly escape commas, quotes, and newlines. Save it
+to my sf-toolkit/data/empjob.csv without overwriting an existing file.
+Report the full path, record count, and whether the source query was
+complete.</p>
+</blockquote>
+<p>Convert the actual saved file rather than reconstructing records from
+a chat summary. For nested arrays or multiple historical records, define
+what each CSV row represents. When importing CSV into Excel, treat ID
+columns as text to preserve leading zeros.</p>
+<p>Other formats depend on the client's conversion capabilities and the
+target format's requirements. MCP does not natively support arbitrary
+formats. Custom XML converted from OData JSON is not the original SAP
+Compound Employee XML.</p>
+<h3 id="choose-another-folder">Choose another folder</h3>
+<p>There are two options:</p>
+<ol type="1">
+<li><strong>Save a copy for this request:</strong> ask the AI to save
+the CSV to <code>/Users/YOUR_NAME/Reports/SF/empjob.csv</code>. The
+client writes to an authorized host folder; the raw MCP file remains
+under <code>data/mcp/</code>.</li>
+<li><strong>Change the destination for future raw exports:</strong>
+create the new host folder, change the output mount's
+<code>source=…/data</code> to its absolute path, and restart MCP. Keep
+<code>target=/data</code> and <code>RESULTS_DIR=/data</code>. Raw files
+then appear in the new folder's <code>mcp/</code> subdirectory.</li>
+</ol>
+<p>Tool responses contain container paths. Client-side file tools must
+translate them using the mount mapping; do not assume <code>/data</code>
+exists on the host.</p>
+<p>Before reporting a complete export, check OData
+<code>stopped_reason</code>: <code>exhausted</code> means pagination
+finished; <code>max_pages</code> means the query hit its page limit. For
+Compound Employee, check for errors and inspect <code>truncated</code>.
+An existing file does not prove the entire query succeeded.</p>
+<h2 id="6-three-minute-recording-script">6. Three-minute recording
+script</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Time</th>
+<th>On screen</th>
+<th>Narration</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>00:00–00:15</td>
+<td>Title, four-step workflow, and local-deployment recommendation</td>
+<td>“Employee data is sensitive. We recommend local deployment instead
+of uploading it to online AI platforms. Here is how to start Docker MCP,
+configure credentials, ask questions, and export files.”</td>
+</tr>
+<tr class="even">
+<td>00:15–00:40</td>
+<td>Docker running; pull the versioned image from Docker Hub. Edit out the download wait.</td>
+<td>“Download the Docker image. You do not need to build it yourself. Your AI agent starts the MCP service locally using this image.”</td>
+</tr>
+<tr class="odd">
+<td>00:40–01:10</td>
+<td>Example folder tree and sf.env containing placeholders only</td>
+<td>“Store connection settings under credentials and place your key and
+certificate in the tenant folder. Keep real credentials on your
+computer. The data folder holds query results.”</td>
+</tr>
+<tr class="even">
+<td>01:10–01:35</td>
+<td>MCP configuration with paths and UID/GID filled in; five tools
+visible</td>
+<td>“Add the Docker MCP configuration. Credentials are mounted
+read-only, and the data folder accepts output files. Reload the
+configuration to make the five tools available.”</td>
+</tr>
+<tr class="odd">
+<td>01:35–02:00</td>
+<td>List tenants, then query a demonstration record</td>
+<td>“Confirm the tenant and describe what you want to query, such as an
+employee's current job information. The AI calls MCP and returns the
+record count and file location.”</td>
+</tr>
+<tr class="even">
+<td>02:00–02:25</td>
+<td>Open local data/mcp and show synthetic output files</td>
+<td>“OData results are saved as JSON. Compound Employee results are
+saved as XML. This configuration places them in the mcp subfolder under
+your local data directory.”</td>
+</tr>
+<tr class="odd">
+<td>02:25–02:50</td>
+<td>Enter the CSV conversion prompt and show the actual generated
+CSV</td>
+<td>“With local file-processing tools, your AI client can convert
+results to CSV or other supported formats. You can also ask it to save a
+copy in a folder you choose.”</td>
+</tr>
+<tr class="even">
+<td>02:50–03:00</td>
+<td>Final file path, record count, and pagination status</td>
+<td>“Check the file location, record count, and pagination status. After
+this one-time setup, you can query and export using natural
+language.”</td>
+</tr>
+</tbody>
+</table>
+<p>Record the CSV segment only after client-side file processing works.
+Otherwise, show the example prompt without presenting a simulated result
+as a successful export.</p>
+<p>Opening caption: “A local client may still send content to a cloud
+model. Use a locally hosted model and local file-processing tools when
+HR data must remain within your controlled environment.”</p>
+<h2 id="7-before-recording">7. Before recording</h2>
+<ul>
+<li>Pull the published version tag successfully; confirm MCP initialization and
+discovery of all five tools in the target AI client.</li>
+<li>Confirm that <code>list_tenants</code> identifies the intended
+tenant and a small live metadata or query request succeeds.</li>
+<li>Open the generated file under local <code>data/mcp/</code> and check
+its format. Make sure pagination status matches the narration.</li>
+<li>If demonstrating CSV or a custom folder, verify the actual file
+exists and its fields and record count match the source.</li>
+<li>Show only synthetic data and placeholder settings. Do not reveal
+real private keys, client keys, or employee details.</li>
+</ul>
+<p>Implementation references: <code>Dockerfile</code>,
+<code>docker-compose.yml</code>,
+<code>successfactors_toolkit/config.py</code>,
+<code>successfactors_toolkit/mcp_server.py</code>, and the credentials
+and tenant-store services.</p>
+<p>Verify the published version tag before recording. Live SF access, client-side conversion, and the custom-folder workflow must also be checked in the target environment. Local tests do not establish that an image has been published.</p>
+</div>
+<div class="language-panel" id="panel-zh-CN" lang="zh-CN" hidden><header class="hero"><div class="eyebrow">SUCCESSFACTORS TOOLKIT · QUICK START</div><div class="headline">从连接到导出，四步开始。</div><div class="steps">Docker 启动 → 配置 Credentials → 向 AI 提问 → 导出文件</div></header>
+<header id="zh-title-block-header" class="title-block">
+<h1 class="title">SuccessFactors Toolkit · Docker MCP 使用指南</h1>
+</header>
+<nav id="zh-TOC" role="doc-toc" class="toc" data-label="SUCCESSFACTORS / 使用指南">
+<ul>
+<li><a href="#zh-successfactors-toolkitdocker-mcp-%E4%B8%8A%E6%89%8B%E6%8C%87%E5%8D%97%E4%B8%8E%E5%BD%95%E5%B1%8F%E6%96%87%E6%A1%88" id="zh-toc-successfactors-toolkitdocker-mcp-上手指南与录屏文案">SuccessFactors
+Toolkit：Docker MCP 上手指南与录屏文案</a>
+<ul>
+<li><a href="#zh-%E5%85%88%E6%98%8E%E7%A1%AE%E5%BD%93%E5%89%8D%E7%89%88%E6%9C%AC%E7%9A%84%E8%A1%8C%E4%B8%BA" id="zh-toc-先明确当前版本的行为">先明确当前版本的行为</a></li>
+<li><a href="#zh-%E4%B8%80%E5%87%86%E5%A4%87-docker-%E9%95%9C%E5%83%8F" id="zh-toc-一准备-docker-镜像">一、准备
+Docker 镜像</a></li>
+<li><a href="#zh-%E4%BA%8C%E9%85%8D%E7%BD%AE-credentials-%E5%B9%B6%E6%94%BE%E5%85%A5%E6%8C%87%E5%AE%9A%E7%9B%AE%E5%BD%95" id="zh-toc-二配置-credentials-并放入指定目录">二、配置 credentials
+并放入指定目录</a></li>
+<li><a href="#zh-%E4%B8%89%E8%AE%A9-ai-%E5%AE%A2%E6%88%B7%E7%AB%AF%E9%80%9A%E8%BF%87-docker-%E5%90%AF%E5%8A%A8-mcp" id="zh-toc-三让-ai-客户端通过-docker-启动-mcp">三、让 AI 客户端通过 Docker
+启动 MCP</a></li>
+<li><a href="#zh-%E5%9B%9B%E5%BC%80%E5%A7%8B%E6%8F%90%E9%97%AE" id="zh-toc-四开始提问">四、开始提问</a></li>
+<li><a href="#zh-%E4%BA%94%E5%AF%BC%E5%87%BA-jsonxmlcsv-%E4%B8%8E%E8%87%AA%E5%AE%9A%E4%B9%89%E7%9B%AE%E5%BD%95" id="zh-toc-五导出-jsonxmlcsv-与自定义目录">五、导出 JSON、XML、CSV
+与自定义目录</a></li>
+<li><a href="#zh-%E5%85%AD%E7%BA%A6%E4%B8%89%E5%88%86%E9%92%9F%E5%BD%95%E5%B1%8F%E8%84%9A%E6%9C%AC" id="zh-toc-六约三分钟录屏脚本">六、约三分钟录屏脚本</a></li>
+<li><a href="#zh-%E4%B8%83%E5%BD%95%E5%88%B6%E5%89%8D%E9%AA%8C%E6%94%B6" id="zh-toc-七录制前验收">七、录制前验收</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="zh-successfactors-toolkitdocker-mcp-上手指南与录屏文案">SuccessFactors
+Toolkit：Docker MCP 上手指南与录屏文案</h1>
+<p>本文演示四件事：用 Docker 运行 MCP、配置 credentials、向 AI
+提问，以及导出查询结果。</p>
+<p>适用环境：macOS / Linux、本机 Docker，以及支持启动 stdio MCP 的 AI
+客户端。示例均为占位值；录屏使用测试租户与演示数据。</p>
+<blockquote>
+<p><strong>数据安全建议：优先使用本地部署，不建议通过在线 AI
+平台或第三方托管 MCP 服务处理敏感员工数据和凭据。</strong> 建议在本机
+Docker 中运行 MCP，使用本地 AI 客户端，并将 credentials
+和导出文件保存在本机。不要向在线平台上传私钥或员工数据文件。</p>
+<p><strong>本地客户端不等于本地模型。</strong>
+如果客户端调用云端模型，发送给模型的提问、工具返回值、数据预览或读取的文件内容仍可能离开本机。如果要求
+HR
+数据不离开受控环境，应使用本地部署的模型和本地文件处理工具，并核实客户端的数据外发行为。仅将
+MCP 放进本地 Docker 不能保证数据不外发；工具查询时仍需连接你配置的
+SuccessFactors 租户。</p>
+</blockquote>
+<h2 id="zh-先明确当前版本的行为">先明确当前版本的行为</h2>
+<table>
+<thead>
+<tr class="header">
+<th>用户操作</th>
+<th>当前支持方式</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Docker 启动 MCP</td>
+<td>使用本项目镜像，显式运行
+<code>python -m successfactors_toolkit.mcp_server</code>；现有
+<code>docker compose up</code> 默认启动 REST API，不是 MCP。</td>
+</tr>
+<tr class="even">
+<td>配置 credentials</td>
+<td>环境文件保存连接参数，指定目录保存 PEM 私钥及证书，通过 Docker
+挂载读取。</td>
+</tr>
+<tr class="odd">
+<td>对话查询</td>
+<td>AI 客户端调用 MCP 的租户、元数据、OData 和 Compound Employee
+工具。</td>
+</tr>
+<tr class="even">
+<td>导出 JSON / XML</td>
+<td>OData 查询原生保存 JSON；Compound Employee 原生按页保存 XML。</td>
+</tr>
+<tr class="odd">
+<td>导出 CSV 或其他格式</td>
+<td>需要 AI 客户端具备本地文件读写和转换能力；本 MCP
+没有通用格式转换工具。</td>
+</tr>
+<tr class="even">
+<td>默认保存到 data</td>
+<td>本教程显式设置 <code>RESULTS_DIR=/data</code>；原始结果位于电脑的
+<code>data/mcp/</code>。程序未经配置的默认目录是
+<code>results/mcp/</code>。</td>
+</tr>
+<tr class="odd">
+<td>对话指定其他 folder</td>
+<td>AI 客户端在其获准访问的目录中另存或转换文件；MCP
+查询工具本身没有逐次指定输出目录的参数。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="zh-一准备-docker-镜像">一、准备 Docker 镜像</h2>
+<p>启动 Docker Desktop 或本机 Docker 服务。打开 <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0">v0.1.0 release</a>，从 <code>image-reference.txt</code> 复制完整镜像引用，把下面的 digest 占位符替换为该版本的 SHA-256。安装 <a href="https://cli.github.com/">GitHub CLI</a> 并执行 <code>gh auth login</code> 登录；若提示镜像仓库需要认证，用 <code>docker login</code> 登录 Docker Hub 账号。先验证签名构建来源，再下载镜像和挂载凭据：</p>
+<pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST&#x27;
+gh attestation verify &quot;oci://$IMAGE&quot; \
+  --repo wudaoyou/successfactors-toolkit \
+  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.0 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
+<p>仅在验证成功后继续。下面配置中也使用同一个已验证 digest；JSON 不会展开 <code>$IMAGE</code>。digest 固定具体镜像，签名用于确认构建来源，不代表软件绝无漏洞。</p>
+<p>无需下载源码、安装 Python 或自行构建镜像。从 <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> 下载的镜像支持 Intel/AMD（<code>linux/amd64</code>）和 Apple Silicon（<code>linux/arm64</code>）。</p>
+<p>AI agent 会在本机启动下载的镜像。从 Docker Hub 下载不等于在线托管 MCP，也不会把挂载的凭据和导出文件上传到 Docker Hub。本地客户端仍可能调用云端模型，请遵循前面的数据安全说明。</p>
+<p>无需先启动 REST API，也无需开放 8000 端口。这里使用 <code>python -m</code>，因为 Dockerfile 安装依赖并复制源码，没有安装项目的 <code>successfactors-mcp</code> 控制台命令。</p>
+<h3>开发者选项：本地构建</h3>
+<p>开发本工具时，可以在项目目录执行：</p>
+<pre class="sh"><code>docker build -t successfactors-toolkit:local .</code></pre>
+<p>仅在采用此方式时，把后面配置中的 <code>docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST</code> 替换成 <code>successfactors-toolkit:local</code>。</p>
+<h2 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
+并放入指定目录</h2>
+<p>在代码仓库之外准备一个工作目录：</p>
+<pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
+chmod 700 "$HOME/sf-toolkit/credentials"</code></pre>
+<p>目录结构如下。<code>demo</code> 必须替换为实际 company
+ID，目录名、文件名和配置中的 ID 要一致。</p>
+<pre class="text"><code>~/sf-toolkit/
+├── credentials/
+│   ├── sf.env
+│   └── tenants/
+│       └── demo/
+│           ├── sf_private_key_demo.pem
+│           └── sf_saml_signing_demo.crt
+└── data/
+    └── mcp/                      ← 首次导出时自动创建</code></pre>
+<p>将已有的、相互匹配的 PEM 私钥与 X.509
+证书按上述名字放好。证书应已注册到对应 SuccessFactors OAuth2 Client
+Application，技术用户应有目标 API
+和数据的访问权限；私钥留在本机，不上传到聊天窗口。</p>
+<p>若尚未准备密钥，可参考仓库 README 的 <strong>Connect to
+SuccessFactors</strong>，使用 <code>scripts/generate-keypair.sh</code>
+生成，再完成 SF 端证书注册。直接摆放文件不会执行 REST
+上传接口的配对和过期校验，需要自行确保正确。</p>
+<p>在 <code>~/sf-toolkit/credentials/sf.env</code> 中填写：</p>
+<pre class="dotenv"><code>SF_HOST=your-api-host.sapsf.com
+SF_CLIENT_KEY=REPLACE_WITH_OAUTH_CLIENT_API_KEY
+SF_USER_ID=APIUSER
+SF_COMPANY_ID=demo
+SF_TOKEN_URL=https://your-api-host.sapsf.com/oauth/token
+SF_ODATA_VERSION=v2
+TENANT_KEYS_DIR=/credentials/tenants
+RESULTS_DIR=/data</code></pre>
+<p><code>SF_HOST</code> 不带
+<code>https://</code>；<code>SF_TOKEN_URL</code> 包含协议和
+<code>/oauth/token</code>。技术用户按项目约定与证书 CN
+一致。环境文件使用实际值，不依赖 <code>$VARIABLE</code> 展开。</p>
+<p>设置文件权限：</p>
+<pre class="sh"><code>chmod 600 "$HOME/sf-toolkit/credentials/sf.env" \
+  "$HOME/sf-toolkit/credentials/tenants/demo/sf_private_key_demo.pem"</code></pre>
+<p>本指南通过 stdio 直接启动 MCP；<code>API_KEY</code> 和
+<code>ADMIN_API_KEY</code> 是 REST
+接口的访问配置，不是本流程的必填项。</p>
+<h2 id="zh-三让-ai-客户端通过-docker-启动-mcp">三、让 AI 客户端通过 Docker
+启动 MCP</h2>
+<p>先在终端查看本机用户和组编号：</p>
+<pre class="sh"><code>id -u
+id -g</code></pre>
+<p>在支持 <code>mcpServers</code> JSON
+格式的客户端中添加以下配置。其他客户端使用对应的 MCP 设置界面，填写相同
+command 和 args。</p>
+<p>将 <code>/Users/YOUR_NAME/sf-toolkit</code> 换成实际绝对路径；Linux
+通常为 <code>/home/YOUR_NAME/sf-toolkit</code>。将
+<code>YOUR_UID:YOUR_GID</code> 换成上面两条命令的输出，例如
+<code>501:20</code>。JSON 参数不会执行 <code>$(id -u)</code> 或展开
+<code>~</code>。</p>
+<pre class="json"><code>{
+  "mcpServers": {
+    "successfactors": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--user", "YOUR_UID:YOUR_GID",
+        "--env-file", "/Users/YOUR_NAME/sf-toolkit/credentials/sf.env",
+        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/credentials/tenants,target=/credentials/tenants,readonly",
+        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/data,target=/data",
+        "docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST",
+        "python", "-m", "successfactors_toolkit.mcp_server"
+      ]
+    }
+  }
+}</code></pre>
+<p>使用本机
+UID/GID，让容器以文件所属用户读取私钥并写入导出目录，避免通过放宽私钥权限解决问题。目录必须提前创建；Docker
+Desktop 必须允许共享这些目录。</p>
+<p>重新加载客户端的 MCP 配置。客户端启动
+<code>docker run</code>，通过标准输入输出与 MCP 通信，因此保留
+<code>-i</code>，不加 <code>-t</code> 或
+<code>-d</code>。若桌面客户端找不到 <code>docker</code>，用终端
+<code>command -v docker</code> 返回的绝对路径替换
+<code>command</code>。</p>
+<p>连接后应能看到五个工具：<code>list_tenants</code>、<code>odata_metadata</code>、<code>compare_metadata</code>、<code>odata_query</code>、<code>ce_query</code>。</p>
+<h2 id="zh-四开始提问">四、开始提问</h2>
+<p>第一句先确认配置：</p>
+<blockquote>
+<p>请列出这个 SuccessFactors MCP 已配置的租户，并告诉我默认 company
+ID。不要显示 credentials 内容。</p>
+</blockquote>
+<p>租户列表可用表示 MCP 和本地配置已连通，尚不代表 SF
+认证或查询权限通过。再做一次小范围查询：</p>
+<blockquote>
+<p>请检查 demo 租户的 EmpJob 元数据，告诉我 userId 和 jobCode
+字段是否存在。</p>
+</blockquote>
+<p>然后提出业务问题，明确租户、查询对象与范围：</p>
+<blockquote>
+<p>查询 demo 租户中 userId 为 DEMO001 的当前 EmpJob 记录，只取
+userId、startDate、jobCode、company。保存结果，告诉我记录数和文件位置，不要在对话里展示员工明细。</p>
+</blockquote>
+<p>这里的 <code>demo</code> 和 <code>DEMO001</code>
+都是示例值。查询历史数据时明确日期范围；否则有效日期实体通常只返回当前时间切片。</p>
+<p>需要查看字段值时，可明确要求少量预览。<code>preview</code> 只接受 0–20，超出范围会在查询前拒绝。预览还限制为 16 KiB（序列化后的 UTF-8）；合法条数的预览若超过字节上限，完整结果仍保存在文件中，响应返回 <code>preview_error</code> 提示本地查看。MCP 默认不返回明细，只返回统计和文件路径。</p>
+<h2 id="zh-五导出-jsonxmlcsv-与自定义目录">五、导出 JSON、XML、CSV
+与自定义目录</h2>
+<h3 id="zh-jsonodata-原生输出">JSON：OData 原生输出</h3>
+<blockquote>
+<p>请把刚才的 EmpJob 查询结果保留为
+JSON。确认分页是否结束，并告诉我总记录数以及电脑上的文件路径。</p>
+</blockquote>
+<p>OData 查询本身就会写出 JSON。工具返回的
+<code>/data/mcp/odata_query_…json</code>，对应电脑上的
+<code>~/sf-toolkit/data/mcp/odata_query_…json</code>。文件名由工具自动生成。</p>
+<h3 id="zh-xmlcompound-employee-原生输出">XML：Compound Employee
+原生输出</h3>
+<blockquote>
+<p>请查询 demo 租户中 person_id_external 为 DEMO001 的 Compound Employee
+数据，保留原始
+XML。告诉我页数、是否截断，以及每个文件在电脑上的位置。</p>
+</blockquote>
+<p>每一页单独保存为
+XML，不会自动合并成一个文件。<code>person_id_external</code> 与
+<code>userId</code> 是不同标识，应使用实际业务所需标识。</p>
+<h3 id="zh-csv由具备文件处理能力的-ai-客户端转换">CSV：由具备文件处理能力的
+AI 客户端转换</h3>
+<p>先允许 AI 客户端访问本机
+<code>~/sf-toolkit/data</code>，并具备执行转换代码或等效文件处理工具的能力。仅接入本
+MCP 的聊天客户端无法自动读取或转换本地文件。</p>
+<p>可以这样要求：</p>
+<blockquote>
+<p>将刚才查询生成的 JSON 转为 CSV，列为
+userId、startDate、jobCode、company。使用 UTF-8，保留 ID
+前导零，正确处理逗号、引号和换行。保存到我的
+sf-toolkit/data/empjob.csv；不要覆盖已有文件。完成后给我完整路径和记录数，并说明源查询是否完整。</p>
+</blockquote>
+<p>AI
+应从实际查询文件转换，不能从聊天摘要重建数据。遇到嵌套数组或多个历史记录，需要先明确每行代表什么；Excel
+自动打开 CSV 时也应将 ID 列按文本导入，避免前导零被自动去掉。</p>
+<p>其他格式也可提出，但能否生成取决于 AI
+客户端的转换能力和目标格式要求，不能承诺 MCP 原生支持任意格式。将 OData
+JSON 转为自定义 XML，也不等同于 SAP 原始 Compound Employee XML。</p>
+<h3 id="zh-自己指定-folder">自己指定 folder</h3>
+<p>有两种方式：</p>
+<ol type="1">
+<li><strong>本次另存</strong>：告诉 AI “将 CSV 另存到
+<code>/Users/YOUR_NAME/Reports/SF/empjob.csv</code>”。由 AI
+客户端在获准访问的本机目录中写入，原始 MCP 文件仍位于
+<code>data/mcp/</code>。</li>
+<li><strong>以后都存到新目录</strong>：提前创建目录，把 MCP
+配置中输出挂载的 <code>source=…/data</code> 改成新目录绝对路径，保留
+<code>target=/data</code> 与 <code>RESULTS_DIR=/data</code>，重启
+MCP。之后原始文件位于新目录的 <code>mcp/</code> 子目录。</li>
+</ol>
+<p>容器返回的是容器内路径。AI
+客户端在本机读取文件时，应根据挂载关系转换路径；不能假设本机也存在
+<code>/data</code>。</p>
+<p>导出完成前，OData 应检查 <code>stopped_reason</code>：只有
+<code>exhausted</code> 才表示本次查询分页结束。<code>max_pages</code>
+表示受页数限制，不能宣称全部导出。Compound Employee 应检查错误及
+<code>truncated</code>；文件已经存在不等于查询完整成功。</p>
+<h2 id="zh-六约三分钟录屏脚本">六、约三分钟录屏脚本</h2>
+<table>
+<thead>
+<tr class="header">
+<th>时间</th>
+<th>画面</th>
+<th>旁白</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>00:00–00:15</td>
+<td>标题、四步流程与“优先本地部署”提示</td>
+<td>“员工数据敏感，建议本地部署，不建议上传在线 AI 平台。下面演示 Docker
+启动、配置凭据、提问和导出。”</td>
+</tr>
+<tr class="even">
+<td>00:15–00:40</td>
+<td>Docker 已运行；从 Docker Hub 下载指定版本，下载等待可剪辑</td>
+<td>“先下载 Docker 镜像，无需自行构建。接下来由 AI agent 在本机启动镜像里的 MCP 服务。”</td>
+</tr>
+<tr class="odd">
+<td>00:40–01:10</td>
+<td>展示示例目录树和只有占位值的 sf.env</td>
+<td>“把连接参数放在 credentials
+下的环境文件，把私钥和证书放进对应租户目录。真实凭据只保存在本机。data
+用来存查询结果。”</td>
+</tr>
+<tr class="even">
+<td>01:10–01:35</td>
+<td>展示替换好路径和 UID/GID 的 MCP 配置；客户端显示五个工具</td>
+<td>“添加 Docker MCP 配置。凭据目录只读挂载，data
+目录用于写入文件。重新加载后，客户端就能使用这五个工具。”</td>
+</tr>
+<tr class="odd">
+<td>01:35–02:00</td>
+<td>提问列出租户，再查询一个演示对象</td>
+<td>“先确认租户，再告诉 AI 你想查什么，例如员工的当前岗位信息。AI 调用
+MCP 查询 SuccessFactors，返回记录数和文件位置。”</td>
+</tr>
+<tr class="even">
+<td>02:00–02:25</td>
+<td>打开本机 data/mcp，只展示演示数据文件</td>
+<td>“OData 结果原生保存为 JSON，Compound Employee 原生保存为
+XML。这套配置会把文件保存到本机 data 下的 mcp 文件夹。”</td>
+</tr>
+<tr class="odd">
+<td>02:25–02:50</td>
+<td>输入 CSV 转换提示词；展示实际生成的 CSV</td>
+<td>“如果 AI 客户端有本地文件处理能力，还可以让它转换成 CSV
+或其他支持的格式，也可以要求另存到自己指定的文件夹。”</td>
+</tr>
+<tr class="even">
+<td>02:50–03:00</td>
+<td>展示最终路径、记录数、分页结束状态</td>
+<td>“最后确认文件位置、记录数和分页状态。配置好一次，之后就可以用自然语言查询并导出。”</td>
+</tr>
+</tbody>
+</table>
+<p>CSV
+镜头只在实际接通客户端文件处理能力后录制；未接通时展示提示词示例，不展示虚构的成功结果。</p>
+<p>录屏开场同时显示字幕：“本地客户端若调用云端模型，内容仍可能外发；要求
+HR 数据留在受控环境时，请使用本地模型和本地文件处理工具。”</p>
+<h2 id="zh-七录制前验收">七、录制前验收</h2>
+<ul>
+<li>成功下载已发布的指定版本镜像，AI 客户端完成 MCP 初始化并发现五个工具。</li>
+<li><code>list_tenants</code>
+识别预期租户；一次真实的小范围元数据或查询请求成功。</li>
+<li>查询输出在本机 <code>data/mcp/</code>
+可见，能打开且格式正确；分页状态与旁白一致。</li>
+<li>如演示 CSV
+或自定义目录，确认实际文件已生成、字段和记录数与原始数据一致。</li>
+<li>录制只显示演示数据和占位配置，不显示真实私钥、客户端密钥或员工明细。</li>
+</ul>
+<p>本文核对依据：<code>Dockerfile</code>、<code>docker-compose.yml</code>、<code>successfactors_toolkit/config.py</code>、<code>successfactors_toolkit/mcp_server.py</code>、credentials
+与 tenant_store 实现。</p>
+<p>录制前需验证指定版本已发布且可以下载，并在目标环境验证真实 SF 访问、客户端格式转换和自定义目录操作。本地测试不能证明镜像已经发布。</p>
+</div><script>
+const picker = document.getElementById('guide-language');
+picker.addEventListener('change', () => {
+  const language = picker.value;
+  document.querySelectorAll('.language-panel').forEach(panel => {
+    panel.hidden = panel.lang !== language;
+  });
+  document.documentElement.lang = language;
+  document.title = language === 'en' ? 'SuccessFactors Toolkit · Docker MCP Guide' : 'SuccessFactors Toolkit · Docker MCP 使用指南';
+  history.replaceState(null, '', location.pathname + location.search);
+  window.scrollTo(0, 0);
+});
+</script></body></html>

@@ -16,12 +16,61 @@ extraction, and integration development, exposed as a REST API and as an MCP
 This is an independent project, not affiliated with or endorsed by SAP SE.
 SAP and SuccessFactors are trademarks of SAP SE.
 
-## Before you start: it's fail-closed
+## Start here: Docker MCP → credentials → ask → export
+
+> **Data security: prefer local deployment.** For sensitive SuccessFactors
+> employee data and credentials, we recommend running the MCP server in local
+> Docker and using a local AI agent, rather than an online AI platform or a
+> third-party hosted MCP service. Keep credentials and exports on your machine;
+> do not upload private keys or employee payloads to online platforms.
+>
+> **A local AI agent is not necessarily a local model.** If it calls a cloud
+> model, prompts, tool responses, previews, and file contents supplied to that
+> model may leave your machine. If HR data must stay within your controlled
+> environment, use a locally hosted model and local file-processing tools,
+> and check the agent's outbound data handling. Local Docker alone does not
+> guarantee this. The toolkit still connects to your configured SuccessFactors
+> tenant to query data.
+
+Use an AI agent that can launch a local stdio MCP server. Docker runs the
+toolkit; your client asks questions and, when it has local file-processing
+tools, converts or saves the resulting files in your chosen format or folder.
+
+1. **Verify and download the Docker image:** follow the
+   [guide](docs/DOCKER_MCP_GUIDE.md#1-download-the-docker-image) to verify the
+   release image's signed provenance and pull its fixed SHA-256 digest.
+   Use that digest in your agent configuration before mounting credentials.
+   Users do not need the source code, Python, or a local build.
+   The AI agent starts the image locally with
+   `python -m successfactors_toolkit.mcp_server`.
+2. **Configure credentials:** keep `sf.env` and tenant key/certificate files
+   under `~/sf-toolkit/credentials/`, outside the repository. Mount the tenant
+   directory read-only and pass `sf.env` using Docker's `--env-file`.
+3. **Ask questions:** list configured tenants, verify access with a small
+   metadata query, then request the records you need.
+4. **Export:** set `RESULTS_DIR=/data` and bind-mount `~/sf-toolkit/data` at
+   `/data`. Raw MCP files then appear in `~/sf-toolkit/data/mcp/`. Ask a
+   file-capable AI agent to convert them to CSV or another supported format,
+   or save a copy in another authorized local folder.
+
+Follow the [step-by-step guide and recording script](docs/DOCKER_MCP_GUIDE.md)
+for the exact directory layout, environment file, Docker MCP client configuration,
+and example prompts. An [offline HTML edition](docs/DOCKER_MCP_GUIDE.html)
+is also available with an English/Chinese language selector (English by default):
+download it and open it in a browser.
+
+The guide configures `data` as the output folder; the unconfigured program
+default remains `results/mcp/`. OData queries write JSON and Compound Employee
+queries write one XML file per page. This MCP does not itself provide arbitrary
+format conversion or a per-call output-folder argument. See
+[Export formats and folders](#export-formats-and-folders).
+
+## REST API setup: it's fail-closed
 
 The REST API refuses every `/api/*` request with `503` until you set
 `API_KEY`, and refuses every `/api/tenants/*` request with `503` until you
 also set `ADMIN_API_KEY`. There is no "works out of the box, insecure"
-mode — set both before you can call anything:
+mode — set `API_KEY` for REST calls and both keys for tenant-management calls:
 
 ```sh
 cp .env.example .env
@@ -32,13 +81,18 @@ Requests then authenticate with an `X-API-Key` header (all `/api/*` routes)
 and, for `/api/tenants/*`, an additional `X-Admin-Key` header. `CORS_ORIGINS`
 is a JSON list of allowed browser origins and defaults to `[]` (closed).
 
+These two access keys apply to REST endpoints. They are not required by the
+stdio MCP workflow above, which connects directly to SuccessFactors using
+your SF credentials.
+
 The project ships no SuccessFactors credentials. See
 [Connect to SuccessFactors](#connect-to-successfactors) below to generate
 your own key pair and register it with your tenant.
 
 ## Install
 
-Requires Python 3.12+.
+Local Python installation requires Python 3.12+. The Docker workflow above
+does not require Python on the host.
 
 ```sh
 pip install .
@@ -54,7 +108,7 @@ uvicorn successfactors_toolkit.main:app --host 127.0.0.1 --port 8000
 
 Interactive docs (Swagger UI): `http://127.0.0.1:8000/docs`.
 
-### Run with Docker
+### Run the REST API with Docker (local development)
 
 ```sh
 docker compose up --build
@@ -62,24 +116,29 @@ docker compose up --build
 
 Binds to `127.0.0.1:8000` by default (see `docker-compose.yml`). Tenant keys
 are stored in a named volume mounted at `TENANT_KEYS_DIR=/data/tenants`
-inside the container.
+inside the container. This Compose service runs the REST API, not the MCP
+server. For Docker MCP, use the client configuration in the guide above.
 
-### Run the MCP server
+### Run the MCP server with a local Python installation
 
 ```sh
 successfactors-mcp
 # or: python -m successfactors_toolkit.mcp_server
 ```
 
-Speaks MCP over stdio — see [MCP server](#mcp-server-claude-desktop-claude-code)
+Speaks MCP over stdio — see [MCP server](#mcp-server-for-ai-agents)
 below for client configuration.
 
-### Verify it's running
+### Verify the REST API is running
 
 ```sh
 curl http://127.0.0.1:8000/health
-# {"status":"ok","version":"0.1.0-rc.1"}
+# {"status":"ok","version":"0.1.0"}
 ```
+
+For MCP, verify initialization and discovery of the five tools in your AI
+client, then call `list_tenants`. A small metadata query verifies SF access;
+`list_tenants` alone only reads local configuration and keys.
 
 ## Cheat sheet
 
@@ -123,8 +182,13 @@ curl http://127.0.0.1:8000/api/tenants \
 ## Connect to SuccessFactors
 
 Authentication is OAuth2 SAML Bearer Assertion, which requires an RSA key
-pair registered as an X.509 certificate in SuccessFactors. The project never
-ships or generates credentials for you — you provide your own tenant.
+pair registered as an X.509 certificate in SuccessFactors. The project ships
+no credentials. You provide your tenant and can use the helper below to
+generate a key pair, then register the certificate in SuccessFactors.
+
+For Docker MCP, follow the guide's `credentials/sf.env` and read-only tenant
+folder setup. The `.env` and REST registration examples below are an
+alternative setup for local Python or the REST API.
 
 ### 1. Generate a key pair
 
@@ -151,9 +215,11 @@ openssl pkcs12 -in your_keypair.p12 -nocerts -nodes -out private_key.pem
 cp .env.example .env
 ```
 
-At minimum set `API_KEY`, `ADMIN_API_KEY`, `SF_HOST`, `SF_CLIENT_KEY`,
+At minimum set `SF_HOST`, `SF_CLIENT_KEY`,
 `SF_USER_ID` (must equal the certificate's CN), `SF_COMPANY_ID`, and
 `SF_TOKEN_URL` (`https://{SF_HOST}/oauth/token`).
+For REST calls also set `API_KEY`; tenant-management endpoints additionally
+require `ADMIN_API_KEY`.
 
 ### 3. Register the key with the toolkit
 
@@ -180,7 +246,7 @@ See `.env.example` for a filled-in starting point and
 | `SF_ODATA_VERSION` | OData REST version, default `v2`. |
 | `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `30`. |
 | `TENANT_KEYS_DIR` | Where per-tenant key+cert pairs are stored (see below). Default `./tenants`. |
-| `RESULTS_DIR` | Where MCP tools and `scripts/download_employee.py` write payload files. Default `./results`. |
+| `RESULTS_DIR` | Payload output root. Program default: `./results`; MCP adds `/mcp/`. The Docker MCP guide sets `/data` and mounts a host `data` folder there. |
 
 ### Private key resolution order
 
@@ -387,7 +453,7 @@ All `/api/sfapi/*` and `/api/odata/execute` calls return the same shape:
 }
 ```
 
-## MCP server (Claude Desktop, Claude Code)
+## MCP server for AI agents
 
 `successfactors-mcp` exposes five tools over stdio, reusing the same OAuth2
 SAML Bearer flow, tenant key store, and pagination logic as the REST API:
@@ -397,21 +463,48 @@ SAML Bearer flow, tenant key store, and pagination logic as the REST API:
 | `list_tenants` | — | Registered tenants (cert expiry) plus the `.env` default. |
 | `odata_metadata` | `company_id`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. |
 | `compare_metadata` | `company_a`, `company_b`, `entity` | `in_sync`, a summary, and the per-entity drift, diffed server-side. |
-| `odata_query` | `path`, `company_id`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview>0` also inlines that many records. |
+| `odata_query` | `path`, `company_id`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview` accepts 0-20 and values above zero inline only when at most 16 KiB. |
 | `ce_query` | `company_id`, `person_id_external`, `user_id`, `last_modified_on`, `include_contingent_workers`, `select_segments`, `max_rows`, `max_pages` | Counts and one XML file path per page. |
 
 ### Payloads stay on disk
 
 Records are written under `{RESULTS_DIR}/mcp/` (mode `0600`) and the tool
-returns the file path plus counts, never the records themselves. This is
-deliberate, not a limitation: a single Compound Employee payload runs about
-80 KB, it is HR data with no business being echoed into a chat transcript,
-and comparing two OData metadata documents in-context would burn tens of
-thousands of tokens doing a diff a few lines of Python does instantly.
+returns the file path plus counts by default. OData `preview > 0` explicitly
+includes up to 20 records only when their serialized UTF-8 size is at most
+16 KiB; an oversized byte payload returns `preview_error` directing you to
+inspect the saved file locally. Counts outside 0–20 are rejected before querying. Small metadata maps and comparison results can also be returned
+inline. Keep employee payloads on disk unless their values are needed in the
+conversation.
 
-### Install
+### Export formats and folders
 
-Claude Desktop (`claude_desktop_config.json`):
+- **JSON:** `odata_query` writes records to JSON; metadata tools also write JSON.
+- **XML:** `ce_query` preserves one raw XML response per page.
+- **CSV and other formats:** ask an AI agent with local file read/write and
+  conversion tools to transform the saved source file. Connecting this MCP
+  alone does not grant those capabilities. Specify columns and how nested
+  records should become rows; do not reconstruct exports from chat summaries.
+- **Default folder in the Docker guide:** `/data/mcp/` inside the container
+  maps to `~/sf-toolkit/data/mcp/` on the host. Give the host path to client-side
+  file tools; a returned container path is not automatically a host path.
+- **A folder requested in chat:** the AI agent can save a converted file or
+  copy to an authorized host folder. To change where MCP writes future raw
+  files, change the output bind mount's host source and restart MCP, or change
+  `RESULTS_DIR` to another writable, persisted container path. MCP always adds
+  the `mcp/` subdirectory and has no per-query destination argument.
+
+Before reporting a complete export, check that OData `stopped_reason` is
+`exhausted`, or that Compound Employee has no error and `truncated` is false.
+An existing file is not proof that all pages were retrieved.
+
+### Alternative: configure a locally installed MCP server
+
+The primary Docker setup is in the guide linked above. The following examples
+require `pip install .` and use host filesystem paths directly.
+
+In an AI agent that supports the `mcpServers` JSON configuration format, add
+the following server entry. Configuration filenames and locations vary by
+agent; use its MCP settings or configuration file:
 
 ```json
 {
@@ -425,26 +518,27 @@ Claude Desktop (`claude_desktop_config.json`):
         "SF_COMPANY_ID": "demo",
         "SF_TOKEN_URL": "https://example.invalid/oauth/token",
         "TENANT_KEYS_DIR": "/absolute/path/to/tenants",
-        "RESULTS_DIR": "/absolute/path/to/results"
+        "RESULTS_DIR": "/absolute/path/to/data"
       }
     }
   }
 }
 ```
 
-Claude Code:
+For agents with a different configuration format or a setup interface, use
+these equivalent settings:
 
-```sh
-claude mcp add successfactors \
-  -e SF_HOST=example.invalid \
-  -e SF_CLIENT_KEY=... \
-  -e SF_USER_ID=APIUSER \
-  -e SF_COMPANY_ID=demo \
-  -e SF_TOKEN_URL=https://example.invalid/oauth/token \
-  -e TENANT_KEYS_DIR=/absolute/path/to/tenants \
-  -e RESULTS_DIR=/absolute/path/to/results \
-  -- successfactors-mcp
-```
+| Setting | Value |
+|---|---|
+| Server name | `successfactors` |
+| Transport | `stdio` (local process) |
+| Command | `successfactors-mcp`, or its absolute path if it is not on the agent's PATH |
+| Arguments | None |
+| Environment | The variables shown in the JSON `env` block above |
+
+The agent must support launching a local stdio MCP process; an HTTP-only MCP
+connector cannot use this configuration directly. After reloading the agent's
+MCP configuration, verify discovery of the five tools and call `list_tenants`.
 
 `Settings` reads `.env` from the current working directory, which an MCP
 host does not reliably set to the repo root — pass everything needed as an

@@ -41,6 +41,9 @@ def test_mcp_stdio_initialization_discovery_and_tenant_call(tmp_path):
                     "compare_metadata",
                     "ce_query",
                 }
+                odata_query = next(tool for tool in discovered.tools if tool.name == "odata_query")
+                assert odata_query.input_schema["properties"]["preview"]["minimum"] == 0
+                assert odata_query.input_schema["properties"]["preview"]["maximum"] == 20
                 result = await session.call_tool("list_tenants", {})
                 assert not result.is_error
                 assert result.structured_content["tenants"] == []

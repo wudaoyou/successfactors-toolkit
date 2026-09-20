@@ -13,7 +13,7 @@ license-files = ["LICENSE", "NOTICE", "licenses/*"]
 authors = [{ name = "Justin Gong" }]
 keywords = ["sap", "successfactors", "odata", "compound-employee", "fastapi", "mcp"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Framework :: FastAPI",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
