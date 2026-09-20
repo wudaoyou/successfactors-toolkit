@@ -10,6 +10,8 @@ import json
 import stat
 from pathlib import Path
 
+import pytest
+
 from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import get_settings
 
@@ -179,6 +181,84 @@ class _FailingOData:
 
     async def request(self, method, path, conn=None, params=None, body=None, extra_headers=None):
         return {"status_code": 403, "headers": {}, "body": "No permission for entity EmpJob"}
+
+
+class _PreviewOData:
+    def __init__(self, results=None):
+        self.extract_calls = []
+        self.results = results if results is not None else [{"id": index} for index in range(21)]
+
+    async def extract_all(self, path, conn=None, params=None, max_pages=10):
+        self.extract_calls.append((path, conn, params, max_pages))
+        return {
+            "stopped_reason": "exhausted",
+            "total_records": len(self.results),
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": self.results,
+        }
+
+
+@pytest.mark.parametrize(("preview", "expected_count"), [(0, 0), (20, 20)])
+def test_odata_query_accepts_preview_boundaries(monkeypatch, tmp_path, preview, expected_count):
+    odata = _PreviewOData()
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", preview=preview))
+
+    assert len(odata.extract_calls) == 1
+    assert result.get("preview", []) == [{"id": index} for index in range(expected_count)]
+
+
+@pytest.mark.parametrize("preview", [-1, 21, 10**100])
+def test_odata_query_rejects_out_of_range_preview_before_creating_clients(monkeypatch, preview):
+    monkeypatch.setattr(
+        mcp_server,
+        "_clients",
+        lambda: pytest.fail("out-of-range preview must not create clients or query SuccessFactors"),
+    )
+
+    with pytest.raises(ValueError, match="preview must be 0-20"):
+        asyncio.run(mcp_server.odata_query(path="EmpJob", preview=preview))
+
+
+def test_odata_query_inlines_preview_at_the_16_kib_boundary(monkeypatch, tmp_path):
+    record = {"value": ""}
+    record["value"] = "x" * (
+        mcp_server._PREVIEW_INLINE_LIMIT
+        - len(json.dumps([record], ensure_ascii=False, default=str).encode("utf-8"))
+    )
+    odata = _PreviewOData([record])
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", preview=1))
+
+    assert result["preview"] == [record]
+    assert "preview_error" not in result
+    assert (
+        len(json.dumps(result["preview"], ensure_ascii=False, default=str).encode("utf-8"))
+        == mcp_server._PREVIEW_INLINE_LIMIT
+    )
+
+
+def test_odata_query_omits_oversized_expanded_preview_but_saves_it(monkeypatch, tmp_path):
+    record = {"id": "1", "nav": {"results": [{"value": "x" * mcp_server._PREVIEW_INLINE_LIMIT}]}}
+    odata = _PreviewOData([record])
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", preview=1))
+
+    assert "preview" not in result
+    assert result["preview_error"] == (
+        "Requested preview exceeds the 16 KiB inline limit; inspect the saved file locally."
+    )
+    assert json.loads(Path(result["file"]).read_text()) == [record]
 
 
 def test_odata_query_failure_surfaces_the_upstream_error_body(monkeypatch, tmp_path):

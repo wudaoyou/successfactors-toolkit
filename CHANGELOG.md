@@ -23,6 +23,16 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - Recommend local deployment for sensitive HR data and explain that local AI
   agents can still send content to cloud models.
 
+### Security
+
+- Limit explicitly requested inline MCP OData previews to 20 records and 16 KiB
+  serialized UTF-8; reject larger record counts before querying and return a
+  `preview_error` that directs callers to the saved file when the byte limit is
+  exceeded. The default remains zero.
+- Protect versioned Docker images against overwrite, publish their fixed
+  digest and signed build provenance, and document verification before
+  mounting credentials.
+
 ## [0.1.0-rc.2] - 2026-09-17
 
 ### Security
@@ -117,5 +127,7 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.1.0-rc.1...HEAD
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0
+[0.1.0-rc.2]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0-rc.1

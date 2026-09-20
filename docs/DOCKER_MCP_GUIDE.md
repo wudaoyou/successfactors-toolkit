@@ -22,17 +22,31 @@ This guide is for macOS or Linux, local Docker, and an AI client that can launch
 
 ## 1. Download the Docker image
 
-Start Docker Desktop or your local Docker service and download the versioned
-image from [Docker Hub](https://hub.docker.com/r/wudaoyou/successfactors-toolkit):
+Start Docker Desktop or your local Docker service. Open the
+[v0.1.0 release](https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0)
+and copy the exact image reference from its `image-reference.txt` asset.
+Replace the digest placeholder below with that release's SHA-256 digest.
+Install the [GitHub CLI](https://cli.github.com/) and sign in with
+`gh auth login`. If registry authentication is requested, use `docker login`
+with your Docker Hub account. Verify the signed build provenance before
+pulling or mounting credentials:
 
 ```sh
-docker pull wudaoyou/successfactors-toolkit:v0.1.0
+IMAGE='docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST'
+gh attestation verify "oci://$IMAGE" \
+  --repo wudaoyou/successfactors-toolkit \
+  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.0 && docker pull "$IMAGE"
 ```
 
-Use the same tag in the AI agent configuration below. No source checkout,
-Python installation, or local image build is needed. The release workflow
-targets Intel/AMD (`linux/amd64`) and Apple Silicon (`linux/arm64`). Choose a
-specific release tag rather than relying on `latest`.
+Continue only if verification succeeds. Use the same verified digest reference
+in the AI agent configuration below; JSON does not expand `$IMAGE`. The digest
+pins the exact image even if a tag changes. A signature establishes the build's
+origin; it does not guarantee that the software has no vulnerabilities.
+
+No source checkout, Python installation, or local image build is needed.
+The release targets Intel/AMD (`linux/amd64`) and Apple Silicon (`linux/arm64`).
+Images are downloaded from [Docker Hub](https://hub.docker.com/r/wudaoyou/successfactors-toolkit).
 
 Your AI agent launches the downloaded image locally. Downloading an image
 from Docker Hub does not host your MCP on Docker Hub or upload your mounted
@@ -54,7 +68,7 @@ When developing the toolkit, run this from the repository directory:
 docker build -t successfactors-toolkit:local .
 ```
 
-For this fallback only, replace `wudaoyou/successfactors-toolkit:v0.1.0` in
+For this fallback only, replace the digest reference in
 the client configuration with `successfactors-toolkit:local`.
 
 ## 2. Configure credentials
@@ -132,7 +146,7 @@ Replace `/Users/YOUR_NAME/sf-toolkit` with your actual absolute path; on Linux i
         "--env-file", "/Users/YOUR_NAME/sf-toolkit/credentials/sf.env",
         "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/credentials/tenants,target=/credentials/tenants,readonly",
         "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/data,target=/data",
-        "wudaoyou/successfactors-toolkit:v0.1.0",
+        "docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST",
         "python", "-m", "successfactors_toolkit.mcp_server"
       ]
     }
@@ -162,7 +176,7 @@ Then specify the tenant, object, and scope for your business question:
 
 `demo` and `DEMO001` are placeholders. For historical data, specify the date range; effective-dated entities otherwise usually return the current time slice.
 
-Request a small preview explicitly when you need to inspect values. By default, MCP stores records on disk and returns counts and file paths.
+Request a small preview explicitly when you need to inspect values; `preview` is capped at 20 records and 16 KiB serialized UTF-8. Record counts outside 0–20 are rejected before querying. When a valid request exceeds the byte limit, the full results stay in the saved file and the response includes `preview_error`. By default, MCP stores records on disk and returns counts and file paths.
 
 ## 5. Export files and choose a folder
 

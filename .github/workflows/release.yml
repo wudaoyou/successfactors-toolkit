@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+      attestations: write
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,7 +85,14 @@ jobs:
         with:
           username: wudaoyou
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Refuse an already published Docker Hub tag
+        env:
+          DOCKERHUB_USERNAME: wudaoyou
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/check_docker_tag_absent.py wudaoyou/successfactors-toolkit "$RELEASE_TAG"
       - name: Publish the tested multi-platform image
+        id: publish
         env:
           IMAGE: wudaoyou/successfactors-toolkit:${{ github.ref_name }}
         run: |
@@ -91,13 +100,45 @@ jobs:
           docker buildx imagetools inspect "$IMAGE" --raw | jq -e '
             [.manifests[].platform | "\(.os)/\(.architecture)"] |
             index("linux/amd64") != null and index("linux/arm64") != null'
+          digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{.Manifest.Digest}}')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "Published image digest is invalid."; exit 1; }
+          image="docker.io/wudaoyou/successfactors-toolkit@$digest"
+          printf '%s\n' "$image" > dist/image-reference.txt
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Attest the published image
+        id: attest
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: docker.io/wudaoyou/successfactors-toolkit
+          subject-digest: ${{ steps.publish.outputs.digest }}
+      - name: Verify published image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.publish.outputs.image }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh attestation verify "oci://$IMAGE" --repo "$REPOSITORY" \
+            --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA"
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
+          IMAGE: ${{ steps.publish.outputs.image }}
         run: |
           flags=()
           if [[ "$RELEASE_TAG" == *-* ]]; then
             flags+=(--prerelease)
           fi
-          gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${flags[@]}" dist/*
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          ## Container image
+
+          $IMAGE
+
+          Verify its provenance with:
+
+          \`gh attestation verify oci://$IMAGE --repo wudaoyou/successfactors-toolkit --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml --source-ref refs/tags/$RELEASE_TAG\`
+          EOF
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes \
+            --notes-file "$RUNNER_TEMP/release-notes.md" "${flags[@]}" dist/*

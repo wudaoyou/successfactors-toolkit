@@ -36,8 +36,10 @@ Use an AI agent that can launch a local stdio MCP server. Docker runs the
 toolkit; your client asks questions and, when it has local file-processing
 tools, converts or saves the resulting files in your chosen format or folder.
 
-1. **Download the Docker image:** start Docker and run
-   `docker pull wudaoyou/successfactors-toolkit:v0.1.0`.
+1. **Verify and download the Docker image:** follow the
+   [guide](docs/DOCKER_MCP_GUIDE.md#1-download-the-docker-image) to verify the
+   release image's signed provenance and pull its fixed SHA-256 digest.
+   Use that digest in your agent configuration before mounting credentials.
    Users do not need the source code, Python, or a local build.
    The AI agent starts the image locally with
    `python -m successfactors_toolkit.mcp_server`.
@@ -461,16 +463,18 @@ SAML Bearer flow, tenant key store, and pagination logic as the REST API:
 | `list_tenants` | — | Registered tenants (cert expiry) plus the `.env` default. |
 | `odata_metadata` | `company_id`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. |
 | `compare_metadata` | `company_a`, `company_b`, `entity` | `in_sync`, a summary, and the per-entity drift, diffed server-side. |
-| `odata_query` | `path`, `company_id`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview>0` also inlines that many records. |
+| `odata_query` | `path`, `company_id`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview` accepts 0-20 and values above zero inline only when at most 16 KiB. |
 | `ce_query` | `company_id`, `person_id_external`, `user_id`, `last_modified_on`, `include_contingent_workers`, `select_segments`, `max_rows`, `max_pages` | Counts and one XML file path per page. |
 
 ### Payloads stay on disk
 
 Records are written under `{RESULTS_DIR}/mcp/` (mode `0600`) and the tool
 returns the file path plus counts by default. OData `preview > 0` explicitly
-includes a limited number of records in the response; small metadata maps
-and comparison results can also be returned inline. Keep employee payloads
-on disk unless their values are needed in the conversation.
+includes up to 20 records only when their serialized UTF-8 size is at most
+16 KiB; an oversized byte payload returns `preview_error` directing you to
+inspect the saved file locally. Counts outside 0–20 are rejected before querying. Small metadata maps and comparison results can also be returned
+inline. Keep employee payloads on disk unless their values are needed in the
+conversation.
 
 ### Export formats and folders
 

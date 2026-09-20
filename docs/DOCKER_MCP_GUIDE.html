@@ -438,15 +438,20 @@ MCP query tools have no per-call destination argument.</td>
 </tbody>
 </table>
 <h2 id="1-download-the-docker-image">1. Download the Docker image</h2>
-<p>Start Docker Desktop or your local Docker service and download the versioned image from <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a>:</p>
-<pre class="sh"><code>docker pull wudaoyou/successfactors-toolkit:v0.1.0</code></pre>
-<p>No source checkout, Python installation, or local image build is needed. The release workflow targets Intel/AMD (<code>linux/amd64</code>) and Apple Silicon (<code>linux/arm64</code>). Use the same version tag in the configuration below rather than relying on <code>latest</code>.</p>
+<p>Start Docker Desktop or your local Docker service. Open the <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0">v0.1.0 release</a> and copy the exact image reference from <code>image-reference.txt</code>. Replace the digest placeholder below with that release's SHA-256 digest. Install the <a href="https://cli.github.com/">GitHub CLI</a> and sign in with <code>gh auth login</code>. If registry authentication is requested, use <code>docker login</code> with your Docker Hub account. Verify signed build provenance before pulling or mounting credentials:</p>
+<pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST&#x27;
+gh attestation verify &quot;oci://$IMAGE&quot; \
+  --repo wudaoyou/successfactors-toolkit \
+  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.0 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
+<p>Continue only if verification succeeds. Use the same verified digest in the configuration below; JSON does not expand <code>$IMAGE</code>. A digest pins the exact image. A signature establishes build origin, not the absence of vulnerabilities.</p>
+<p>No source checkout, Python installation, or local image build is needed. Images are downloaded from <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> for Intel/AMD (<code>linux/amd64</code>) and Apple Silicon (<code>linux/arm64</code>).</p>
 <p>The AI agent starts the downloaded image locally. Downloading from Docker Hub does not host your MCP there or upload mounted credentials and exports. A local AI client may still use a cloud model; the data-security guidance above applies.</p>
 <p>You do not need to start the REST API or expose port 8000. Use <code>python -m</code> inside this image: the Dockerfile installs dependencies and copies source files, but does not install the project's <code>successfactors-mcp</code> console command.</p>
 <h3>Developer fallback: build locally</h3>
 <p>When developing the toolkit, run this from the repository directory:</p>
 <pre class="sh"><code>docker build -t successfactors-toolkit:local .</code></pre>
-<p>For this fallback only, replace <code>wudaoyou/successfactors-toolkit:v0.1.0</code> in the client configuration with <code>successfactors-toolkit:local</code>.</p>
+<p>For this fallback only, replace <code>docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST</code> in the client configuration with <code>successfactors-toolkit:local</code>.</p>
 <h2 id="2-configure-credentials">2. Configure credentials</h2>
 <p>Create a working directory outside the repository:</p>
 <pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
@@ -517,7 +522,7 @@ or expand <code>~</code>.</p>
         "--env-file", "/Users/YOUR_NAME/sf-toolkit/credentials/sf.env",
         "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/credentials/tenants,target=/credentials/tenants,readonly",
         "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/data,target=/data",
-        "wudaoyou/successfactors-toolkit:v0.1.0",
+        "docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST",
         "python", "-m", "successfactors_toolkit.mcp_server"
       ]
     }
@@ -559,9 +564,10 @@ details in chat.</p>
 <p><code>demo</code> and <code>DEMO001</code> are placeholders. For
 historical data, specify the date range; effective-dated entities
 otherwise usually return the current time slice.</p>
-<p>Request a small preview explicitly when you need to inspect values.
-By default, MCP stores records on disk and returns counts and file
-paths.</p>
+<p>Request a small preview explicitly when you need to inspect values;
+<code>preview</code> is capped at 20 records and 16 KiB serialized UTF-8.
+Record counts outside 0–20 are rejected before querying. When a valid request exceeds the byte limit, the full results stay in the saved file and the response includes <code>preview_error</code>.
+By default, MCP stores records on disk and returns counts and file paths.</p>
 <h2 id="5-export-files-and-choose-a-folder">5. Export files and choose a
 folder</h2>
 <h3 id="json-native-odata-output">JSON: native OData output</h3>
@@ -814,15 +820,20 @@ SuccessFactors 租户。</p>
 </tbody>
 </table>
 <h2 id="zh-一准备-docker-镜像">一、准备 Docker 镜像</h2>
-<p>启动 Docker Desktop 或本机 Docker 服务，从 <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> 下载指定版本：</p>
-<pre class="sh"><code>docker pull wudaoyou/successfactors-toolkit:v0.1.0</code></pre>
-<p>无需下载源码、安装 Python 或自行构建镜像。发布流程面向 Intel/AMD（<code>linux/amd64</code>）和 Apple Silicon（<code>linux/arm64</code>）。下面的客户端配置使用同一版本，不依赖 <code>latest</code>。</p>
+<p>启动 Docker Desktop 或本机 Docker 服务。打开 <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0">v0.1.0 release</a>，从 <code>image-reference.txt</code> 复制完整镜像引用，把下面的 digest 占位符替换为该版本的 SHA-256。安装 <a href="https://cli.github.com/">GitHub CLI</a> 并执行 <code>gh auth login</code> 登录；若提示镜像仓库需要认证，用 <code>docker login</code> 登录 Docker Hub 账号。先验证签名构建来源，再下载镜像和挂载凭据：</p>
+<pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST&#x27;
+gh attestation verify &quot;oci://$IMAGE&quot; \
+  --repo wudaoyou/successfactors-toolkit \
+  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.0 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
+<p>仅在验证成功后继续。下面配置中也使用同一个已验证 digest；JSON 不会展开 <code>$IMAGE</code>。digest 固定具体镜像，签名用于确认构建来源，不代表软件绝无漏洞。</p>
+<p>无需下载源码、安装 Python 或自行构建镜像。从 <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> 下载的镜像支持 Intel/AMD（<code>linux/amd64</code>）和 Apple Silicon（<code>linux/arm64</code>）。</p>
 <p>AI agent 会在本机启动下载的镜像。从 Docker Hub 下载不等于在线托管 MCP，也不会把挂载的凭据和导出文件上传到 Docker Hub。本地客户端仍可能调用云端模型，请遵循前面的数据安全说明。</p>
 <p>无需先启动 REST API，也无需开放 8000 端口。这里使用 <code>python -m</code>，因为 Dockerfile 安装依赖并复制源码，没有安装项目的 <code>successfactors-mcp</code> 控制台命令。</p>
 <h3>开发者选项：本地构建</h3>
 <p>开发本工具时，可以在项目目录执行：</p>
 <pre class="sh"><code>docker build -t successfactors-toolkit:local .</code></pre>
-<p>仅在采用此方式时，把后面配置中的 <code>wudaoyou/successfactors-toolkit:v0.1.0</code> 替换成 <code>successfactors-toolkit:local</code>。</p>
+<p>仅在采用此方式时，把后面配置中的 <code>docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST</code> 替换成 <code>successfactors-toolkit:local</code>。</p>
 <h2 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
 并放入指定目录</h2>
 <p>在代码仓库之外准备一个工作目录：</p>
@@ -889,7 +900,7 @@ command 和 args。</p>
         "--env-file", "/Users/YOUR_NAME/sf-toolkit/credentials/sf.env",
         "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/credentials/tenants,target=/credentials/tenants,readonly",
         "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/data,target=/data",
-        "wudaoyou/successfactors-toolkit:v0.1.0",
+        "docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST",
         "python", "-m", "successfactors_toolkit.mcp_server"
       ]
     }
@@ -924,8 +935,7 @@ userId、startDate、jobCode、company。保存结果，告诉我记录数和文
 </blockquote>
 <p>这里的 <code>demo</code> 和 <code>DEMO001</code>
 都是示例值。查询历史数据时明确日期范围；否则有效日期实体通常只返回当前时间切片。</p>
-<p>需要查看少量字段值时，可以明确要求少量预览。MCP
-默认将明细存盘，返回统计和文件路径。</p>
+<p>需要查看字段值时，可明确要求少量预览。<code>preview</code> 只接受 0–20，超出范围会在查询前拒绝。预览还限制为 16 KiB（序列化后的 UTF-8）；合法条数的预览若超过字节上限，完整结果仍保存在文件中，响应返回 <code>preview_error</code> 提示本地查看。MCP 默认不返回明细，只返回统计和文件路径。</p>
 <h2 id="zh-五导出-jsonxmlcsv-与自定义目录">五、导出 JSON、XML、CSV
 与自定义目录</h2>
 <h3 id="zh-jsonodata-原生输出">JSON：OData 原生输出</h3>
