@@ -703,7 +703,7 @@ model. Use a locally hosted model and local file-processing tools when
 HR data must remain within your controlled environment.”</p>
 <h2 id="7-before-recording">7. Before recording</h2>
 <ul>
-<li>Pull the published version tag successfully; confirm MCP initialization and
+<li>Start the service through Docker Compose; confirm MCP initialization and
 discovery of all five tools in the target AI client.</li>
 <li>Confirm that <code>list_tenants</code> identifies the intended
 tenant and a small live metadata or query request succeeds.</li>
@@ -719,7 +719,7 @@ real private keys, client keys, or employee details.</li>
 <code>successfactors_toolkit/config.py</code>,
 <code>successfactors_toolkit/mcp_server.py</code>, and the credentials
 and tenant-store services.</p>
-<p>Verify the published version tag before recording. Live SF access, client-side conversion, and the custom-folder workflow must also be checked in the target environment. Local tests do not establish that an image has been published.</p>
+<p>Verify that Docker Compose starts the pinned release image before recording. Live SF access, client-side conversion, and the custom-folder workflow must also be checked in the target environment. Local tests do not establish that an image has been published.</p>
 </div>
 <div class="language-panel" id="panel-zh-CN" lang="zh-CN" hidden><header class="hero"><div class="eyebrow">SUCCESSFACTORS TOOLKIT · QUICK START</div><div class="headline">从连接到导出，四步开始。</div><div class="steps">Docker 启动 → 配置 Credentials → 向 AI 提问 → 导出文件</div></header>
 <header id="zh-title-block-header" class="title-block">
