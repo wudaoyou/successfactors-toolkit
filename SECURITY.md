@@ -48,14 +48,22 @@ Out of scope:
 This service brokers OAuth2 credentials and returns HR data (employee
 records via Compound Employee and OData). Treat it accordingly:
 
+- **Prefer local deployment for sensitive HR data.** Use local Docker and a
+  local AI agent rather than online AI platforms or third-party hosted MCP
+  services. A local agent may still call a cloud model: prompts, tool responses,
+  previews, and files it supplies can leave the machine. Use a locally hosted
+  model and local file-processing tools when HR data must remain within your
+  controlled environment. The toolkit still contacts your configured SF tenant.
 - **Bind to localhost or a private network.** The default Docker Compose
   file binds `127.0.0.1:8000`; don't expose the container port more widely
   without a reverse proxy in front of it.
-- **Always set both `API_KEY` and `ADMIN_API_KEY`.** The REST API is
+- **Set REST access keys when using the REST API.** The REST API is
   fail-closed: every `/api/*` route returns `503` while `API_KEY` is unset,
-  and the tenant-management write routes (install/delete a keypair) return
+  and all tenant-management routes (including list and get) return
   `503` while `ADMIN_API_KEY` is unset. Leaving either unset is not a safe
   default to rely on in production — set strong, independent random values.
+  These access keys do not apply to local stdio MCP; it uses your SF credentials
+  directly.
 - **Run behind TLS.** `X-API-Key`, `X-Admin-Key`, and any per-request
   `connection` credentials travel in plain headers/JSON; terminate TLS in
   front of the service (reverse proxy or load balancer) rather than serving

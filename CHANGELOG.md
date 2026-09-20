@@ -4,6 +4,25 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-20
+
+### Added
+
+- Docker Hub release workflow for versioned `wudaoyou/successfactors-toolkit`
+  images on amd64 and arm64, with MCP startup checks before publication.
+- Docker MCP setup guide and offline HTML with English/Chinese language selection.
+
+### Changed
+
+- Promote the release-candidate series to the first stable release.
+- Make versioned Docker Hub downloads the user setup path; retain local image
+  builds as a developer fallback.
+- Use generic AI agent configuration in the README, clarify REST versus MCP
+  startup, and document credential folders, local data exports, format
+  conversion, and custom output folders.
+- Recommend local deployment for sensitive HR data and explain that local AI
+  agents can still send content to cloud models.
+
 ## [0.1.0-rc.2] - 2026-09-17
 
 ### Security
