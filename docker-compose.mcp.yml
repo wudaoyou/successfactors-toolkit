@@ -1,0 +1,25 @@
+services:
+  mcp:
+    image: docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a
+    command: ["python", "-m", "successfactors_toolkit.mcp_server"]
+    user: "YOUR_UID:YOUR_GID"
+    stdin_open: true
+    tty: false
+    env_file:
+      - path: ./credentials/sf.env
+        format: raw
+    environment:
+      TENANT_KEYS_DIR: /credentials/tenants
+      RESULTS_DIR: /data
+    volumes:
+      - type: bind
+        source: ./credentials/tenants
+        target: /credentials/tenants
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: false

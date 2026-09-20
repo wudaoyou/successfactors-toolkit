@@ -36,16 +36,14 @@ Use an AI agent that can launch a local stdio MCP server. Docker runs the
 toolkit; your client asks questions and, when it has local file-processing
 tools, converts or saves the resulting files in your chosen format or folder.
 
-1. **Verify and download the Docker image:** follow the
-   [guide](docs/DOCKER_MCP_GUIDE.md#1-download-the-docker-image) to verify the
-   release image's signed provenance and pull its fixed SHA-256 digest.
-   Use that digest in your agent configuration before mounting credentials.
-   Users do not need the source code, Python, or a local build.
-   The AI agent starts the image locally with
-   `python -m successfactors_toolkit.mcp_server`.
+1. **Set up Docker Compose:** follow the
+   [guide](docs/DOCKER_MCP_GUIDE.md#1-set-up-docker-compose) to save
+   `compose.yaml` and verify the pinned release image. Your AI agent starts
+   MCP with `docker compose run --rm -T mcp`; Compose obtains the image
+   automatically. No separate image download or local build is needed.
 2. **Configure credentials:** keep `sf.env` and tenant key/certificate files
    under `~/sf-toolkit/credentials/`, outside the repository. Mount the tenant
-   directory read-only and pass `sf.env` using Docker's `--env-file`.
+   directory read-only and load `sf.env` through the Compose `env_file` setting.
 3. **Ask questions:** list configured tenants, verify access with a small
    metadata query, then request the records you need.
 4. **Export:** set `RESULTS_DIR=/data` and bind-mount `~/sf-toolkit/data` at

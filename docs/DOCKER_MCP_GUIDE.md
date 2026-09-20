@@ -12,7 +12,7 @@ This guide is for macOS or Linux, local Docker, and an AI client that can launch
 
 | Action | How it works |
 | --- | --- |
-| Start MCP with Docker | Run `python -m successfactors_toolkit.mcp_server` in the project image. The existing `docker compose up` starts the REST API, not MCP. |
+| Start MCP with Docker | The AI client starts `docker compose run --rm -T mcp` using the Compose file below. |
 | Configure credentials | Store connection settings in an environment file and PEM keys and certificates in a designated folder. Make them available through Docker. |
 | Ask questions | The AI client calls tools for tenants, metadata, OData, and Compound Employee. |
 | Export JSON or XML | OData queries write JSON; Compound Employee writes one XML file per page. |
@@ -20,56 +20,51 @@ This guide is for macOS or Linux, local Docker, and an AI client that can launch
 | Save under data | This guide sets `RESULTS_DIR=/data`, placing raw files in the host's `data/mcp/` folder. The unconfigured program default is `results/mcp/`. |
 | Request another folder in chat | The AI client saves or converts files in an authorized local folder. MCP query tools have no per-call destination argument. |
 
-## 1. Download the Docker image
+## 1. Set up Docker Compose
 
-Start Docker Desktop or your local Docker service. Open the
-[v0.1.1 release](https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1)
-and copy the exact image reference from its `image-reference.txt` asset.
-Replace the digest placeholder below with that release's SHA-256 digest.
-Install the [GitHub CLI](https://cli.github.com/) and sign in with
-`gh auth login`. If registry authentication is requested, use `docker login`
-with your Docker Hub account. Verify the signed build provenance before
-pulling or mounting credentials:
+Start Docker Desktop or your local Docker service with Docker Compose 2.30.0 or newer. Save the following as `~/sf-toolkit/compose.yaml` after creating that folder. Replace `YOUR_UID:YOUR_GID` with the output of `id -u` and `id -g`, for example `501:20`.
+
+```yaml
+services:
+  mcp:
+    image: docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a
+    command: ["python", "-m", "successfactors_toolkit.mcp_server"]
+    user: "YOUR_UID:YOUR_GID"
+    stdin_open: true
+    tty: false
+    env_file:
+      - path: ./credentials/sf.env
+        format: raw
+    environment:
+      TENANT_KEYS_DIR: /credentials/tenants
+      RESULTS_DIR: /data
+    volumes:
+      - type: bind
+        source: ./credentials/tenants
+        target: /credentials/tenants
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: false
+```
+
+The AI client starts this service with Docker Compose in step 3. Compose automatically obtains the pinned release image when needed. No separate image download, source checkout, Python installation, or local build is required. No network port is exposed.
+
+Before starting with credentials, install the [GitHub CLI](https://cli.github.com/), sign in with `gh auth login`, and verify the pinned v0.1.1 image's signed provenance:
 
 ```sh
-IMAGE='docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST'
+IMAGE='docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a'
 gh attestation verify "oci://$IMAGE" \
   --repo wudaoyou/successfactors-toolkit \
   --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.1 && docker pull "$IMAGE"
+  --source-ref refs/tags/v0.1.1
 ```
 
-Continue only if verification succeeds. Use the same verified digest reference
-in the AI agent configuration below; JSON does not expand `$IMAGE`. The digest
-pins the exact image even if a tag changes. A signature establishes the build's
-origin; it does not guarantee that the software has no vulnerabilities.
-
-No source checkout, Python installation, or local image build is needed.
-The release targets Intel/AMD (`linux/amd64`) and Apple Silicon (`linux/arm64`).
-Images are downloaded from [Docker Hub](https://hub.docker.com/r/wudaoyou/successfactors-toolkit).
-
-Your AI agent launches the downloaded image locally. Downloading an image
-from Docker Hub does not host your MCP on Docker Hub or upload your mounted
-credentials and exports there. The local-versus-cloud-model guidance above
-still applies.
-
-The AI agent will start the MCP container using the configuration below.
-You do not need to start the REST API or expose port 8000.
-
-Use `python -m` inside this image: the Dockerfile installs dependencies and
-copies source files, but does not install the project's `successfactors-mcp`
-console command.
-
-### Developer fallback: build locally
-
-When developing the toolkit, run this from the repository directory:
-
-```sh
-docker build -t successfactors-toolkit:local .
-```
-
-For this fallback only, replace the digest reference in
-the client configuration with `successfactors-toolkit:local`.
+Continue only if verification succeeds. The digest pins the exact image; provenance identifies its build origin, not the absence of vulnerabilities.
 
 ## 2. Configure credentials
 
@@ -84,6 +79,7 @@ Use this layout. Replace `demo` with your actual company ID consistently in fold
 
 ```text
 ~/sf-toolkit/
+├── compose.yaml
 ├── credentials/
 │   ├── sf.env
 │   └── tenants/
@@ -124,16 +120,7 @@ This workflow starts MCP directly over stdio. `API_KEY` and `ADMIN_API_KEY` cont
 
 ## 3. Connect your AI client to Docker MCP
 
-Find your local user and group IDs:
-
-```sh
-id -u
-id -g
-```
-
-Add this configuration to a client that accepts `mcpServers` JSON. For other clients, enter the same command and arguments in their MCP configuration interface.
-
-Replace `/Users/YOUR_NAME/sf-toolkit` with your actual absolute path; on Linux it is typically `/home/YOUR_NAME/sf-toolkit`. Replace `YOUR_UID:YOUR_GID` with the two IDs above, such as `501:20`. JSON arguments do not execute `$(id -u)` or expand `~`.
+Replace `/Users/YOUR_NAME/sf-toolkit` below with your actual absolute path (usually `/home/YOUR_NAME/sf-toolkit` on Linux). JSON does not expand `~`. Add this configuration to your AI client's MCP settings:
 
 ```json
 {
@@ -141,24 +128,22 @@ Replace `/Users/YOUR_NAME/sf-toolkit` with your actual absolute path; on Linux i
     "successfactors": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
-        "--user", "YOUR_UID:YOUR_GID",
-        "--env-file", "/Users/YOUR_NAME/sf-toolkit/credentials/sf.env",
-        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/credentials/tenants,target=/credentials/tenants,readonly",
-        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/data,target=/data",
-        "docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST",
-        "python", "-m", "successfactors_toolkit.mcp_server"
+        "compose",
+        "-f",
+        "/Users/YOUR_NAME/sf-toolkit/compose.yaml",
+        "run",
+        "--rm",
+        "-T",
+        "mcp"
       ]
     }
   }
 }
 ```
 
-The local UID/GID lets the container read your private key and write exports as the file owner without loosening private-key permissions. Create the directories first and allow Docker Desktop to share them.
+Reload the client's MCP configuration. It starts `docker compose run --rm -T mcp` and communicates over stdin/stdout. Keep `-T` to disable a terminal; do not add `-d`. Do not start this stdio service with `docker compose up`. If Docker cannot be found, use the absolute executable path from `command -v docker`.
 
-Reload your client's MCP configuration. The client launches `docker run` and communicates over standard input and output: keep `-i` and do not add `-t` or `-d`. If a desktop client cannot find Docker, replace `command` with the absolute path returned by `command -v docker`.
-
-The connected client should discover five tools: `list_tenants`, `odata_metadata`, `compare_metadata`, `odata_query`, and `ce_query`.
+The UID/GID in `compose.yaml` lets the container read the key and write exports as their owner. Create the credential and data directories first and allow Docker Desktop to share them. The client should discover `list_tenants`, `odata_metadata`, `compare_metadata`, `odata_query`, and `ce_query`.
 
 ## 4. Ask questions
 
@@ -209,7 +194,7 @@ Other formats depend on the client's conversion capabilities and the target form
 There are two options:
 
 1. **Save a copy for this request:** ask the AI to save the CSV to `/Users/YOUR_NAME/Reports/SF/empjob.csv`. The client writes to an authorized host folder; the raw MCP file remains under `data/mcp/`.
-2. **Change the destination for future raw exports:** create the new host folder, change the output mount's `source=…/data` to its absolute path, and restart MCP. Keep `target=/data` and `RESULTS_DIR=/data`. Raw files then appear in the new folder's `mcp/` subdirectory.
+2. **Change the destination for future raw exports:** create the new host folder, change the output volume's `source: ./data` in `compose.yaml` to its absolute path, and restart MCP. Keep `target: /data` and `RESULTS_DIR=/data`. Raw files then appear in the new folder's `mcp/` subdirectory.
 
 Tool responses contain container paths. Client-side file tools must translate them using the mount mapping; do not assume `/data` exists on the host.
 
@@ -220,7 +205,7 @@ Before reporting a complete export, check OData `stopped_reason`: `exhausted` me
 | Time | On screen | Narration |
 | --- | --- | --- |
 | 00:00–00:15 | Title, four-step workflow, and local-deployment recommendation | “Employee data is sensitive. We recommend local deployment instead of uploading it to online AI platforms. Here is how to start Docker MCP, configure credentials, ask questions, and export files.” |
-| 00:15–00:40 | Docker running; pull a verified release tag from Docker Hub. Edit out the download wait. | “Download the published Docker image. You do not need to build it yourself. Your AI agent starts the MCP service locally using this image.” |
+| 00:15–00:40 | Show compose.yaml with the pinned release image and local folder mounts. | “Save the Compose configuration. Your AI agent uses Docker Compose to start MCP locally; Compose handles the image automatically.” |
 | 00:40–01:10 | Example folder tree and sf.env containing placeholders only | “Store connection settings under credentials and place your key and certificate in the tenant folder. Keep real credentials on your computer. The data folder holds query results.” |
 | 01:10–01:35 | MCP configuration with paths and UID/GID filled in; five tools visible | “Add the Docker MCP configuration. Credentials are mounted read-only, and the data folder accepts output files. Reload the configuration to make the five tools available.” |
 | 01:35–02:00 | List tenants, then query a demonstration record | “Confirm the tenant and describe what you want to query, such as an employee's current job information. The AI calls MCP and returns the record count and file location.” |
@@ -234,12 +219,12 @@ Opening caption: “A local client may still send content to a cloud model. Use 
 
 ## 7. Before recording
 
-- Verify the published tag is available and pull it successfully; confirm MCP initialization and discovery of all five tools in the target AI client.
+- Start the service through Docker Compose; confirm MCP initialization and discovery of all five tools in the target AI client.
 - Confirm that `list_tenants` identifies the intended tenant and a small live metadata or query request succeeds.
 - Open the generated file under local `data/mcp/` and check its format. Make sure pagination status matches the narration.
 - If demonstrating CSV or a custom folder, verify the actual file exists and its fields and record count match the source.
 - Show only synthetic data and placeholder settings. Do not reveal real private keys, client keys, or employee details.
 
-Implementation references: `Dockerfile`, `docker-compose.yml`, `successfactors_toolkit/config.py`, `successfactors_toolkit/mcp_server.py`, and the credentials and tenant-store services.
+Implementation references: `Dockerfile`, `docker-compose.mcp.yml`, `successfactors_toolkit/config.py`, `successfactors_toolkit/mcp_server.py`, and the credentials and tenant-store services.
 
-The Docker Hub download segment requires a successfully published and verified tag. Live SF access, client-side conversion, and the custom-folder workflow must also be checked in the target environment before recording. Local tests do not establish that an image has been published.
+The Compose segment requires the verified release image to be available. Live SF access, client-side conversion, and the custom-folder workflow must also be checked in the target environment before recording. Local tests do not establish that an image has been published.

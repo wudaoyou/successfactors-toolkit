@@ -4,6 +4,12 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Changed
+
+- Make Docker Compose the MCP onboarding path in the README and bilingual
+  HTML guide, with a pinned image, read-only credentials, and local exports.
+  Remove standalone image download and local-build options from the guide.
+
 ## [0.1.1] - 2026-09-20
 
 ### Fixed

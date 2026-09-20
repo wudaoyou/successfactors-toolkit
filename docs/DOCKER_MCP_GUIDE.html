@@ -350,7 +350,7 @@ Docker MCP Guide</a>
 <ul>
 <li><a href="#what-the-current-version-supports" id="toc-what-the-current-version-supports">What the current version
 supports</a></li>
-<li><a href="#1-download-the-docker-image" id="toc-1-download-the-docker-image">1. Download the Docker image</a></li>
+<li><a href="#1-set-up-docker-compose" id="toc-1-set-up-docker-compose">1. Set up Docker Compose</a></li>
 <li><a href="#2-configure-credentials" id="toc-2-configure-credentials">2. Configure credentials</a></li>
 <li><a href="#3-connect-your-ai-client-to-docker-mcp" id="toc-3-connect-your-ai-client-to-docker-mcp">3. Connect your AI
 client to Docker MCP</a></li>
@@ -399,9 +399,7 @@ supports</h2>
 <tbody>
 <tr class="odd">
 <td>Start MCP with Docker</td>
-<td>Run <code>python -m successfactors_toolkit.mcp_server</code> in the
-project image. The existing <code>docker compose up</code> starts the
-REST API, not MCP.</td>
+<td>The AI client starts <code>docker compose run --rm -T mcp</code> using the Compose file below.</td>
 </tr>
 <tr class="even">
 <td>Configure credentials</td>
@@ -437,28 +435,46 @@ MCP query tools have no per-call destination argument.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="1-download-the-docker-image">1. Download the Docker image</h2>
-<p>Start Docker Desktop or your local Docker service. Open the <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1">v0.1.1 release</a> and copy the exact image reference from <code>image-reference.txt</code>. Replace the digest placeholder below with that release's SHA-256 digest. Install the <a href="https://cli.github.com/">GitHub CLI</a> and sign in with <code>gh auth login</code>. If registry authentication is requested, use <code>docker login</code> with your Docker Hub account. Verify signed build provenance before pulling or mounting credentials:</p>
-<pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST&#x27;
+<h2 id="1-set-up-docker-compose">1. Set up Docker Compose</h2><p>Use Docker Compose 2.30.0 or newer. Create <code>~/sf-toolkit</code> and save this as <code>compose.yaml</code>. Replace <code>YOUR_UID:YOUR_GID</code> with the output of <code>id -u</code> and <code>id -g</code>, for example <code>501:20</code>.</p>
+<pre class="yaml"><code>services:
+  mcp:
+    image: docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a
+    command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
+    user: &quot;YOUR_UID:YOUR_GID&quot;
+    stdin_open: true
+    tty: false
+    env_file:
+      - path: ./credentials/sf.env
+        format: raw
+    environment:
+      TENANT_KEYS_DIR: /credentials/tenants
+      RESULTS_DIR: /data
+    volumes:
+      - type: bind
+        source: ./credentials/tenants
+        target: /credentials/tenants
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: false
+</code></pre>
+<p>Your AI client starts this service in step 3. Compose obtains the pinned image automatically. No separate image download, source checkout, Python installation, or local build is needed. No network port is exposed.</p><p>Before starting with credentials, install the <a href="https://cli.github.com/">GitHub CLI</a>, sign in with <code>gh auth login</code>, and verify signed provenance:</p><pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a&#x27;
 gh attestation verify &quot;oci://$IMAGE&quot; \
   --repo wudaoyou/successfactors-toolkit \
   --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.1 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
-<p>Continue only if verification succeeds. Use the same verified digest in the configuration below; JSON does not expand <code>$IMAGE</code>. A digest pins the exact image. A signature establishes build origin, not the absence of vulnerabilities.</p>
-<p>No source checkout, Python installation, or local image build is needed. Images are downloaded from <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> for Intel/AMD (<code>linux/amd64</code>) and Apple Silicon (<code>linux/arm64</code>).</p>
-<p>The AI agent starts the downloaded image locally. Downloading from Docker Hub does not host your MCP there or upload mounted credentials and exports. A local AI client may still use a cloud model; the data-security guidance above applies.</p>
-<p>You do not need to start the REST API or expose port 8000. Use <code>python -m</code> inside this image: the Dockerfile installs dependencies and copies source files, but does not install the project's <code>successfactors-mcp</code> console command.</p>
-<h3>Developer fallback: build locally</h3>
-<p>When developing the toolkit, run this from the repository directory:</p>
-<pre class="sh"><code>docker build -t successfactors-toolkit:local .</code></pre>
-<p>For this fallback only, replace <code>docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST</code> in the client configuration with <code>successfactors-toolkit:local</code>.</p>
-<h2 id="2-configure-credentials">2. Configure credentials</h2>
+  --source-ref refs/tags/v0.1.1</code></pre>
+<p>Continue only if verification succeeds. The digest pins the image; provenance identifies its build origin, not the absence of vulnerabilities.</p><h2 id="2-configure-credentials">2. Configure credentials</h2>
 <p>Create a working directory outside the repository:</p>
 <pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
 chmod 700 "$HOME/sf-toolkit/credentials"</code></pre>
 <p>Use this layout. Replace <code>demo</code> with your actual company
 ID consistently in folder names, filenames, and configuration.</p>
 <pre class="text"><code>~/sf-toolkit/
+├── compose.yaml
 ├── credentials/
 │   ├── sf.env
 │   └── tenants/
@@ -499,48 +515,23 @@ environment file; do not rely on <code>$VARIABLE</code> expansion.</p>
 and <code>ADMIN_API_KEY</code> control REST access and are not required
 here.</p>
 <h2 id="3-connect-your-ai-client-to-docker-mcp">3. Connect your AI
-client to Docker MCP</h2>
-<p>Find your local user and group IDs:</p>
-<pre class="sh"><code>id -u
-id -g</code></pre>
-<p>Add this configuration to a client that accepts
-<code>mcpServers</code> JSON. For other clients, enter the same command
-and arguments in their MCP configuration interface.</p>
-<p>Replace <code>/Users/YOUR_NAME/sf-toolkit</code> with your actual
-absolute path; on Linux it is typically
-<code>/home/YOUR_NAME/sf-toolkit</code>. Replace
-<code>YOUR_UID:YOUR_GID</code> with the two IDs above, such as
-<code>501:20</code>. JSON arguments do not execute <code>$(id -u)</code>
-or expand <code>~</code>.</p>
-<pre class="json"><code>{
-  "mcpServers": {
-    "successfactors": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "--user", "YOUR_UID:YOUR_GID",
-        "--env-file", "/Users/YOUR_NAME/sf-toolkit/credentials/sf.env",
-        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/credentials/tenants,target=/credentials/tenants,readonly",
-        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/data,target=/data",
-        "docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST",
-        "python", "-m", "successfactors_toolkit.mcp_server"
+client to Docker MCP</h2><p>Replace <code>/Users/YOUR_NAME/sf-toolkit</code> with your actual absolute path; JSON does not expand <code>~</code>. Add this to your AI client’s MCP settings:</p><pre class="json"><code>{
+  &quot;mcpServers&quot;: {
+    &quot;successfactors&quot;: {
+      &quot;command&quot;: &quot;docker&quot;,
+      &quot;args&quot;: [
+        &quot;compose&quot;,
+        &quot;-f&quot;,
+        &quot;/Users/YOUR_NAME/sf-toolkit/compose.yaml&quot;,
+        &quot;run&quot;,
+        &quot;--rm&quot;,
+        &quot;-T&quot;,
+        &quot;mcp&quot;
       ]
     }
   }
 }</code></pre>
-<p>The local UID/GID lets the container read your private key and write
-exports as the file owner without loosening private-key permissions.
-Create the directories first and allow Docker Desktop to share them.</p>
-<p>Reload your client's MCP configuration. The client launches
-<code>docker run</code> and communicates over standard input and output:
-keep <code>-i</code> and do not add <code>-t</code> or <code>-d</code>.
-If a desktop client cannot find Docker, replace <code>command</code>
-with the absolute path returned by <code>command -v docker</code>.</p>
-<p>The connected client should discover five tools:
-<code>list_tenants</code>, <code>odata_metadata</code>,
-<code>compare_metadata</code>, <code>odata_query</code>, and
-<code>ce_query</code>.</p>
-<h2 id="4-ask-questions">4. Ask questions</h2>
+<p>Reload the client configuration. It starts <code>docker compose run --rm -T mcp</code> over stdin/stdout. Keep <code>-T</code>; do not add <code>-d</code> or use <code>docker compose up</code> for this stdio service. If Docker cannot be found, use its absolute path from <code>command -v docker</code>.</p><p>The UID/GID in <code>compose.yaml</code> preserves key permissions and output ownership. Create the credential and data folders first and allow Docker Desktop to share them. The client should discover <code>list_tenants</code>, <code>odata_metadata</code>, <code>compare_metadata</code>, <code>odata_query</code>, and <code>ce_query</code>.</p><h2 id="4-ask-questions">4. Ask questions</h2>
 <p>First, confirm the local configuration:</p>
 <blockquote>
 <p>List the tenants configured for this SuccessFactors MCP and tell me
@@ -623,8 +614,8 @@ client writes to an authorized host folder; the raw MCP file remains
 under <code>data/mcp/</code>.</li>
 <li><strong>Change the destination for future raw exports:</strong>
 create the new host folder, change the output mount's
-<code>source=…/data</code> to its absolute path, and restart MCP. Keep
-<code>target=/data</code> and <code>RESULTS_DIR=/data</code>. Raw files
+<code>source: ./data</code> to its absolute path, and restart MCP. Keep
+<code>target: /data</code> and <code>RESULTS_DIR=/data</code>. Raw files
 then appear in the new folder's <code>mcp/</code> subdirectory.</li>
 </ol>
 <p>Tool responses contain container paths. Client-side file tools must
@@ -655,8 +646,8 @@ configure credentials, ask questions, and export files.”</td>
 </tr>
 <tr class="even">
 <td>00:15–00:40</td>
-<td>Docker running; pull the versioned image from Docker Hub. Edit out the download wait.</td>
-<td>“Download the Docker image. You do not need to build it yourself. Your AI agent starts the MCP service locally using this image.”</td>
+<td>Show compose.yaml with the pinned release image and local folder mounts.</td>
+<td>“Save the Compose configuration. Your AI agent starts MCP locally through Compose; Compose handles the image automatically.”</td>
 </tr>
 <tr class="odd">
 <td>00:40–01:10</td>
@@ -724,7 +715,7 @@ exists and its fields and record count match the source.</li>
 real private keys, client keys, or employee details.</li>
 </ul>
 <p>Implementation references: <code>Dockerfile</code>,
-<code>docker-compose.yml</code>,
+<code>docker-compose.mcp.yml</code>,
 <code>successfactors_toolkit/config.py</code>,
 <code>successfactors_toolkit/mcp_server.py</code>, and the credentials
 and tenant-store services.</p>
@@ -740,8 +731,7 @@ and tenant-store services.</p>
 Toolkit：Docker MCP 上手指南与录屏文案</a>
 <ul>
 <li><a href="#zh-%E5%85%88%E6%98%8E%E7%A1%AE%E5%BD%93%E5%89%8D%E7%89%88%E6%9C%AC%E7%9A%84%E8%A1%8C%E4%B8%BA" id="zh-toc-先明确当前版本的行为">先明确当前版本的行为</a></li>
-<li><a href="#zh-%E4%B8%80%E5%87%86%E5%A4%87-docker-%E9%95%9C%E5%83%8F" id="zh-toc-一准备-docker-镜像">一、准备
-Docker 镜像</a></li>
+<li><a href="#zh-%E4%B8%80%E5%87%86%E5%A4%87-docker-%E9%95%9C%E5%83%8F" id="zh-toc-一准备-docker-镜像">一、配置 Docker Compose</a></li>
 <li><a href="#zh-%E4%BA%8C%E9%85%8D%E7%BD%AE-credentials-%E5%B9%B6%E6%94%BE%E5%85%A5%E6%8C%87%E5%AE%9A%E7%9B%AE%E5%BD%95" id="zh-toc-二配置-credentials-并放入指定目录">二、配置 credentials
 并放入指定目录</a></li>
 <li><a href="#zh-%E4%B8%89%E8%AE%A9-ai-%E5%AE%A2%E6%88%B7%E7%AB%AF%E9%80%9A%E8%BF%87-docker-%E5%90%AF%E5%8A%A8-mcp" id="zh-toc-三让-ai-客户端通过-docker-启动-mcp">三、让 AI 客户端通过 Docker
@@ -783,9 +773,7 @@ SuccessFactors 租户。</p>
 <tbody>
 <tr class="odd">
 <td>Docker 启动 MCP</td>
-<td>使用本项目镜像，显式运行
-<code>python -m successfactors_toolkit.mcp_server</code>；现有
-<code>docker compose up</code> 默认启动 REST API，不是 MCP。</td>
+<td>AI 客户端使用下方 Compose 配置，通过 <code>docker compose run --rm -T mcp</code> 启动 MCP。</td>
 </tr>
 <tr class="even">
 <td>配置 credentials</td>
@@ -819,22 +807,38 @@ SuccessFactors 租户。</p>
 </tr>
 </tbody>
 </table>
-<h2 id="zh-一准备-docker-镜像">一、准备 Docker 镜像</h2>
-<p>启动 Docker Desktop 或本机 Docker 服务。打开 <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1">v0.1.1 release</a>，从 <code>image-reference.txt</code> 复制完整镜像引用，把下面的 digest 占位符替换为该版本的 SHA-256。安装 <a href="https://cli.github.com/">GitHub CLI</a> 并执行 <code>gh auth login</code> 登录；若提示镜像仓库需要认证，用 <code>docker login</code> 登录 Docker Hub 账号。先验证签名构建来源，再下载镜像和挂载凭据：</p>
-<pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST&#x27;
+<h2 id="zh-一准备-docker-镜像">一、配置 Docker Compose</h2><p>使用 Docker Compose 2.30.0 或更新版本。创建 <code>~/sf-toolkit</code>，将以下内容保存为其中的 <code>compose.yaml</code>。把 <code>YOUR_UID:YOUR_GID</code> 替换为 <code>id -u</code> 与 <code>id -g</code> 的输出，例如 <code>501:20</code>。</p><pre class="yaml"><code>services:
+  mcp:
+    image: docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a
+    command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
+    user: &quot;YOUR_UID:YOUR_GID&quot;
+    stdin_open: true
+    tty: false
+    env_file:
+      - path: ./credentials/sf.env
+        format: raw
+    environment:
+      TENANT_KEYS_DIR: /credentials/tenants
+      RESULTS_DIR: /data
+    volumes:
+      - type: bind
+        source: ./credentials/tenants
+        target: /credentials/tenants
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: false
+</code></pre>
+<p>第三步由 AI 客户端通过 Compose 启动 MCP，Compose 自动获取固定版本镜像。无需单独下载镜像、获取源码、安装 Python 或自行构建；不开放网络端口。</p><p>挂载凭据启动前，安装 <a href="https://cli.github.com/">GitHub CLI</a>，执行 <code>gh auth login</code>，并验证签名构建来源：</p><pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a&#x27;
 gh attestation verify &quot;oci://$IMAGE&quot; \
   --repo wudaoyou/successfactors-toolkit \
   --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.1 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
-<p>仅在验证成功后继续。下面配置中也使用同一个已验证 digest；JSON 不会展开 <code>$IMAGE</code>。digest 固定具体镜像，签名用于确认构建来源，不代表软件绝无漏洞。</p>
-<p>无需下载源码、安装 Python 或自行构建镜像。从 <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> 下载的镜像支持 Intel/AMD（<code>linux/amd64</code>）和 Apple Silicon（<code>linux/arm64</code>）。</p>
-<p>AI agent 会在本机启动下载的镜像。从 Docker Hub 下载不等于在线托管 MCP，也不会把挂载的凭据和导出文件上传到 Docker Hub。本地客户端仍可能调用云端模型，请遵循前面的数据安全说明。</p>
-<p>无需先启动 REST API，也无需开放 8000 端口。这里使用 <code>python -m</code>，因为 Dockerfile 安装依赖并复制源码，没有安装项目的 <code>successfactors-mcp</code> 控制台命令。</p>
-<h3>开发者选项：本地构建</h3>
-<p>开发本工具时，可以在项目目录执行：</p>
-<pre class="sh"><code>docker build -t successfactors-toolkit:local .</code></pre>
-<p>仅在采用此方式时，把后面配置中的 <code>docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST</code> 替换成 <code>successfactors-toolkit:local</code>。</p>
-<h2 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
+  --source-ref refs/tags/v0.1.1</code></pre>
+<p>仅在验证成功后继续。digest 固定镜像；签名用于确认构建来源，不代表软件绝无漏洞。</p><h2 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
 并放入指定目录</h2>
 <p>在代码仓库之外准备一个工作目录：</p>
 <pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
@@ -842,6 +846,7 @@ chmod 700 "$HOME/sf-toolkit/credentials"</code></pre>
 <p>目录结构如下。<code>demo</code> 必须替换为实际 company
 ID，目录名、文件名和配置中的 ID 要一致。</p>
 <pre class="text"><code>~/sf-toolkit/
+├── compose.yaml
 ├── credentials/
 │   ├── sf.env
 │   └── tenants/
@@ -878,45 +883,23 @@ RESULTS_DIR=/data</code></pre>
 <code>ADMIN_API_KEY</code> 是 REST
 接口的访问配置，不是本流程的必填项。</p>
 <h2 id="zh-三让-ai-客户端通过-docker-启动-mcp">三、让 AI 客户端通过 Docker
-启动 MCP</h2>
-<p>先在终端查看本机用户和组编号：</p>
-<pre class="sh"><code>id -u
-id -g</code></pre>
-<p>在支持 <code>mcpServers</code> JSON
-格式的客户端中添加以下配置。其他客户端使用对应的 MCP 设置界面，填写相同
-command 和 args。</p>
-<p>将 <code>/Users/YOUR_NAME/sf-toolkit</code> 换成实际绝对路径；Linux
-通常为 <code>/home/YOUR_NAME/sf-toolkit</code>。将
-<code>YOUR_UID:YOUR_GID</code> 换成上面两条命令的输出，例如
-<code>501:20</code>。JSON 参数不会执行 <code>$(id -u)</code> 或展开
-<code>~</code>。</p>
-<pre class="json"><code>{
-  "mcpServers": {
-    "successfactors": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "--user", "YOUR_UID:YOUR_GID",
-        "--env-file", "/Users/YOUR_NAME/sf-toolkit/credentials/sf.env",
-        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/credentials/tenants,target=/credentials/tenants,readonly",
-        "--mount", "type=bind,source=/Users/YOUR_NAME/sf-toolkit/data,target=/data",
-        "docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST",
-        "python", "-m", "successfactors_toolkit.mcp_server"
+启动 MCP</h2><p>把 <code>/Users/YOUR_NAME/sf-toolkit</code> 换为实际绝对路径；JSON 不展开 <code>~</code>。在 AI 客户端的 MCP 设置中添加：</p><pre class="json"><code>{
+  &quot;mcpServers&quot;: {
+    &quot;successfactors&quot;: {
+      &quot;command&quot;: &quot;docker&quot;,
+      &quot;args&quot;: [
+        &quot;compose&quot;,
+        &quot;-f&quot;,
+        &quot;/Users/YOUR_NAME/sf-toolkit/compose.yaml&quot;,
+        &quot;run&quot;,
+        &quot;--rm&quot;,
+        &quot;-T&quot;,
+        &quot;mcp&quot;
       ]
     }
   }
 }</code></pre>
-<p>使用本机
-UID/GID，让容器以文件所属用户读取私钥并写入导出目录，避免通过放宽私钥权限解决问题。目录必须提前创建；Docker
-Desktop 必须允许共享这些目录。</p>
-<p>重新加载客户端的 MCP 配置。客户端启动
-<code>docker run</code>，通过标准输入输出与 MCP 通信，因此保留
-<code>-i</code>，不加 <code>-t</code> 或
-<code>-d</code>。若桌面客户端找不到 <code>docker</code>，用终端
-<code>command -v docker</code> 返回的绝对路径替换
-<code>command</code>。</p>
-<p>连接后应能看到五个工具：<code>list_tenants</code>、<code>odata_metadata</code>、<code>compare_metadata</code>、<code>odata_query</code>、<code>ce_query</code>。</p>
-<h2 id="zh-四开始提问">四、开始提问</h2>
+<p>重新加载配置，客户端通过 <code>docker compose run --rm -T mcp</code> 启动并以标准输入输出通信。保留 <code>-T</code>，不加 <code>-d</code>，不要用 <code>docker compose up</code> 启动这个 stdio 服务。若找不到 Docker，使用 <code>command -v docker</code> 返回的绝对路径。</p><p><code>compose.yaml</code> 中的 UID/GID 保持私钥权限及输出文件归属。先创建凭据和 data 目录，并允许 Docker Desktop 共享。连接后应发现 <code>list_tenants</code>、<code>odata_metadata</code>、<code>compare_metadata</code>、<code>odata_query</code>、<code>ce_query</code> 五个工具。</p><h2 id="zh-四开始提问">四、开始提问</h2>
 <p>第一句先确认配置：</p>
 <blockquote>
 <p>请列出这个 SuccessFactors MCP 已配置的租户，并告诉我默认 company
@@ -982,8 +965,8 @@ JSON 转为自定义 XML，也不等同于 SAP 原始 Compound Employee XML。</
 客户端在获准访问的本机目录中写入，原始 MCP 文件仍位于
 <code>data/mcp/</code>。</li>
 <li><strong>以后都存到新目录</strong>：提前创建目录，把 MCP
-配置中输出挂载的 <code>source=…/data</code> 改成新目录绝对路径，保留
-<code>target=/data</code> 与 <code>RESULTS_DIR=/data</code>，重启
+配置中输出挂载的 <code>source: ./data</code> 改成新目录绝对路径，保留
+<code>target: /data</code> 与 <code>RESULTS_DIR=/data</code>，重启
 MCP。之后原始文件位于新目录的 <code>mcp/</code> 子目录。</li>
 </ol>
 <p>容器返回的是容器内路径。AI
@@ -1011,8 +994,8 @@ MCP。之后原始文件位于新目录的 <code>mcp/</code> 子目录。</li>
 </tr>
 <tr class="even">
 <td>00:15–00:40</td>
-<td>Docker 已运行；从 Docker Hub 下载指定版本，下载等待可剪辑</td>
-<td>“先下载 Docker 镜像，无需自行构建。接下来由 AI agent 在本机启动镜像里的 MCP 服务。”</td>
+<td>展示 compose.yaml 中固定版本镜像和本地目录挂载</td>
+<td>“保存 Compose 配置，由 AI agent 通过 Compose 启动本机 MCP；镜像由 Compose 自动获取。”</td>
 </tr>
 <tr class="odd">
 <td>00:40–01:10</td>
@@ -1058,7 +1041,7 @@ XML。这套配置会把文件保存到本机 data 下的 mcp 文件夹。”</t
 HR 数据留在受控环境时，请使用本地模型和本地文件处理工具。”</p>
 <h2 id="zh-七录制前验收">七、录制前验收</h2>
 <ul>
-<li>成功下载已发布的指定版本镜像，AI 客户端完成 MCP 初始化并发现五个工具。</li>
+<li>通过 Docker Compose 启动，AI 客户端完成 MCP 初始化并发现五个工具。</li>
 <li><code>list_tenants</code>
 识别预期租户；一次真实的小范围元数据或查询请求成功。</li>
 <li>查询输出在本机 <code>data/mcp/</code>
@@ -1067,9 +1050,9 @@ HR 数据留在受控环境时，请使用本地模型和本地文件处理工�
 或自定义目录，确认实际文件已生成、字段和记录数与原始数据一致。</li>
 <li>录制只显示演示数据和占位配置，不显示真实私钥、客户端密钥或员工明细。</li>
 </ul>
-<p>本文核对依据：<code>Dockerfile</code>、<code>docker-compose.yml</code>、<code>successfactors_toolkit/config.py</code>、<code>successfactors_toolkit/mcp_server.py</code>、credentials
+<p>本文核对依据：<code>Dockerfile</code>、<code>docker-compose.mcp.yml</code>、<code>successfactors_toolkit/config.py</code>、<code>successfactors_toolkit/mcp_server.py</code>、credentials
 与 tenant_store 实现。</p>
-<p>录制前需验证指定版本已发布且可以下载，并在目标环境验证真实 SF 访问、客户端格式转换和自定义目录操作。本地测试不能证明镜像已经发布。</p>
+<p>录制前需验证Compose 能启动已验证的版本，并在目标环境验证真实 SF 访问、客户端格式转换和自定义目录操作。本地测试不能证明镜像已经发布。</p>
 </div><script>
 const picker = document.getElementById('guide-language');
 picker.addEventListener('change', () => {
