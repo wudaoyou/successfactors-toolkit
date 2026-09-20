@@ -438,12 +438,12 @@ MCP query tools have no per-call destination argument.</td>
 </tbody>
 </table>
 <h2 id="1-download-the-docker-image">1. Download the Docker image</h2>
-<p>Start Docker Desktop or your local Docker service. Open the <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0">v0.1.0 release</a> and copy the exact image reference from <code>image-reference.txt</code>. Replace the digest placeholder below with that release's SHA-256 digest. Install the <a href="https://cli.github.com/">GitHub CLI</a> and sign in with <code>gh auth login</code>. If registry authentication is requested, use <code>docker login</code> with your Docker Hub account. Verify signed build provenance before pulling or mounting credentials:</p>
+<p>Start Docker Desktop or your local Docker service. Open the <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1">v0.1.1 release</a> and copy the exact image reference from <code>image-reference.txt</code>. Replace the digest placeholder below with that release's SHA-256 digest. Install the <a href="https://cli.github.com/">GitHub CLI</a> and sign in with <code>gh auth login</code>. If registry authentication is requested, use <code>docker login</code> with your Docker Hub account. Verify signed build provenance before pulling or mounting credentials:</p>
 <pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST&#x27;
 gh attestation verify &quot;oci://$IMAGE&quot; \
   --repo wudaoyou/successfactors-toolkit \
   --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.0 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
+  --source-ref refs/tags/v0.1.1 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
 <p>Continue only if verification succeeds. Use the same verified digest in the configuration below; JSON does not expand <code>$IMAGE</code>. A digest pins the exact image. A signature establishes build origin, not the absence of vulnerabilities.</p>
 <p>No source checkout, Python installation, or local image build is needed. Images are downloaded from <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> for Intel/AMD (<code>linux/amd64</code>) and Apple Silicon (<code>linux/arm64</code>).</p>
 <p>The AI agent starts the downloaded image locally. Downloading from Docker Hub does not host your MCP there or upload mounted credentials and exports. A local AI client may still use a cloud model; the data-security guidance above applies.</p>
@@ -820,12 +820,12 @@ SuccessFactors 租户。</p>
 </tbody>
 </table>
 <h2 id="zh-一准备-docker-镜像">一、准备 Docker 镜像</h2>
-<p>启动 Docker Desktop 或本机 Docker 服务。打开 <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0">v0.1.0 release</a>，从 <code>image-reference.txt</code> 复制完整镜像引用，把下面的 digest 占位符替换为该版本的 SHA-256。安装 <a href="https://cli.github.com/">GitHub CLI</a> 并执行 <code>gh auth login</code> 登录；若提示镜像仓库需要认证，用 <code>docker login</code> 登录 Docker Hub 账号。先验证签名构建来源，再下载镜像和挂载凭据：</p>
+<p>启动 Docker Desktop 或本机 Docker 服务。打开 <a href="https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1">v0.1.1 release</a>，从 <code>image-reference.txt</code> 复制完整镜像引用，把下面的 digest 占位符替换为该版本的 SHA-256。安装 <a href="https://cli.github.com/">GitHub CLI</a> 并执行 <code>gh auth login</code> 登录；若提示镜像仓库需要认证，用 <code>docker login</code> 登录 Docker Hub 账号。先验证签名构建来源，再下载镜像和挂载凭据：</p>
 <pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:REPLACE_WITH_RELEASE_DIGEST&#x27;
 gh attestation verify &quot;oci://$IMAGE&quot; \
   --repo wudaoyou/successfactors-toolkit \
   --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.0 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
+  --source-ref refs/tags/v0.1.1 &amp;&amp; docker pull &quot;$IMAGE&quot;</code></pre>
 <p>仅在验证成功后继续。下面配置中也使用同一个已验证 digest；JSON 不会展开 <code>$IMAGE</code>。digest 固定具体镜像，签名用于确认构建来源，不代表软件绝无漏洞。</p>
 <p>无需下载源码、安装 Python 或自行构建镜像。从 <a href="https://hub.docker.com/r/wudaoyou/successfactors-toolkit">Docker Hub</a> 下载的镜像支持 Intel/AMD（<code>linux/amd64</code>）和 Apple Silicon（<code>linux/arm64</code>）。</p>
 <p>AI agent 会在本机启动下载的镜像。从 Docker Hub 下载不等于在线托管 MCP，也不会把挂载的凭据和导出文件上传到 Docker Hub。本地客户端仍可能调用云端模型，请遵循前面的数据安全说明。</p>

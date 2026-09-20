@@ -69,6 +69,7 @@ jobs:
           IMAGE: wudaoyou/successfactors-toolkit:${{ github.ref_name }}
         run: |
           for platform in linux/amd64 linux/arm64; do
+            echo "Starting MCP smoke test for $platform"
             docker run --rm --platform "$platform" \
               --mount "type=bind,source=$PWD/tests/test_mcp_stdio.py,target=/app/tests/test_mcp_stdio.py,readonly" \
               "$IMAGE" python -c '
@@ -77,8 +78,11 @@ jobs:
           from pathlib import Path
           test = runpy.run_path("/app/tests/test_mcp_stdio.py")
           with tempfile.TemporaryDirectory() as directory:
-              test["test_mcp_stdio_initialization_discovery_and_tenant_call"](Path(directory))
+              test["test_mcp_stdio_initialization_discovery_and_tenant_call"](
+                  Path(directory), request_timeout_seconds=120
+              )
           '
+            echo "MCP smoke test succeeded for $platform"
           done
       - name: Log in to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4

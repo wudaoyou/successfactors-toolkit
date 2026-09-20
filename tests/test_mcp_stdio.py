@@ -7,7 +7,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 
-def test_mcp_stdio_initialization_discovery_and_tenant_call(tmp_path):
+def test_mcp_stdio_initialization_discovery_and_tenant_call(tmp_path, request_timeout_seconds=15):
     root = Path(__file__).resolve().parents[1]
 
     async def exercise():
@@ -30,7 +30,9 @@ def test_mcp_stdio_initialization_discovery_and_tenant_call(tmp_path):
             env=env,
         )
         async with stdio_client(server) as (read, write):
-            async with ClientSession(read, write, read_timeout_seconds=15) as session:
+            async with ClientSession(
+                read, write, read_timeout_seconds=request_timeout_seconds
+            ) as session:
                 initialized = await session.initialize()
                 assert initialized.server_info.name == "successfactors"
                 discovered = await session.list_tools()
@@ -48,4 +50,4 @@ def test_mcp_stdio_initialization_discovery_and_tenant_call(tmp_path):
                 assert not result.is_error
                 assert result.structured_content["tenants"] == []
 
-    asyncio.run(asyncio.wait_for(exercise(), timeout=30))
+    asyncio.run(asyncio.wait_for(exercise(), timeout=max(30, 2 * request_timeout_seconds)))

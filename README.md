@@ -133,7 +133,7 @@ below for client configuration.
 
 ```sh
 curl http://127.0.0.1:8000/health
-# {"status":"ok","version":"0.1.0"}
+# {"status":"ok","version":"0.1.1"}
 ```
 
 For MCP, verify initialization and discovery of the five tools in your AI
