@@ -9,6 +9,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - Make Docker Compose the MCP onboarding path in the README and bilingual
   HTML guide, with a pinned image, read-only credentials, and local exports.
   Remove standalone image download and local-build options from the guide.
+- Remove GitHub CLI login and manual provenance verification from user
+  onboarding; retain pinned image digests and release-time verification.
 
 ## [0.1.1] - 2026-09-20
 

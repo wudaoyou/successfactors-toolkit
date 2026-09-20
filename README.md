@@ -38,7 +38,7 @@ tools, converts or saves the resulting files in your chosen format or folder.
 
 1. **Set up Docker Compose:** follow the
    [guide](docs/DOCKER_MCP_GUIDE.md#1-set-up-docker-compose) to save
-   `compose.yaml` and verify the pinned release image. Your AI agent starts
+   `compose.yaml` with the pinned release image. Your AI agent starts
    MCP with `docker compose run --rm -T mcp`; Compose obtains the image
    automatically. No separate image download or local build is needed.
 2. **Configure credentials:** keep `sf.env` and tenant key/certificate files

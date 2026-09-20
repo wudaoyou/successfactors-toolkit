@@ -462,12 +462,7 @@ MCP query tools have no per-call destination argument.</td>
         bind:
           create_host_path: false
 </code></pre>
-<p>Your AI client starts this service in step 3. Compose obtains the pinned image automatically. No separate image download, source checkout, Python installation, or local build is needed. No network port is exposed.</p><p>Before starting with credentials, install the <a href="https://cli.github.com/">GitHub CLI</a>, sign in with <code>gh auth login</code>, and verify signed provenance:</p><pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a&#x27;
-gh attestation verify &quot;oci://$IMAGE&quot; \
-  --repo wudaoyou/successfactors-toolkit \
-  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.1</code></pre>
-<p>Continue only if verification succeeds. The digest pins the image; provenance identifies its build origin, not the absence of vulnerabilities.</p><h2 id="2-configure-credentials">2. Configure credentials</h2>
+<p>Your AI client starts this service in step 3. Compose obtains the pinned image automatically. No separate image download, source checkout, Python installation, or local build is needed. No network port is exposed.</p><p>The image digest pins the exact release used by this configuration.</p><h2 id="2-configure-credentials">2. Configure credentials</h2>
 <p>Create a working directory outside the repository:</p>
 <pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
 chmod 700 "$HOME/sf-toolkit/credentials"</code></pre>
@@ -833,12 +828,7 @@ SuccessFactors 租户。</p>
         bind:
           create_host_path: false
 </code></pre>
-<p>第三步由 AI 客户端通过 Compose 启动 MCP，Compose 自动获取固定版本镜像。无需单独下载镜像、获取源码、安装 Python 或自行构建；不开放网络端口。</p><p>挂载凭据启动前，安装 <a href="https://cli.github.com/">GitHub CLI</a>，执行 <code>gh auth login</code>，并验证签名构建来源：</p><pre class="sh"><code>IMAGE=&#x27;docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a&#x27;
-gh attestation verify &quot;oci://$IMAGE&quot; \
-  --repo wudaoyou/successfactors-toolkit \
-  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.1</code></pre>
-<p>仅在验证成功后继续。digest 固定镜像；签名用于确认构建来源，不代表软件绝无漏洞。</p><h2 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
+<p>第三步由 AI 客户端通过 Compose 启动 MCP，Compose 自动获取固定版本镜像。无需单独下载镜像、获取源码、安装 Python 或自行构建；不开放网络端口。</p><p>镜像 digest 固定此配置使用的具体发布版本。</p><h2 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
 并放入指定目录</h2>
 <p>在代码仓库之外准备一个工作目录：</p>
 <pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"

@@ -54,17 +54,7 @@ services:
 
 The AI client starts this service with Docker Compose in step 3. Compose automatically obtains the pinned release image when needed. No separate image download, source checkout, Python installation, or local build is required. No network port is exposed.
 
-Before starting with credentials, install the [GitHub CLI](https://cli.github.com/), sign in with `gh auth login`, and verify the pinned v0.1.1 image's signed provenance:
-
-```sh
-IMAGE='docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a'
-gh attestation verify "oci://$IMAGE" \
-  --repo wudaoyou/successfactors-toolkit \
-  --signer-workflow wudaoyou/successfactors-toolkit/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.1.1
-```
-
-Continue only if verification succeeds. The digest pins the exact image; provenance identifies its build origin, not the absence of vulnerabilities.
+The image digest pins the exact release used by this configuration.
 
 ## 2. Configure credentials
 
