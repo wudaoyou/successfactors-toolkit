@@ -6,6 +6,10 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ### Changed
 
+- Reframe onboarding for functional consultants and business key users, with
+  business prompts, clear success checks, troubleshooting, and expandable
+  administrator setup instructions.
+
 - Make Docker Compose the MCP onboarding path in the README and bilingual
   HTML guide, with a pinned image, read-only credentials, and local exports.
   Remove standalone image download and local-build options from the guide.

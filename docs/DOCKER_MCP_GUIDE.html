@@ -337,105 +337,299 @@
 .language-picker select{font:inherit;color:var(--ink);background:#fff;border:1px solid #9aafa6;border-radius:6px;padding:7px 32px 7px 12px}
 .language-picker select:focus-visible{outline:3px solid #d09232;outline-offset:3px}
 @media print{.language-picker{display:none}}
+
+.language-panel>details{margin:32px 24px 48px 340px;max-width:920px}summary{cursor:pointer;font-weight:650;color:var(--accent)}details table{width:100%}@media(max-width:1050px){.language-panel>details{margin-left:24px}}
+@media(min-width:1400px){.language-panel>details{margin-left:calc(292px + (100vw - 292px - 920px)/2)}}@media print{.language-panel>details{margin-left:0;margin-right:0;max-width:none}}
 </style></head><body>
 <div class="language-picker"><label for="guide-language">Language / 语言</label><select id="guide-language"><option value="en" selected>English</option><option value="zh-CN">中文</option></select></div>
-<div class="language-panel" id="panel-en" lang="en"><header class="hero"><div class="eyebrow">SUCCESSFACTORS TOOLKIT · QUICK START</div><div class="headline">From connection to export in four steps.</div><div class="steps">Start Docker → Configure credentials → Ask AI → Export files</div></header>
-<header id="title-block-header" class="title-block">
-<h1 class="title">SuccessFactors Toolkit · Docker MCP Guide</h1>
-</header>
-<nav id="TOC" role="doc-toc" class="toc" data-label="SUCCESSFACTORS / USER GUIDE">
-<ul>
-<li><a href="#successfactors-toolkit-docker-mcp-guide" id="toc-successfactors-toolkit-docker-mcp-guide">SuccessFactors Toolkit:
-Docker MCP Guide</a>
-<ul>
-<li><a href="#what-the-current-version-supports" id="toc-what-the-current-version-supports">What the current version
-supports</a></li>
-<li><a href="#1-set-up-docker-compose" id="toc-1-set-up-docker-compose">1. Set up Docker Compose</a></li>
-<li><a href="#2-configure-credentials" id="toc-2-configure-credentials">2. Configure credentials</a></li>
-<li><a href="#3-connect-your-ai-client-to-docker-mcp" id="toc-3-connect-your-ai-client-to-docker-mcp">3. Connect your AI
-client to Docker MCP</a></li>
-<li><a href="#4-ask-questions" id="toc-4-ask-questions">4. Ask
-questions</a></li>
-<li><a href="#5-export-files-and-choose-a-folder" id="toc-5-export-files-and-choose-a-folder">5. Export files and choose a
-folder</a></li>
-<li><a href="#6-three-minute-recording-script" id="toc-6-three-minute-recording-script">6. Three-minute recording
-script</a></li>
-<li><a href="#7-before-recording" id="toc-7-before-recording">7. Before
-recording</a></li>
-</ul></li>
-</ul>
-</nav>
-<h1 id="successfactors-toolkit-docker-mcp-guide">SuccessFactors Toolkit:
-Docker MCP Guide</h1>
-<p>Run MCP with Docker, configure credentials, ask questions, and export
-results.</p>
-<p>This guide is for macOS or Linux, local Docker, and an AI client that
-can launch a stdio MCP server. All values are placeholders. Use a test
-tenant and synthetic data when recording a demonstration.</p>
-<blockquote>
-<p><strong>Data security: prefer local deployment.</strong> We recommend
-local Docker and a local AI client rather than online AI platforms or
-third-party hosted MCP services for sensitive employee data and
-credentials. Keep credentials and exports on your machine. Do not upload
-private keys or employee payloads to online platforms.</p>
-<p><strong>A local client is not necessarily a local model.</strong> If
-the client calls a cloud model, prompts, tool responses, previews, and
-file contents supplied to that model may leave your machine. If HR data
-must remain within your controlled environment, use a locally hosted
-model and local file-processing tools, and check the client's outbound
-data handling. Local Docker alone does not guarantee this. The toolkit
-still connects to your configured SuccessFactors tenant to query
-data.</p>
-</blockquote>
-<h2 id="what-the-current-version-supports">What the current version
-supports</h2>
+<div class="language-panel" id="panel-en" lang="en"><header class="hero"><div class="eyebrow">SUCCESSFACTORS TOOLKIT · QUICK START</div><div class="headline">Your SuccessFactors questions, answered.</div><div class="steps">Start locally → Connect → Ask → Export</div></header><nav class="toc" data-label="SUCCESSFACTORS / GUIDE"><ul><li><a href="#before-you-start">Before you start</a></li><li><a href="#start-your-local-workspace">1. Start your local workspace</a></li><li><a href="#put-the-connection-files-in-the-right-folder">2. Confirm the
+connection files are in place</a></li><li><a href="#check-the-connection-then-ask-a-question">3. Check the
+connection, then ask a question</a></li><li><a href="#export-the-result">4. Export the result</a></li><li><a href="#if-something-does-not-work">If something does not work</a></li><li><a href="#three-minute-walkthrough">Three-minute walkthrough</a></li><li><a href="#one-time-setup-for-your-administrator">One-time setup — for your
+administrator</a></li></ul></nav><h1 id="successfactors-toolkit-business-user-guide">SuccessFactors
+Toolkit: Business User Guide</h1>
+<p>Ask questions about SuccessFactors and save the results on your
+computer. This guide is for functional consultants and business key
+users; no programming knowledge is required for everyday use.</p>
+<h2 id="before-you-start">Before you start</h2>
+<p>Ask your SuccessFactors administrator or IT support to provide these
+items through your company’s approved secure channel:</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr class="header">
-<th>Action</th>
-<th>How it works</th>
+<th>What you need</th>
+<th>What to confirm</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>Start MCP with Docker</td>
-<td>The AI client starts <code>docker compose run --rm -T mcp</code> using the Compose file below.</td>
+<td>A company-approved local AI application and Docker Desktop</td>
+<td>IT has completed the one-time connection setup below. The supplied
+setup is for macOS or Linux.</td>
 </tr>
 <tr class="even">
-<td>Configure credentials</td>
-<td>Store connection settings in an environment file and PEM keys and
-certificates in a designated folder. Make them available through
-Docker.</td>
+<td>The SuccessFactors environment to use</td>
+<td>Confirm whether it is a test or production environment and which
+company ID identifies it.</td>
 </tr>
 <tr class="odd">
-<td>Ask questions</td>
-<td>The AI client calls tools for tenants, metadata, OData, and Compound
-Employee.</td>
+<td>A connection settings file, private key, and certificate</td>
+<td>Ask the administrator to prepare the files for your environment,
+confirm the certificate is registered, and confirm your permitted data
+access. Do not invent connection values.</td>
 </tr>
 <tr class="even">
-<td>Export JSON or XML</td>
-<td>OData queries write JSON; Compound Employee writes one XML file per
-page.</td>
+<td>A local working folder called <code>sf-toolkit</code></td>
+<td>This contains the connection files and a <code>data</code> folder
+for your results.</td>
 </tr>
 <tr class="odd">
-<td>Export CSV or other formats</td>
-<td>Requires local file access and conversion tools in the AI client.
-This MCP has no generic format-conversion tool.</td>
-</tr>
-<tr class="even">
-<td>Save under data</td>
-<td>This guide sets <code>RESULTS_DIR=/data</code>, placing raw files in
-the host's <code>data/mcp/</code> folder. The unconfigured program
-default is <code>results/mcp/</code>.</td>
-</tr>
-<tr class="odd">
-<td>Request another folder in chat</td>
-<td>The AI client saves or converts files in an authorized local folder.
-MCP query tools have no per-call destination argument.</td>
+<td>Permission to save and convert files</td>
+<td>Your AI application needs local file access to create CSV or save
+copies in other folders.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="1-set-up-docker-compose">1. Set up Docker Compose</h2><p>Use Docker Compose 2.30.0 or newer. Create <code>~/sf-toolkit</code> and save this as <code>compose.yaml</code>. Replace <code>YOUR_UID:YOUR_GID</code> with the output of <code>id -u</code> and <code>id -g</code>, for example <code>501:20</code>.</p>
+<blockquote>
+<p><strong>Keep employee data local.</strong> We recommend local
+deployment instead of online AI platforms for sensitive HR information.
+Never paste private keys or connection secrets into chat. A desktop AI
+application may still send content to a cloud model: ask IT to use a
+local model and local file processing when company policy requires data
+to stay inside your controlled environment. Queries still connect to
+your approved SuccessFactors environment.</p>
+</blockquote>
+<h2 id="start-your-local-workspace">1. Start your local workspace</h2>
+<p>Check that Docker Desktop or your IT-managed Docker service is running. Open the AI
+application configured by IT. The application starts the toolkit through
+Docker Compose automatically when it connects.</p>
+<p>For first-time setup, give IT the <strong>One-time setup</strong>
+section below. Once configured, you do not need to enter startup
+commands each time you use the toolkit.</p>
+<p><strong>Ready to continue:</strong> your AI application shows the
+SuccessFactors connection as available, or responds to the connection
+check in step 3. The exact settings screen depends on your AI
+application.</p>
+<h2 id="put-the-connection-files-in-the-right-folder">2. Confirm the
+connection files are in place</h2>
+<p>Ask IT to confirm that the supplied files are in the <code>credentials</code> folder inside <code>sf-toolkit</code>, using the correct names and company ID. You do not need to open or edit these files.</p>
+<ul>
+<li><code>credentials</code>: connection settings and security files.
+Keep these private.</li>
+<li><code>data</code>: your query results and exports. This is the
+folder you use for daily work.</li>
+</ul>
+<p>If the files have not been prepared, ask your administrator to
+complete the one-time setup. You do not need to create a certificate or
+register an API application yourself.</p>
+<p><strong>Ready to continue:</strong> IT has confirmed the files are in
+place and that your connection has permission to read the required
+data.</p>
+<h2 id="check-the-connection-then-ask-a-question">3. Check the
+connection, then ask a question</h2>
+<p>Start with:</p>
+<blockquote>
+<p>Which SuccessFactors environment am I connected to? Tell me the
+company ID without showing any connection secrets.</p>
+</blockquote>
+<p>Check that this is the environment you intended to use. A configured
+environment does not yet prove that data access works. Next, use an
+approved test employee:</p>
+<blockquote>
+<p>In company demo, check the current job information for employee
+DEMO001. Tell me whether the request succeeded and how many records were
+returned. Save the results without displaying employee details in
+chat.</p>
+</blockquote>
+<p>Replace <code>demo</code> and <code>DEMO001</code> with your approved
+company ID and employee identifier. If the identifier is ambiguous, ask
+the AI to confirm which identifier it needs before querying.</p>
+<p>For everyday work, describe <strong>who or what</strong>,
+<strong>which date</strong>, and <strong>which fields</strong> you need.
+For example:</p>
+<blockquote>
+<p>For employee DEMO001 in company demo, find the job title, department,
+and company effective on 1 September 2026. Confirm which SuccessFactors
+fields you used. Save the results and tell me where to find the
+file.</p>
+</blockquote>
+<p>You do not need to write an API query. The AI may need to check the
+available fields or ask you to clarify their business meaning. Review
+its interpretation before using the result. Always specify a date or
+period when you need historical information.</p>
+<p><strong>Ready to continue:</strong> the small query succeeds in the
+correct environment and the AI reports a saved file. An empty result may
+mean no matching records; it is not automatically a connection
+failure.</p>
+<h2 id="export-the-result">4. Export the result</h2>
+<p>By default in this setup, original query files are saved under
+<code>sf-toolkit/data/mcp</code> on your computer. Ask for the full
+local file path when you cannot find a result.</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Format</th>
+<th>What to ask for</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>JSON</td>
+<td>“Keep the original query result as JSON and tell me where it was
+saved.”</td>
+</tr>
+<tr class="even">
+<td>XML</td>
+<td>“Retrieve the employee’s Compound Employee XML and keep the original
+files.” This requires the correct person identifier. Large results may
+produce several files.</td>
+</tr>
+<tr class="odd">
+<td>CSV for Excel</td>
+<td>“Convert the saved result to CSV. Keep employee IDs as text,
+including leading zeros. Save it in my sf-toolkit/data folder.”</td>
+</tr>
+<tr class="even">
+<td>Another format</td>
+<td>Name the format and required columns. Availability depends on the AI
+application’s local file tools.</td>
+</tr>
+</tbody>
+</table>
+<p>CSV and other conversions require a file-capable AI application; they
+are not provided by this connection alone. Ask the AI to convert the
+saved source file, not reconstruct records from the conversation. When
+opening CSV in Excel, import employee ID columns as text.</p>
+<p>To use a different folder:</p>
+<blockquote>
+<p>Save a CSV copy in my Reports/SF folder. Do not overwrite an existing
+file. Tell me the full file path, number of records, and whether all
+requested records were retrieved.</p>
+</blockquote>
+<p>The AI application needs permission to write to that folder. Original
+query files remain in <code>data/mcp</code>; ask IT if you want to
+change that default for future queries.</p>
+<p><strong>Check before sharing:</strong> confirm the environment, date
+range, fields, record count, and whether the query completed. A saved
+file may contain only part of the requested data. Ask the AI to explain
+any incomplete result before using it in a report.</p>
+<h2 id="if-something-does-not-work">If something does not work</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>What you see</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>SuccessFactors connection unavailable</td>
+<td>Check Docker Desktop or your IT-managed Docker service is running, then reopen the AI application. If
+it still fails, ask IT to check the saved connection setup.</td>
+</tr>
+<tr class="even">
+<td>Authentication or permission error</td>
+<td>Ask your SuccessFactors administrator to check the connection files,
+certificate validity, and access permissions. Share the error message
+without secrets or employee data.</td>
+</tr>
+<tr class="odd">
+<td>No matching records</td>
+<td>Confirm the environment, employee identifier, effective date, and
+permitted data scope.</td>
+</tr>
+<tr class="even">
+<td>CSV or custom-folder save unavailable</td>
+<td>Ask IT to enable approved local file tools and access to the
+destination folder in your AI application.</td>
+</tr>
+<tr class="odd">
+<td>The AI reports a file but you cannot find it</td>
+<td>Ask: “Give me the file path on my computer, not the path inside
+Docker.” Check <code>sf-toolkit/data/mcp</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="three-minute-walkthrough">Three-minute walkthrough</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Time</th>
+<th>Show</th>
+<th>Say</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>00:00–00:30</td>
+<td>Local AI application and Docker Desktop</td>
+<td>“After IT completes the one-time setup, open these two applications
+to start.”</td>
+</tr>
+<tr class="even">
+<td>00:30–01:00</td>
+<td>Folder names only, with no secrets visible</td>
+<td>“Keep the connection files in credentials. Your results go into
+data.”</td>
+</tr>
+<tr class="odd">
+<td>01:00–01:30</td>
+<td>Connection check and an approved test employee</td>
+<td>“Confirm the environment, then ask a question using the employee,
+date, and fields you need.”</td>
+</tr>
+<tr class="even">
+<td>01:30–02:15</td>
+<td>A saved test result</td>
+<td>“The AI saves the result locally. Ask for JSON, original employee
+XML, or a CSV conversion.”</td>
+</tr>
+<tr class="odd">
+<td>02:15–03:00</td>
+<td>A CSV copy and its full local path</td>
+<td>“Choose a folder and check the record count and completeness before
+sharing.”</td>
+</tr>
+</tbody>
+</table>
+<p>Use synthetic data for demonstrations. Only show a successful export
+after checking the actual file; do not present a simulated result as a
+live query. Live access and file conversion depend on the target
+environment and AI application.</p>
+<h2 id="one-time-setup-for-your-administrator">One-time setup — for your
+administrator</h2>
+<p>The following settings are for the person preparing the workstation.
+Business users can return to step 1 once this setup has been verified.
+Prepare the local folders before saving the Compose file. Replace all
+example connection values with approved settings and test a small query
+before handing over the workstation.</p>
+<details>
+<summary>
+Show connection settings and copyable configuration
+</summary>
+<h3 id="a.-compose-configuration">A. Compose configuration</h3>
+<p>Start Docker Desktop or your local Docker service with Docker Compose
+2.30.0 or newer. Save the following as
+<code>~/sf-toolkit/compose.yaml</code> after creating that folder.
+Replace <code>YOUR_UID:YOUR_GID</code> with the output of
+<code>id -u</code> and <code>id -g</code>, for example
+<code>501:20</code>.</p>
 <pre class="yaml"><code>services:
   mcp:
     image: docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a
@@ -460,12 +654,17 @@ MCP query tools have no per-call destination argument.</td>
         source: ./data
         target: /data
         bind:
-          create_host_path: false
-</code></pre>
-<p>Your AI client starts this service in step 3. Compose obtains the pinned image automatically. No separate image download, source checkout, Python installation, or local build is needed. No network port is exposed.</p><p>The image digest pins the exact release used by this configuration.</p><h2 id="2-configure-credentials">2. Configure credentials</h2>
+          create_host_path: false</code></pre>
+<p>The AI client starts this service with Docker Compose using the AI client connection settings below.
+Compose automatically obtains the pinned release image when needed. No
+separate image download, source checkout, Python installation, or local
+build is required. No network port is exposed.</p>
+<p>The image digest pins the exact release used by this
+configuration.</p>
+<h3 id="b.-connection-files">B. Connection files</h3>
 <p>Create a working directory outside the repository:</p>
-<pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
-chmod 700 "$HOME/sf-toolkit/credentials"</code></pre>
+<pre class="sh"><code>mkdir -p &quot;$HOME/sf-toolkit/credentials/tenants/demo&quot; &quot;$HOME/sf-toolkit/data&quot;
+chmod 700 &quot;$HOME/sf-toolkit/credentials&quot;</code></pre>
 <p>Use this layout. Replace <code>demo</code> with your actual company
 ID consistently in folder names, filenames, and configuration.</p>
 <pre class="text"><code>~/sf-toolkit/
@@ -483,10 +682,11 @@ folder using the names shown. Register the certificate with the
 corresponding SuccessFactors OAuth2 Client Application. The technical
 user needs access to the target APIs and data. Keep the private key on
 your machine; do not paste it into chat.</p>
-<p>If you need a key pair, see <a href="../README.md#connect-to-successfactors">Connect to
+<p>If you need a key pair, see <a
+href="../README.md#connect-to-successfactors">Connect to
 SuccessFactors</a>. Use <code>scripts/generate-keypair.sh</code>, then
 register the certificate in SF. Placing files manually does not run the
-REST upload endpoint's key-pair and expiry validation; verify that the
+REST upload endpoint’s key-pair and expiry validation; verify that the
 files match and the certificate is valid.</p>
 <p>Create <code>~/sf-toolkit/credentials/sf.env</code> with your
 connection settings:</p>
@@ -500,17 +700,21 @@ TENANT_KEYS_DIR=/credentials/tenants
 RESULTS_DIR=/data</code></pre>
 <p><code>SF_HOST</code> excludes <code>https://</code>;
 <code>SF_TOKEN_URL</code> includes the scheme and
-<code>/oauth/token</code>. Follow the project's convention that the
+<code>/oauth/token</code>. Follow the project’s convention that the
 technical user matches the certificate CN. Enter literal values in the
 environment file; do not rely on <code>$VARIABLE</code> expansion.</p>
 <p>Set file permissions:</p>
-<pre class="sh"><code>chmod 600 "$HOME/sf-toolkit/credentials/sf.env" \
-  "$HOME/sf-toolkit/credentials/tenants/demo/sf_private_key_demo.pem"</code></pre>
+<pre class="sh"><code>chmod 600 &quot;$HOME/sf-toolkit/credentials/sf.env&quot; \
+  &quot;$HOME/sf-toolkit/credentials/tenants/demo/sf_private_key_demo.pem&quot;</code></pre>
 <p>This workflow starts MCP directly over stdio. <code>API_KEY</code>
 and <code>ADMIN_API_KEY</code> control REST access and are not required
 here.</p>
-<h2 id="3-connect-your-ai-client-to-docker-mcp">3. Connect your AI
-client to Docker MCP</h2><p>Replace <code>/Users/YOUR_NAME/sf-toolkit</code> with your actual absolute path; JSON does not expand <code>~</code>. Add this to your AI client’s MCP settings:</p><pre class="json"><code>{
+<h3 id="c.-ai-client-connection">C. AI client connection</h3>
+<p>Replace <code>/Users/YOUR_NAME/sf-toolkit</code> below with your
+actual absolute path (usually <code>/home/YOUR_NAME/sf-toolkit</code> on
+Linux). JSON does not expand <code>~</code>. Add this configuration to
+your AI client’s MCP settings:</p>
+<pre class="json"><code>{
   &quot;mcpServers&quot;: {
     &quot;successfactors&quot;: {
       &quot;command&quot;: &quot;docker&quot;,
@@ -526,283 +730,245 @@ client to Docker MCP</h2><p>Replace <code>/Users/YOUR_NAME/sf-toolkit</code> wit
     }
   }
 }</code></pre>
-<p>Reload the client configuration. It starts <code>docker compose run --rm -T mcp</code> over stdin/stdout. Keep <code>-T</code>; do not add <code>-d</code> or use <code>docker compose up</code> for this stdio service. If Docker cannot be found, use its absolute path from <code>command -v docker</code>.</p><p>The UID/GID in <code>compose.yaml</code> preserves key permissions and output ownership. Create the credential and data folders first and allow Docker Desktop to share them. The client should discover <code>list_tenants</code>, <code>odata_metadata</code>, <code>compare_metadata</code>, <code>odata_query</code>, and <code>ce_query</code>.</p><h2 id="4-ask-questions">4. Ask questions</h2>
-<p>First, confirm the local configuration:</p>
-<blockquote>
-<p>List the tenants configured for this SuccessFactors MCP and tell me
-the default company ID. Do not display credential contents.</p>
-</blockquote>
-<p>A successful tenant listing verifies MCP and local configuration, not
-SF authentication or query permissions. Follow it with a small live
-request:</p>
-<blockquote>
-<p>Check EmpJob metadata in tenant demo. Tell me whether userId and
-jobCode exist.</p>
-</blockquote>
-<p>Then specify the tenant, object, and scope for your business
-question:</p>
-<blockquote>
-<p>Query the current EmpJob records for userId DEMO001 in tenant demo.
-Select only userId, startDate, jobCode, and company. Save the results
-and tell me the record count and file location. Do not display employee
-details in chat.</p>
-</blockquote>
-<p><code>demo</code> and <code>DEMO001</code> are placeholders. For
-historical data, specify the date range; effective-dated entities
-otherwise usually return the current time slice.</p>
-<p>Request a small preview explicitly when you need to inspect values;
-<code>preview</code> is capped at 20 records and 16 KiB serialized UTF-8.
-Record counts outside 0–20 are rejected before querying. When a valid request exceeds the byte limit, the full results stay in the saved file and the response includes <code>preview_error</code>.
-By default, MCP stores records on disk and returns counts and file paths.</p>
-<h2 id="5-export-files-and-choose-a-folder">5. Export files and choose a
-folder</h2>
-<h3 id="json-native-odata-output">JSON: native OData output</h3>
-<blockquote>
-<p>Keep the EmpJob query results as JSON. Confirm whether pagination
-finished and tell me the total record count and the file's location on
-my computer.</p>
-</blockquote>
-<p>OData queries already write JSON. A returned path such as
-<code>/data/mcp/odata_query_…json</code> maps to
-<code>~/sf-toolkit/data/mcp/odata_query_…json</code> on your computer.
-Filenames are generated automatically.</p>
-<h3 id="xml-native-compound-employee-output">XML: native Compound
-Employee output</h3>
-<blockquote>
-<p>Query Compound Employee for person_id_external DEMO001 in tenant
-demo. Preserve the original XML. Report the page count, whether the
-results were truncated, and each file's location on my computer.</p>
-</blockquote>
-<p>Each page is saved separately; the tool does not merge pages into one
-XML file. <code>person_id_external</code> and <code>userId</code> are
-different identifiers. Use the identifier appropriate to your
-request.</p>
-<h3 id="csv-conversion-by-a-file-capable-ai-client">CSV: conversion by a
-file-capable AI client</h3>
-<p>Give your AI client access to the local
-<code>~/sf-toolkit/data</code> folder and tools that can execute
-conversion code or perform equivalent file processing. Connecting this
-MCP alone does not let a chat client read or convert local files.</p>
-<p>Example request:</p>
-<blockquote>
-<p>Convert the JSON file from the previous query to CSV with columns
-userId, startDate, jobCode, and company. Use UTF-8, preserve leading
-zeros in IDs, and correctly escape commas, quotes, and newlines. Save it
-to my sf-toolkit/data/empjob.csv without overwriting an existing file.
-Report the full path, record count, and whether the source query was
-complete.</p>
-</blockquote>
-<p>Convert the actual saved file rather than reconstructing records from
-a chat summary. For nested arrays or multiple historical records, define
-what each CSV row represents. When importing CSV into Excel, treat ID
-columns as text to preserve leading zeros.</p>
-<p>Other formats depend on the client's conversion capabilities and the
-target format's requirements. MCP does not natively support arbitrary
-formats. Custom XML converted from OData JSON is not the original SAP
-Compound Employee XML.</p>
-<h3 id="choose-another-folder">Choose another folder</h3>
-<p>There are two options:</p>
-<ol type="1">
-<li><strong>Save a copy for this request:</strong> ask the AI to save
-the CSV to <code>/Users/YOUR_NAME/Reports/SF/empjob.csv</code>. The
-client writes to an authorized host folder; the raw MCP file remains
-under <code>data/mcp/</code>.</li>
-<li><strong>Change the destination for future raw exports:</strong>
-create the new host folder, change the output mount's
-<code>source: ./data</code> to its absolute path, and restart MCP. Keep
-<code>target: /data</code> and <code>RESULTS_DIR=/data</code>. Raw files
-then appear in the new folder's <code>mcp/</code> subdirectory.</li>
-</ol>
-<p>Tool responses contain container paths. Client-side file tools must
-translate them using the mount mapping; do not assume <code>/data</code>
-exists on the host.</p>
-<p>Before reporting a complete export, check OData
-<code>stopped_reason</code>: <code>exhausted</code> means pagination
-finished; <code>max_pages</code> means the query hit its page limit. For
-Compound Employee, check for errors and inspect <code>truncated</code>.
-An existing file does not prove the entire query succeeded.</p>
-<h2 id="6-three-minute-recording-script">6. Three-minute recording
-script</h2>
+<p>Reload the client’s MCP configuration. It starts
+<code>docker compose run --rm -T mcp</code> and communicates over
+stdin/stdout. Keep <code>-T</code> to disable a terminal; do not add
+<code>-d</code>. Do not start this stdio service with
+<code>docker compose up</code>. If Docker cannot be found, use the
+absolute executable path from <code>command -v docker</code>.</p>
+<p>The UID/GID in <code>compose.yaml</code> lets the container read the
+key and write exports as their owner. Create the credential and data
+directories first and allow Docker Desktop to share them. The client
+should discover <code>list_tenants</code>, <code>odata_metadata</code>,
+<code>compare_metadata</code>, <code>odata_query</code>, and
+<code>ce_query</code>.</p>
+</details>
+</div><div class="language-panel" id="panel-zh-CN" lang="zh-CN" hidden><header class="hero"><div class="eyebrow">SUCCESSFACTORS TOOLKIT · QUICK START</div><div class="headline">查询、核对、导出，开始日常工作。</div><div class="steps">本地启动 → 连接环境 → 提问 → 导出</div></header><nav class="toc" data-label="SUCCESSFACTORS / GUIDE"><ul><li><a href="#zh-business-开始前准备">开始前准备</a></li><li><a href="#zh-business-启动本地工作环境">1. 启动本地工作环境</a></li><li><a href="#zh-business-确认连接文件已就位">2.
+确认连接文件已就位</a></li><li><a href="#zh-business-确认连接再开始提问">3. 确认连接，再开始提问</a></li><li><a href="#zh-business-导出结果">4. 导出结果</a></li><li><a href="#zh-business-遇到问题怎么办">遇到问题怎么办</a></li><li><a href="#zh-business-三分钟演示">三分钟演示</a></li><li><a href="#zh-business-一次性设置-供管理员使用">一次性设置 —
+供管理员使用</a></li></ul></nav><h1 id="zh-business-successfactors-toolkit业务用户指南">SuccessFactors
+Toolkit：业务用户指南</h1>
+<p>用自然语言查询 SuccessFactors，并将结果保存在本机。本指南面向
+functional consultant 和 business key user；日常使用不需要编程知识。</p>
+<h2 id="zh-business-开始前准备">开始前准备</h2>
+<p>请 SuccessFactors 管理员或 IT 通过公司认可的安全渠道提供：</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr class="header">
-<th>Time</th>
-<th>On screen</th>
-<th>Narration</th>
+<th>所需项目</th>
+<th>需要确认什么</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>00:00–00:15</td>
-<td>Title, four-step workflow, and local-deployment recommendation</td>
-<td>“Employee data is sensitive. We recommend local deployment instead
-of uploading it to online AI platforms. Here is how to start Docker MCP,
-configure credentials, ask questions, and export files.”</td>
+<td>公司认可的本地 AI 应用和 Docker Desktop</td>
+<td>IT 已完成下方的一次性设置。此配置适用于 macOS 或 Linux。</td>
 </tr>
 <tr class="even">
-<td>00:15–00:40</td>
-<td>Show compose.yaml with the pinned release image and local folder mounts.</td>
-<td>“Save the Compose configuration. Your AI agent starts MCP locally through Compose; Compose handles the image automatically.”</td>
+<td>要使用的 SuccessFactors 环境</td>
+<td>确认是测试还是生产环境，以及对应的 company ID。</td>
 </tr>
 <tr class="odd">
-<td>00:40–01:10</td>
-<td>Example folder tree and sf.env containing placeholders only</td>
-<td>“Store connection settings under credentials and place your key and
-certificate in the tenant folder. Keep real credentials on your
-computer. The data folder holds query results.”</td>
+<td>连接配置文件、私钥和证书</td>
+<td>由管理员准备，确认已注册证书并具备所需数据访问权限。不要自行猜测配置值。</td>
 </tr>
 <tr class="even">
-<td>01:10–01:35</td>
-<td>MCP configuration with paths and UID/GID filled in; five tools
-visible</td>
-<td>“Add the Docker MCP configuration. Credentials are mounted
-read-only, and the data folder accepts output files. Reload the
-configuration to make the five tools available.”</td>
+<td>本机的 sf-toolkit 文件夹</td>
+<td>保存连接文件，并在 data 下保存查询结果。</td>
 </tr>
 <tr class="odd">
-<td>01:35–02:00</td>
-<td>List tenants, then query a demonstration record</td>
-<td>“Confirm the tenant and describe what you want to query, such as an
-employee's current job information. The AI calls MCP and returns the
-record count and file location.”</td>
-</tr>
-<tr class="even">
-<td>02:00–02:25</td>
-<td>Open local data/mcp and show synthetic output files</td>
-<td>“OData results are saved as JSON. Compound Employee results are
-saved as XML. This configuration places them in the mcp subfolder under
-your local data directory.”</td>
-</tr>
-<tr class="odd">
-<td>02:25–02:50</td>
-<td>Enter the CSV conversion prompt and show the actual generated
-CSV</td>
-<td>“With local file-processing tools, your AI client can convert
-results to CSV or other supported formats. You can also ask it to save a
-copy in a folder you choose.”</td>
-</tr>
-<tr class="even">
-<td>02:50–03:00</td>
-<td>Final file path, record count, and pagination status</td>
-<td>“Check the file location, record count, and pagination status. After
-this one-time setup, you can query and export using natural
-language.”</td>
+<td>文件保存和转换权限</td>
+<td>导出 CSV 或另存其他目录，需要 AI 应用具备本地文件处理能力。</td>
 </tr>
 </tbody>
 </table>
-<p>Record the CSV segment only after client-side file processing works.
-Otherwise, show the example prompt without presenting a simulated result
-as a successful export.</p>
-<p>Opening caption: “A local client may still send content to a cloud
-model. Use a locally hosted model and local file-processing tools when
-HR data must remain within your controlled environment.”</p>
-<h2 id="7-before-recording">7. Before recording</h2>
-<ul>
-<li>Start the service through Docker Compose; confirm MCP initialization and
-discovery of all five tools in the target AI client.</li>
-<li>Confirm that <code>list_tenants</code> identifies the intended
-tenant and a small live metadata or query request succeeds.</li>
-<li>Open the generated file under local <code>data/mcp/</code> and check
-its format. Make sure pagination status matches the narration.</li>
-<li>If demonstrating CSV or a custom folder, verify the actual file
-exists and its fields and record count match the source.</li>
-<li>Show only synthetic data and placeholder settings. Do not reveal
-real private keys, client keys, or employee details.</li>
-</ul>
-<p>Implementation references: <code>Dockerfile</code>,
-<code>docker-compose.mcp.yml</code>,
-<code>successfactors_toolkit/config.py</code>,
-<code>successfactors_toolkit/mcp_server.py</code>, and the credentials
-and tenant-store services.</p>
-<p>Verify that Docker Compose starts the pinned release image before recording. Live SF access, client-side conversion, and the custom-folder workflow must also be checked in the target environment. Local tests do not establish that an image has been published.</p>
-</div>
-<div class="language-panel" id="panel-zh-CN" lang="zh-CN" hidden><header class="hero"><div class="eyebrow">SUCCESSFACTORS TOOLKIT · QUICK START</div><div class="headline">从连接到导出，四步开始。</div><div class="steps">Docker 启动 → 配置 Credentials → 向 AI 提问 → 导出文件</div></header>
-<header id="zh-title-block-header" class="title-block">
-<h1 class="title">SuccessFactors Toolkit · Docker MCP 使用指南</h1>
-</header>
-<nav id="zh-TOC" role="doc-toc" class="toc" data-label="SUCCESSFACTORS / 使用指南">
-<ul>
-<li><a href="#zh-successfactors-toolkitdocker-mcp-%E4%B8%8A%E6%89%8B%E6%8C%87%E5%8D%97%E4%B8%8E%E5%BD%95%E5%B1%8F%E6%96%87%E6%A1%88" id="zh-toc-successfactors-toolkitdocker-mcp-上手指南与录屏文案">SuccessFactors
-Toolkit：Docker MCP 上手指南与录屏文案</a>
-<ul>
-<li><a href="#zh-%E5%85%88%E6%98%8E%E7%A1%AE%E5%BD%93%E5%89%8D%E7%89%88%E6%9C%AC%E7%9A%84%E8%A1%8C%E4%B8%BA" id="zh-toc-先明确当前版本的行为">先明确当前版本的行为</a></li>
-<li><a href="#zh-%E4%B8%80%E5%87%86%E5%A4%87-docker-%E9%95%9C%E5%83%8F" id="zh-toc-一准备-docker-镜像">一、配置 Docker Compose</a></li>
-<li><a href="#zh-%E4%BA%8C%E9%85%8D%E7%BD%AE-credentials-%E5%B9%B6%E6%94%BE%E5%85%A5%E6%8C%87%E5%AE%9A%E7%9B%AE%E5%BD%95" id="zh-toc-二配置-credentials-并放入指定目录">二、配置 credentials
-并放入指定目录</a></li>
-<li><a href="#zh-%E4%B8%89%E8%AE%A9-ai-%E5%AE%A2%E6%88%B7%E7%AB%AF%E9%80%9A%E8%BF%87-docker-%E5%90%AF%E5%8A%A8-mcp" id="zh-toc-三让-ai-客户端通过-docker-启动-mcp">三、让 AI 客户端通过 Docker
-启动 MCP</a></li>
-<li><a href="#zh-%E5%9B%9B%E5%BC%80%E5%A7%8B%E6%8F%90%E9%97%AE" id="zh-toc-四开始提问">四、开始提问</a></li>
-<li><a href="#zh-%E4%BA%94%E5%AF%BC%E5%87%BA-jsonxmlcsv-%E4%B8%8E%E8%87%AA%E5%AE%9A%E4%B9%89%E7%9B%AE%E5%BD%95" id="zh-toc-五导出-jsonxmlcsv-与自定义目录">五、导出 JSON、XML、CSV
-与自定义目录</a></li>
-<li><a href="#zh-%E5%85%AD%E7%BA%A6%E4%B8%89%E5%88%86%E9%92%9F%E5%BD%95%E5%B1%8F%E8%84%9A%E6%9C%AC" id="zh-toc-六约三分钟录屏脚本">六、约三分钟录屏脚本</a></li>
-<li><a href="#zh-%E4%B8%83%E5%BD%95%E5%88%B6%E5%89%8D%E9%AA%8C%E6%94%B6" id="zh-toc-七录制前验收">七、录制前验收</a></li>
-</ul></li>
-</ul>
-</nav>
-<h1 id="zh-successfactors-toolkitdocker-mcp-上手指南与录屏文案">SuccessFactors
-Toolkit：Docker MCP 上手指南与录屏文案</h1>
-<p>本文演示四件事：用 Docker 运行 MCP、配置 credentials、向 AI
-提问，以及导出查询结果。</p>
-<p>适用环境：macOS / Linux、本机 Docker，以及支持启动 stdio MCP 的 AI
-客户端。示例均为占位值；录屏使用测试租户与演示数据。</p>
 <blockquote>
-<p><strong>数据安全建议：优先使用本地部署，不建议通过在线 AI
-平台或第三方托管 MCP 服务处理敏感员工数据和凭据。</strong> 建议在本机
-Docker 中运行 MCP，使用本地 AI 客户端，并将 credentials
-和导出文件保存在本机。不要向在线平台上传私钥或员工数据文件。</p>
-<p><strong>本地客户端不等于本地模型。</strong>
-如果客户端调用云端模型，发送给模型的提问、工具返回值、数据预览或读取的文件内容仍可能离开本机。如果要求
-HR
-数据不离开受控环境，应使用本地部署的模型和本地文件处理工具，并核实客户端的数据外发行为。仅将
-MCP 放进本地 Docker 不能保证数据不外发；工具查询时仍需连接你配置的
-SuccessFactors 租户。</p>
+<p><strong>员工数据优先留在本地。</strong> 对敏感 HR
+数据，建议本地部署，不建议使用在线 AI
+平台。不要把私钥或连接密钥贴进聊天。桌面 AI
+应用仍可能调用云端模型；若公司要求数据不得离开受控环境，请 IT
+配置本地模型和本地文件处理工具。查询仍会连接指定的 SuccessFactors
+环境。</p>
 </blockquote>
-<h2 id="zh-先明确当前版本的行为">先明确当前版本的行为</h2>
+<h2 id="zh-business-启动本地工作环境">1. 启动本地工作环境</h2>
+<p>确认 Docker Desktop 或 IT 管理的 Docker 服务正在运行，再打开 IT 已配置好的 AI 应用。连接时，AI 应用会通过 Docker Compose 自动启动工具。</p>
+<p>首次使用，请把下方的“一次性设置”交给
+IT。完成后，日常使用不需要重复输入启动命令。</p>
+<p><strong>完成标志：</strong> AI 应用显示 SuccessFactors
+连接可用，或能回答第三步的连接检查。具体设置界面取决于所用 AI 应用。</p>
+<h2 id="zh-business-确认连接文件已就位">2.
+确认连接文件已就位</h2>
+<p>请 IT 确认文件已放入 sf-toolkit 下的 credentials 文件夹，文件名和 company ID 正确。你不需要打开或编辑这些文件。</p>
+<ul>
+<li>credentials：连接参数和安全文件，请保密。</li>
+<li>data：查询结果和导出文件，是日常工作要使用的目录。</li>
+</ul>
+<p>如果尚未准备文件，请管理员完成一次性设置。业务用户不需要自行生成证书或注册
+API 应用。</p>
+<p><strong>完成标志：</strong> IT
+已确认文件就位，且连接有权读取所需数据。</p>
+<h2 id="zh-business-确认连接再开始提问">3. 确认连接，再开始提问</h2>
+<p>先问：</p>
+<blockquote>
+<p>我现在连接的是哪个 SuccessFactors 环境？告诉我 company
+ID，不要显示任何连接密钥。</p>
+</blockquote>
+<p>确认环境正确。已配置环境不代表数据访问一定成功，再用一个获准使用的测试员工检查：</p>
+<blockquote>
+<p>在 demo 公司查询员工 DEMO001
+的当前岗位信息。告诉我查询是否成功、返回多少条记录。保存结果，不要在聊天里展示员工明细。</p>
+</blockquote>
+<p>把 demo 和 DEMO001
+换成实际获准使用的公司与员工标识。如果员工编号含义不明确，让 AI
+先确认需要哪一种标识。</p>
+<p>日常提问说清楚：<strong>查谁或什么、哪一天或哪个期间、需要哪些字段</strong>。例如：</p>
+<blockquote>
+<p>查询 demo 公司员工 DEMO001 在 2026 年 9 月 1
+日生效的职位名称、部门和公司。确认使用了哪些 SuccessFactors
+字段，保存结果并告诉我文件位置。</p>
+</blockquote>
+<p>不用自己写 API 查询。AI
+可能需要检查字段，或请你确认业务含义；使用结果前应核对其理解。历史数据一定要说明日期或期间。</p>
+<p><strong>完成标志：</strong> 在正确环境成功完成小范围查询，AI
+返回文件位置。零条记录可能只是没有匹配数据，并不一定是连接失败。</p>
+<h2 id="zh-business-导出结果">4. 导出结果</h2>
+<p>本配置默认将原始查询文件保存到本机
+sf-toolkit/data/mcp。找不到文件时，请 AI 提供本机完整路径。</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr class="header">
-<th>用户操作</th>
-<th>当前支持方式</th>
+<th>格式</th>
+<th>可以这样说</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>Docker 启动 MCP</td>
-<td>AI 客户端使用下方 Compose 配置，通过 <code>docker compose run --rm -T mcp</code> 启动 MCP。</td>
+<td>JSON</td>
+<td>“保留原始 JSON 查询结果，告诉我文件位置。”</td>
 </tr>
 <tr class="even">
-<td>配置 credentials</td>
-<td>环境文件保存连接参数，指定目录保存 PEM 私钥及证书，通过 Docker
-挂载读取。</td>
+<td>XML</td>
+<td>“查询该员工的 Compound Employee
+XML，保留原始文件。”需要正确的人员标识；数据较多时会生成多个文件。</td>
 </tr>
 <tr class="odd">
-<td>对话查询</td>
-<td>AI 客户端调用 MCP 的租户、元数据、OData 和 Compound Employee
-工具。</td>
+<td>Excel 使用的 CSV</td>
+<td>“将已保存的结果转换为 CSV，员工编号保留前导零，保存到
+sf-toolkit/data。”</td>
 </tr>
 <tr class="even">
-<td>导出 JSON / XML</td>
-<td>OData 查询原生保存 JSON；Compound Employee 原生按页保存 XML。</td>
-</tr>
-<tr class="odd">
-<td>导出 CSV 或其他格式</td>
-<td>需要 AI 客户端具备本地文件读写和转换能力；本 MCP
-没有通用格式转换工具。</td>
-</tr>
-<tr class="even">
-<td>默认保存到 data</td>
-<td>本教程显式设置 <code>RESULTS_DIR=/data</code>；原始结果位于电脑的
-<code>data/mcp/</code>。程序未经配置的默认目录是
-<code>results/mcp/</code>。</td>
-</tr>
-<tr class="odd">
-<td>对话指定其他 folder</td>
-<td>AI 客户端在其获准访问的目录中另存或转换文件；MCP
-查询工具本身没有逐次指定输出目录的参数。</td>
+<td>其他格式</td>
+<td>说明格式和字段要求；能否转换取决于 AI 应用的本地文件工具。</td>
 </tr>
 </tbody>
 </table>
-<h2 id="zh-一准备-docker-镜像">一、配置 Docker Compose</h2><p>使用 Docker Compose 2.30.0 或更新版本。创建 <code>~/sf-toolkit</code>，将以下内容保存为其中的 <code>compose.yaml</code>。把 <code>YOUR_UID:YOUR_GID</code> 替换为 <code>id -u</code> 与 <code>id -g</code> 的输出，例如 <code>501:20</code>。</p><pre class="yaml"><code>services:
+<p>仅连接本工具并不自动具备 CSV 转换能力。请 AI
+转换真实保存的文件，不要根据聊天摘要重建数据。在 Excel 中打开 CSV
+时，将员工编号列按文本导入。</p>
+<p>需要其他目录时：</p>
+<blockquote>
+<p>将 CSV 副本保存到我的 Reports/SF
+文件夹，不覆盖已有文件。告诉我完整路径、记录数，以及是否取得全部请求的数据。</p>
+</blockquote>
+<p>AI 应用需要目标目录的写入权限。原始查询文件仍留在
+data/mcp；若要改变今后的默认目录，请 IT 调整设置。</p>
+<p><strong>分享前检查：</strong>
+环境、日期范围、字段、记录数，以及查询是否完整结束。文件已生成不代表数据完整；如有缺失或限制，先让
+AI 解释再用于报告。</p>
+<h2 id="zh-business-遇到问题怎么办">遇到问题怎么办</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>现象</th>
+<th>操作</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>SuccessFactors 连接不可用</td>
+<td>确认 Docker Desktop 或 IT 管理的 Docker 服务正在运行，重新打开 AI 应用；仍失败时请 IT
+检查配置。</td>
+</tr>
+<tr class="even">
+<td>认证或权限错误</td>
+<td>请管理员检查连接文件、证书有效期和访问权限。提供错误信息，不发送密钥或员工数据。</td>
+</tr>
+<tr class="odd">
+<td>没有匹配记录</td>
+<td>检查环境、员工标识、生效日期和允许访问的数据范围。</td>
+</tr>
+<tr class="even">
+<td>无法生成 CSV 或另存目录</td>
+<td>请 IT 为 AI 应用启用获准的本地文件工具和目标目录访问权限。</td>
+</tr>
+<tr class="odd">
+<td>AI 说已保存但找不到文件</td>
+<td>问：“告诉我电脑上的完整路径，不要给 Docker 内部路径。”检查
+sf-toolkit/data/mcp。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="zh-business-三分钟演示">三分钟演示</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>时间</th>
+<th>展示</th>
+<th>旁白</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>00:00–00:30</td>
+<td>本地 AI 应用和 Docker Desktop</td>
+<td>“IT 完成首次设置后，打开这两个应用即可开始。”</td>
+</tr>
+<tr class="even">
+<td>00:30–01:00</td>
+<td>只展示目录名，不显示密钥</td>
+<td>“credentials 保存连接文件，data 保存结果。”</td>
+</tr>
+<tr class="odd">
+<td>01:00–01:30</td>
+<td>确认环境，查询测试员工</td>
+<td>“先确认环境，再说明员工、日期和所需字段。”</td>
+</tr>
+<tr class="even">
+<td>01:30–02:15</td>
+<td>已保存的测试结果</td>
+<td>“结果保存在本机，可以保留 JSON、原始员工 XML，或转换为 CSV。”</td>
+</tr>
+<tr class="odd">
+<td>02:15–03:00</td>
+<td>CSV 副本及本机完整路径</td>
+<td>“选择目录，检查记录数和完整性后再分享。”</td>
+</tr>
+</tbody>
+</table>
+<p>演示仅使用模拟数据。实际检查文件后才能展示为成功导出，不把模拟结果当成实时查询。真实访问和文件转换需要在目标环境及
+AI 应用中验证。</p>
+<h2 id="zh-business-一次性设置-供管理员使用">一次性设置 —
+供管理员使用</h2>
+<p>以下内容用于准备工作站。业务用户在 IT
+验证后返回第一步即可。先准备本地目录，再保存 Compose
+文件；用获准的配置替换所有示例值，并在交付前完成小范围查询测试。</p>
+<details><summary>展开连接参数与可复制配置</summary><h3 id="zh-一准备-docker-镜像">一、配置 Docker Compose</h3><p>使用 Docker Compose 2.30.0 或更新版本。创建 <code>~/sf-toolkit</code>，将以下内容保存为其中的 <code>compose.yaml</code>。把 <code>YOUR_UID:YOUR_GID</code> 替换为 <code>id -u</code> 与 <code>id -g</code> 的输出，例如 <code>501:20</code>。</p><pre class="yaml"><code>services:
   mcp:
     image: docker.io/wudaoyou/successfactors-toolkit@sha256:80a51e6917fed4508aad558803a2d7d9dc02d0b303f301ecb356f07baa73647a
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
@@ -828,8 +994,8 @@ SuccessFactors 租户。</p>
         bind:
           create_host_path: false
 </code></pre>
-<p>第三步由 AI 客户端通过 Compose 启动 MCP，Compose 自动获取固定版本镜像。无需单独下载镜像、获取源码、安装 Python 或自行构建；不开放网络端口。</p><p>镜像 digest 固定此配置使用的具体发布版本。</p><h2 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
-并放入指定目录</h2>
+<p>按下方客户端配置，由 AI 客户端通过 Compose 启动 MCP，Compose 自动获取固定版本镜像。无需单独下载镜像、获取源码、安装 Python 或自行构建；不开放网络端口。</p><p>镜像 digest 固定此配置使用的具体发布版本。</p><h3 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
+并放入指定目录</h3>
 <p>在代码仓库之外准备一个工作目录：</p>
 <pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
 chmod 700 "$HOME/sf-toolkit/credentials"</code></pre>
@@ -872,8 +1038,8 @@ RESULTS_DIR=/data</code></pre>
 <p>本指南通过 stdio 直接启动 MCP；<code>API_KEY</code> 和
 <code>ADMIN_API_KEY</code> 是 REST
 接口的访问配置，不是本流程的必填项。</p>
-<h2 id="zh-三让-ai-客户端通过-docker-启动-mcp">三、让 AI 客户端通过 Docker
-启动 MCP</h2><p>把 <code>/Users/YOUR_NAME/sf-toolkit</code> 换为实际绝对路径；JSON 不展开 <code>~</code>。在 AI 客户端的 MCP 设置中添加：</p><pre class="json"><code>{
+<h3 id="zh-三让-ai-客户端通过-docker-启动-mcp">三、让 AI 客户端通过 Docker
+启动 MCP</h3><p>把 <code>/Users/YOUR_NAME/sf-toolkit</code> 换为实际绝对路径；JSON 不展开 <code>~</code>。在 AI 客户端的 MCP 设置中添加：</p><pre class="json"><code>{
   &quot;mcpServers&quot;: {
     &quot;successfactors&quot;: {
       &quot;command&quot;: &quot;docker&quot;,
@@ -889,161 +1055,7 @@ RESULTS_DIR=/data</code></pre>
     }
   }
 }</code></pre>
-<p>重新加载配置，客户端通过 <code>docker compose run --rm -T mcp</code> 启动并以标准输入输出通信。保留 <code>-T</code>，不加 <code>-d</code>，不要用 <code>docker compose up</code> 启动这个 stdio 服务。若找不到 Docker，使用 <code>command -v docker</code> 返回的绝对路径。</p><p><code>compose.yaml</code> 中的 UID/GID 保持私钥权限及输出文件归属。先创建凭据和 data 目录，并允许 Docker Desktop 共享。连接后应发现 <code>list_tenants</code>、<code>odata_metadata</code>、<code>compare_metadata</code>、<code>odata_query</code>、<code>ce_query</code> 五个工具。</p><h2 id="zh-四开始提问">四、开始提问</h2>
-<p>第一句先确认配置：</p>
-<blockquote>
-<p>请列出这个 SuccessFactors MCP 已配置的租户，并告诉我默认 company
-ID。不要显示 credentials 内容。</p>
-</blockquote>
-<p>租户列表可用表示 MCP 和本地配置已连通，尚不代表 SF
-认证或查询权限通过。再做一次小范围查询：</p>
-<blockquote>
-<p>请检查 demo 租户的 EmpJob 元数据，告诉我 userId 和 jobCode
-字段是否存在。</p>
-</blockquote>
-<p>然后提出业务问题，明确租户、查询对象与范围：</p>
-<blockquote>
-<p>查询 demo 租户中 userId 为 DEMO001 的当前 EmpJob 记录，只取
-userId、startDate、jobCode、company。保存结果，告诉我记录数和文件位置，不要在对话里展示员工明细。</p>
-</blockquote>
-<p>这里的 <code>demo</code> 和 <code>DEMO001</code>
-都是示例值。查询历史数据时明确日期范围；否则有效日期实体通常只返回当前时间切片。</p>
-<p>需要查看字段值时，可明确要求少量预览。<code>preview</code> 只接受 0–20，超出范围会在查询前拒绝。预览还限制为 16 KiB（序列化后的 UTF-8）；合法条数的预览若超过字节上限，完整结果仍保存在文件中，响应返回 <code>preview_error</code> 提示本地查看。MCP 默认不返回明细，只返回统计和文件路径。</p>
-<h2 id="zh-五导出-jsonxmlcsv-与自定义目录">五、导出 JSON、XML、CSV
-与自定义目录</h2>
-<h3 id="zh-jsonodata-原生输出">JSON：OData 原生输出</h3>
-<blockquote>
-<p>请把刚才的 EmpJob 查询结果保留为
-JSON。确认分页是否结束，并告诉我总记录数以及电脑上的文件路径。</p>
-</blockquote>
-<p>OData 查询本身就会写出 JSON。工具返回的
-<code>/data/mcp/odata_query_…json</code>，对应电脑上的
-<code>~/sf-toolkit/data/mcp/odata_query_…json</code>。文件名由工具自动生成。</p>
-<h3 id="zh-xmlcompound-employee-原生输出">XML：Compound Employee
-原生输出</h3>
-<blockquote>
-<p>请查询 demo 租户中 person_id_external 为 DEMO001 的 Compound Employee
-数据，保留原始
-XML。告诉我页数、是否截断，以及每个文件在电脑上的位置。</p>
-</blockquote>
-<p>每一页单独保存为
-XML，不会自动合并成一个文件。<code>person_id_external</code> 与
-<code>userId</code> 是不同标识，应使用实际业务所需标识。</p>
-<h3 id="zh-csv由具备文件处理能力的-ai-客户端转换">CSV：由具备文件处理能力的
-AI 客户端转换</h3>
-<p>先允许 AI 客户端访问本机
-<code>~/sf-toolkit/data</code>，并具备执行转换代码或等效文件处理工具的能力。仅接入本
-MCP 的聊天客户端无法自动读取或转换本地文件。</p>
-<p>可以这样要求：</p>
-<blockquote>
-<p>将刚才查询生成的 JSON 转为 CSV，列为
-userId、startDate、jobCode、company。使用 UTF-8，保留 ID
-前导零，正确处理逗号、引号和换行。保存到我的
-sf-toolkit/data/empjob.csv；不要覆盖已有文件。完成后给我完整路径和记录数，并说明源查询是否完整。</p>
-</blockquote>
-<p>AI
-应从实际查询文件转换，不能从聊天摘要重建数据。遇到嵌套数组或多个历史记录，需要先明确每行代表什么；Excel
-自动打开 CSV 时也应将 ID 列按文本导入，避免前导零被自动去掉。</p>
-<p>其他格式也可提出，但能否生成取决于 AI
-客户端的转换能力和目标格式要求，不能承诺 MCP 原生支持任意格式。将 OData
-JSON 转为自定义 XML，也不等同于 SAP 原始 Compound Employee XML。</p>
-<h3 id="zh-自己指定-folder">自己指定 folder</h3>
-<p>有两种方式：</p>
-<ol type="1">
-<li><strong>本次另存</strong>：告诉 AI “将 CSV 另存到
-<code>/Users/YOUR_NAME/Reports/SF/empjob.csv</code>”。由 AI
-客户端在获准访问的本机目录中写入，原始 MCP 文件仍位于
-<code>data/mcp/</code>。</li>
-<li><strong>以后都存到新目录</strong>：提前创建目录，把 MCP
-配置中输出挂载的 <code>source: ./data</code> 改成新目录绝对路径，保留
-<code>target: /data</code> 与 <code>RESULTS_DIR=/data</code>，重启
-MCP。之后原始文件位于新目录的 <code>mcp/</code> 子目录。</li>
-</ol>
-<p>容器返回的是容器内路径。AI
-客户端在本机读取文件时，应根据挂载关系转换路径；不能假设本机也存在
-<code>/data</code>。</p>
-<p>导出完成前，OData 应检查 <code>stopped_reason</code>：只有
-<code>exhausted</code> 才表示本次查询分页结束。<code>max_pages</code>
-表示受页数限制，不能宣称全部导出。Compound Employee 应检查错误及
-<code>truncated</code>；文件已经存在不等于查询完整成功。</p>
-<h2 id="zh-六约三分钟录屏脚本">六、约三分钟录屏脚本</h2>
-<table>
-<thead>
-<tr class="header">
-<th>时间</th>
-<th>画面</th>
-<th>旁白</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>00:00–00:15</td>
-<td>标题、四步流程与“优先本地部署”提示</td>
-<td>“员工数据敏感，建议本地部署，不建议上传在线 AI 平台。下面演示 Docker
-启动、配置凭据、提问和导出。”</td>
-</tr>
-<tr class="even">
-<td>00:15–00:40</td>
-<td>展示 compose.yaml 中固定版本镜像和本地目录挂载</td>
-<td>“保存 Compose 配置，由 AI agent 通过 Compose 启动本机 MCP；镜像由 Compose 自动获取。”</td>
-</tr>
-<tr class="odd">
-<td>00:40–01:10</td>
-<td>展示示例目录树和只有占位值的 sf.env</td>
-<td>“把连接参数放在 credentials
-下的环境文件，把私钥和证书放进对应租户目录。真实凭据只保存在本机。data
-用来存查询结果。”</td>
-</tr>
-<tr class="even">
-<td>01:10–01:35</td>
-<td>展示替换好路径和 UID/GID 的 MCP 配置；客户端显示五个工具</td>
-<td>“添加 Docker MCP 配置。凭据目录只读挂载，data
-目录用于写入文件。重新加载后，客户端就能使用这五个工具。”</td>
-</tr>
-<tr class="odd">
-<td>01:35–02:00</td>
-<td>提问列出租户，再查询一个演示对象</td>
-<td>“先确认租户，再告诉 AI 你想查什么，例如员工的当前岗位信息。AI 调用
-MCP 查询 SuccessFactors，返回记录数和文件位置。”</td>
-</tr>
-<tr class="even">
-<td>02:00–02:25</td>
-<td>打开本机 data/mcp，只展示演示数据文件</td>
-<td>“OData 结果原生保存为 JSON，Compound Employee 原生保存为
-XML。这套配置会把文件保存到本机 data 下的 mcp 文件夹。”</td>
-</tr>
-<tr class="odd">
-<td>02:25–02:50</td>
-<td>输入 CSV 转换提示词；展示实际生成的 CSV</td>
-<td>“如果 AI 客户端有本地文件处理能力，还可以让它转换成 CSV
-或其他支持的格式，也可以要求另存到自己指定的文件夹。”</td>
-</tr>
-<tr class="even">
-<td>02:50–03:00</td>
-<td>展示最终路径、记录数、分页结束状态</td>
-<td>“最后确认文件位置、记录数和分页状态。配置好一次，之后就可以用自然语言查询并导出。”</td>
-</tr>
-</tbody>
-</table>
-<p>CSV
-镜头只在实际接通客户端文件处理能力后录制；未接通时展示提示词示例，不展示虚构的成功结果。</p>
-<p>录屏开场同时显示字幕：“本地客户端若调用云端模型，内容仍可能外发；要求
-HR 数据留在受控环境时，请使用本地模型和本地文件处理工具。”</p>
-<h2 id="zh-七录制前验收">七、录制前验收</h2>
-<ul>
-<li>通过 Docker Compose 启动，AI 客户端完成 MCP 初始化并发现五个工具。</li>
-<li><code>list_tenants</code>
-识别预期租户；一次真实的小范围元数据或查询请求成功。</li>
-<li>查询输出在本机 <code>data/mcp/</code>
-可见，能打开且格式正确；分页状态与旁白一致。</li>
-<li>如演示 CSV
-或自定义目录，确认实际文件已生成、字段和记录数与原始数据一致。</li>
-<li>录制只显示演示数据和占位配置，不显示真实私钥、客户端密钥或员工明细。</li>
-</ul>
-<p>本文核对依据：<code>Dockerfile</code>、<code>docker-compose.mcp.yml</code>、<code>successfactors_toolkit/config.py</code>、<code>successfactors_toolkit/mcp_server.py</code>、credentials
-与 tenant_store 实现。</p>
-<p>录制前需验证Compose 能启动已验证的版本，并在目标环境验证真实 SF 访问、客户端格式转换和自定义目录操作。本地测试不能证明镜像已经发布。</p>
-</div><script>
+<p>重新加载配置，客户端通过 <code>docker compose run --rm -T mcp</code> 启动并以标准输入输出通信。保留 <code>-T</code>，不加 <code>-d</code>，不要用 <code>docker compose up</code> 启动这个 stdio 服务。若找不到 Docker，使用 <code>command -v docker</code> 返回的绝对路径。</p><p><code>compose.yaml</code> 中的 UID/GID 保持私钥权限及输出文件归属。先创建凭据和 data 目录，并允许 Docker Desktop 共享。连接后应发现 <code>list_tenants</code>、<code>odata_metadata</code>、<code>compare_metadata</code>、<code>odata_query</code>、<code>ce_query</code> 五个工具。</p></details></div><script>
 const picker = document.getElementById('guide-language');
 picker.addEventListener('change', () => {
   const language = picker.value;

@@ -32,36 +32,23 @@ SAP and SuccessFactors are trademarks of SAP SE.
 > guarantee this. The toolkit still connects to your configured SuccessFactors
 > tenant to query data.
 
-Use an AI agent that can launch a local stdio MCP server. Docker runs the
-toolkit; your client asks questions and, when it has local file-processing
-tools, converts or saves the resulting files in your chosen format or folder.
+For functional consultants and business key users, start with the
+[business user guide](docs/DOCKER_MCP_GUIDE.md) or its
+[English/Chinese HTML edition](docs/DOCKER_MCP_GUIDE.html).
+Ask IT to complete the one-time Docker Compose setup and provide approved
+connection files. Then:
 
-1. **Set up Docker Compose:** follow the
-   [guide](docs/DOCKER_MCP_GUIDE.md#1-set-up-docker-compose) to save
-   `compose.yaml` with the pinned release image. Your AI agent starts
-   MCP with `docker compose run --rm -T mcp`; Compose obtains the image
-   automatically. No separate image download or local build is needed.
-2. **Configure credentials:** keep `sf.env` and tenant key/certificate files
-   under `~/sf-toolkit/credentials/`, outside the repository. Mount the tenant
-   directory read-only and load `sf.env` through the Compose `env_file` setting.
-3. **Ask questions:** list configured tenants, verify access with a small
-   metadata query, then request the records you need.
-4. **Export:** set `RESULTS_DIR=/data` and bind-mount `~/sf-toolkit/data` at
-   `/data`. Raw MCP files then appear in `~/sf-toolkit/data/mcp/`. Ask a
-   file-capable AI agent to convert them to CSV or another supported format,
-   or save a copy in another authorized local folder.
+1. Check Docker Desktop or your IT-managed Docker service is running, then open your local AI application.
+2. Confirm with IT that the connection files are in `sf-toolkit/credentials`.
+3. Confirm the SuccessFactors environment and ask for the employee, date,
+   and information you need.
+4. Find results under `sf-toolkit/data/mcp`. Ask a file-capable AI application
+   for CSV or another supported format, or a copy in an authorized folder.
 
-Follow the [step-by-step guide and recording script](docs/DOCKER_MCP_GUIDE.md)
-for the exact directory layout, environment file, Docker MCP client configuration,
-and example prompts. An [offline HTML edition](docs/DOCKER_MCP_GUIDE.html)
-is also available with an English/Chinese language selector (English by default):
-download it and open it in a browser.
-
-The guide configures `data` as the output folder; the unconfigured program
-default remains `results/mcp/`. OData queries write JSON and Compound Employee
-queries write one XML file per page. This MCP does not itself provide arbitrary
-format conversion or a per-call output-folder argument. See
-[Export formats and folders](#export-formats-and-folders).
+The guide includes example business questions, completion checks,
+troubleshooting, and expandable one-time settings for your administrator.
+Original OData results are JSON; Compound Employee results are XML.
+CSV conversion requires local file tools in the AI application.
 
 ## REST API setup: it's fail-closed
 
