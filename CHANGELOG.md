@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-20
+
 ### Changed
 
 - Reframe onboarding for functional consultants and business key users, with
@@ -150,7 +152,8 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.2
 [0.1.1]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1
 [0.1.0]: https://github.com/wudaoyou/successfactors-toolkit/tree/v0.1.0
 [0.1.0-rc.2]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.0-rc.2
