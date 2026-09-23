@@ -229,7 +229,7 @@ See `.env.example` for a filled-in starting point and
 | `SF_COMPANY_ID` | Default tenant/company ID. |
 | `SF_TOKEN_URL` | `https://{SF_HOST}/oauth/token`. |
 | `SF_ODATA_VERSION` | OData REST version, default `v2`. |
-| `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `30`. |
+| `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `120` (long-running queries can take minutes per SAP KBA 2735876). |
 | `TENANT_KEYS_DIR` | Where per-tenant key+cert pairs are stored (see below). Default `./tenants`. |
 | `RESULTS_DIR` | Payload output root. Program default: `./results`; MCP adds `/mcp/`. The Docker MCP guide sets `/data` and mounts a host `data` folder there. |
 

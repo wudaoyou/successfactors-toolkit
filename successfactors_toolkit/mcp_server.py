@@ -97,7 +97,11 @@ mcp = MCPServer(
         "relatedPersonIdExternal via relationshipType (picklist); "
         "$expand=relNationalIdNav returns dependents' IDs in the same call.\n"
         "- To check whether a national ID exists, select only cardType/country "
-        "— never nationalId values unless the user asks for them."
+        "— never nationalId values unless the user asks for them.\n"
+        "- Multi-value filters: `field in 'a','b'` (no parens), never "
+        "`eq...or eq...`; chunk lists over ~1000 values or long URLs.\n"
+        "- User returns active users only by default; add "
+        "`status in 't','f','T','F'` for inactive too."
     ),
 )
 
@@ -351,6 +355,32 @@ def _entity_from_path(path: str) -> str:
     return base.strip("/")
 
 
+def _looks_like_paging_rejection(body: str) -> bool:
+    """SF rejects server-side paging on some entities (e.g.
+    PerPersonRelationship) with a 400 body such as 'Cursor based pagination
+    not supported by PerPersonRelationship'."""
+    lowered = body.lower()
+    return "not supported" in lowered and ("paging" in lowered or "pagination" in lowered)
+
+
+async def _retry_extract_dropping(
+    odata: ODataClient,
+    path: str,
+    conn: ODataConnectionConfig,
+    query_params: dict[str, Any],
+    max_pages: int,
+    param: str,
+    warning: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Drop `param` (an auto-added value SF just rejected) and retry
+    extract_all once. Returns the new result and, only if the retry itself
+    didn't also error, `warning` for the caller to surface — otherwise the
+    outer http_error handling will report the real reason instead."""
+    query_params.pop(param, None)
+    r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
+    return r, (warning if r["stopped_reason"] not in ("http_error", "parse_error") else None)
+
+
 def _diff_field_maps(a: _FieldMap, b: _FieldMap) -> dict[str, Any]:
     """Per-entity differences between two field maps, entities in both only."""
     out: dict[str, Any] = {}
@@ -547,10 +577,13 @@ async def odata_query(
     entity's key properties (reported as `orderby_added`) so $skip paging
     can't duplicate or skip rows; if keys are unknown or unsortable, or SF
     rejects it, the query runs without and a warning says so — then pass
-    $orderby yourself. Rows are checked for duplicate keys when every key
-    field is in the records (`duplicate_records` + warning if found). A final
-    page exactly $top-sized with no __next gets a truncation warning (some
-    MDF entities stop early); resume with $skip and an explicit $orderby.
+    $orderby yourself. Same condition also adds paging=snapshot for
+    server-side paging (reported as `paging_added`); if SF rejects it for
+    that entity, the retry drops it and warns. Rows are checked for
+    duplicate keys when every key field is in the records (`duplicate_records`
+    + warning if found). A final page exactly $top-sized with no __next gets
+    a truncation warning (some MDF entities stop early); resume with $skip
+    and an explicit $orderby.
 
     Records are written to a JSON file; the tool returns counts, the field names
     of the first record, and the path. preview accepts 0-20; values above zero
@@ -567,6 +600,7 @@ async def odata_query(
     merged_view = {**path_params, **query_params}  # what will actually be sent, for peeking
     warnings: list[str] = []
     orderby_added: str | None = None
+    paging_added: str | None = None
     keys: list[str] | None = None
     # "Paged pull" = pagination is possible at all; a single-page request can't
     # produce cross-page duplicates/gaps, so there's nothing to order or dedupe.
@@ -590,23 +624,55 @@ async def odata_query(
                     "be determined from $metadata; paged results may contain duplicated "
                     "or skipped rows. Pass $orderby explicitly to avoid this."
                 )
+        if "paging" not in merged_view:
+            paging_added = "snapshot"
+            query_params["paging"] = paging_added
 
     r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
+
+    if r["stopped_reason"] == "http_error" and paging_added:
+        # Server-side paging isn't supported on every entity (e.g.
+        # PerPersonRelationship); only retry without it when SF's error body
+        # actually says so, rather than blindly assuming it's the cause.
+        detail = await odata.request("GET", path, conn=conn, params=query_params)
+        if _looks_like_paging_rejection(str(detail["body"])):
+            rejected_paging = paging_added
+            paging_added = None
+            r, warning = await _retry_extract_dropping(
+                odata,
+                path,
+                conn,
+                query_params,
+                max_pages,
+                "paging",
+                f"Auto-added paging={rejected_paging} was rejected by SuccessFactors "
+                "for this entity; retried without it, so multi-page results use "
+                "client-side $skip paging instead. Pass paging explicitly if this "
+                "matters.",
+            )
+            if warning:
+                warnings.append(warning)
+
     if r["stopped_reason"] == "http_error" and orderby_added:
         # A key that looked sortable in $metadata (or stale/incomplete
         # metadata) can still get a 400 from SF. Retry once without forcing
         # an order rather than failing a query that would otherwise work.
         rejected_orderby = orderby_added
-        query_params.pop("$orderby", None)
         orderby_added = None
-        r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
-        if r["stopped_reason"] not in ("http_error", "parse_error"):
-            warnings.append(
-                f"Auto-added $orderby={rejected_orderby} was rejected by "
-                "SuccessFactors; retried without it, so page ordering (and "
-                "duplicate/skip safety) is not guaranteed. Pass a working $orderby "
-                "explicitly if this matters."
-            )
+        r, warning = await _retry_extract_dropping(
+            odata,
+            path,
+            conn,
+            query_params,
+            max_pages,
+            "$orderby",
+            f"Auto-added $orderby={rejected_orderby} was rejected by "
+            "SuccessFactors; retried without it, so page ordering (and "
+            "duplicate/skip safety) is not guaranteed. Pass a working $orderby "
+            "explicitly if this matters.",
+        )
+        if warning:
+            warnings.append(warning)
 
     if r["stopped_reason"] in ("http_error", "parse_error"):
         # extract_all keeps the status but drops the response body, and SF puts
@@ -665,6 +731,8 @@ async def odata_query(
     }
     if orderby_added:
         out["orderby_added"] = orderby_added
+    if paging_added:
+        out["paging_added"] = paging_added
     if duplicate_records > 0:
         out["duplicate_records"] = duplicate_records
         warnings.append(

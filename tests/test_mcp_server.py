@@ -659,6 +659,155 @@ def test_odata_query_retries_without_orderby_when_sf_rejects_it(monkeypatch, tmp
     assert any("rejected" in w for w in result["warnings"])
 
 
+def test_odata_query_adds_snapshot_paging_for_multi_page_reads(monkeypatch, tmp_path):
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob"))
+
+    assert result["paging_added"] == "snapshot"
+    assert odata.extract_calls[0][2]["paging"] == "snapshot"
+
+
+def test_odata_query_does_not_override_caller_supplied_paging(monkeypatch, tmp_path):
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", params={"paging": "cursor"}))
+
+    assert "paging_added" not in result
+    assert odata.extract_calls[0][2]["paging"] == "cursor"
+
+
+def test_odata_query_does_not_override_paging_given_in_path(monkeypatch, tmp_path):
+    # "paging=cursor" lives in path's own query string, not in query_params —
+    # the client merges the two later (split_path_query); odata_query must
+    # still recognise it's present and skip adding its own.
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob?paging=cursor"))
+
+    assert "paging_added" not in result
+    assert "paging" not in odata.extract_calls[0][2]
+
+
+def test_odata_query_does_not_add_paging_for_a_single_page_request(monkeypatch, tmp_path):
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", max_pages=1))
+
+    assert "paging_added" not in result
+    assert "paging" not in odata.extract_calls[0][2]
+
+
+class _PagingRetryOData:
+    """Fails the first extract_all call with SF's "paging not supported"
+    error (as PerPersonRelationship does for cursor paging); metadata lookups
+    fail too so orderby_added never gets involved, isolating the paging
+    fallback."""
+
+    def __init__(self, success_result):
+        self.success_result = success_result
+        self.extract_calls: list[tuple] = []
+        self.request_calls: list[str] = []
+        # query_params is a single dict mutated in place across retries, so a
+        # stored reference reflects its *final* state, not what it held at
+        # call time — capture the value eagerly instead (mirrors
+        # _RetryOData.orderby_seen above).
+        self.paging_seen: list[Any] = []
+
+    async def request(self, method, path, conn=None, params=None, body=None, extra_headers=None):
+        self.request_calls.append(path)
+        if path.rstrip("/").endswith("$metadata"):
+            return {"status_code": 403, "headers": {}, "body": "no permission"}
+        return {
+            "status_code": 400,
+            "headers": {},
+            "body": "Snapshot based pagination not supported by PerPersonRelationship",
+        }
+
+    async def extract_all(self, path, conn=None, params=None, max_pages=10):
+        self.extract_calls.append((path, conn, params, max_pages))
+        self.paging_seen.append((params or {}).get("paging"))
+        if len(self.extract_calls) == 1:
+            return {
+                "stopped_reason": "http_error",
+                "last_status_code": 400,
+                "total_records": 0,
+                "pages_fetched": 0,
+                "next_skiptoken": None,
+                "results": [],
+                "last_page_size": 0,
+            }
+        return self.success_result
+
+
+def test_odata_query_retries_without_paging_when_sf_rejects_it(monkeypatch, tmp_path):
+    odata = _PagingRetryOData(
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"personIdExternal": "1"}],
+            "last_page_size": 1,
+        }
+    )
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(mcp_server.odata_query(path="PerPersonRelationship"))
+
+    assert len(odata.extract_calls) == 2
+    assert odata.paging_seen == ["snapshot", None]
+    assert result["total_records"] == 1
+    assert "paging_added" not in result
+    assert any("paging" in w.lower() and "rejected" in w.lower() for w in result["warnings"])
+
+
 def test_instructions_and_tool_descriptions_fit_client_truncation_limit():
     # Claude Code cuts server instructions and tool descriptions at 2048 chars.
     assert len(mcp_server.mcp.instructions) <= 2048

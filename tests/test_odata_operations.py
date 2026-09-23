@@ -9,7 +9,13 @@ import pytest
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.models.common import ODataConnectionConfig
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError
-from successfactors_toolkit.services.odata_client import ODataClient
+from successfactors_toolkit.services.odata_client import (
+    _MAX_FILTER_ENCODED_LEN,
+    _MAX_RETRY_AFTER_SECONDS,
+    ODataClient,
+    _encoded_len,
+    _parse_retry_after,
+)
 
 
 def client_for(handler, monkeypatch):
@@ -145,3 +151,73 @@ def test_resolve_rejects_a_host_outside_the_connection_policy(monkeypatch):
     assert client._resolve(ODataConnectionConfig(host="api4preview.sapsf.com"))["host"] == (
         "api4preview.sapsf.com"
     )
+
+
+def test_parse_retry_after_caps_at_300_seconds():
+    assert _parse_retry_after("100000") == _MAX_RETRY_AFTER_SECONDS
+    assert _parse_retry_after("120") == 120.0
+    assert _parse_retry_after(None) == 1.0
+
+
+def test_extract_by_filter_in_builds_bare_in_clause_and_escapes_quotes(monkeypatch):
+    # No parentheses around the value list — SF 400s on `in (...)`. Values
+    # are deduplicated, and an embedded single quote is doubled per OData
+    # literal escaping.
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"d": {"results": []}})
+
+    client = client_for(handler, monkeypatch)
+    asyncio.run(
+        client.extract_by_filter_in(
+            "FOCompany",
+            "externalCode",
+            ["A", "B", "A", "O'Brien"],
+            params={"$filter": "status eq 'A'"},
+        )
+    )
+
+    assert len(requests) == 1
+    sent_filter = requests[0].url.params["$filter"]
+    assert sent_filter == "(status eq 'A') and (externalCode in 'A','B','O''Brien')"
+
+
+def test_extract_by_filter_in_chunks_by_count(monkeypatch):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"d": {"results": []}})
+
+    client = client_for(handler, monkeypatch)
+    values = [f"v{i}" for i in range(5)]
+    result = asyncio.run(
+        client.extract_by_filter_in("FOCompany", "externalCode", values, chunk_size=2)
+    )
+
+    assert len(requests) == 3
+    assert result["chunks_processed"] == 3
+    assert [d["chunk_size"] for d in result["chunk_diagnostics"]] == [2, 2, 1]
+
+
+def test_extract_by_filter_in_chunks_by_encoded_url_length(monkeypatch):
+    # None of these values are anywhere near the 1000-count cap, but a long
+    # enough value list must still split before the encoded $filter gets too
+    # large for a GET URL.
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"d": {"results": []}})
+
+    client = client_for(handler, monkeypatch)
+    values = [f"value-{i:04d}" for i in range(500)]  # count well under 1000
+    result = asyncio.run(client.extract_by_filter_in("FOCompany", "externalCode", values))
+
+    assert len(requests) > 1, "a long enough value list must be split on length, not just count"
+    for request in requests:
+        assert _encoded_len(request.url.params["$filter"]) <= _MAX_FILTER_ENCODED_LEN
+    assert result["total_records"] == 0
+    assert sum(d["chunk_size"] for d in result["chunk_diagnostics"]) == len(values)
