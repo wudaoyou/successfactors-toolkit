@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-23
+
 ### Added
 
 - `odata_metadata` now lists an entity's navigation properties (name, target
@@ -236,7 +238,8 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.2.0
 [0.1.2]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.2
 [0.1.1]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1
