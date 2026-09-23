@@ -657,3 +657,10 @@ def test_odata_query_retries_without_orderby_when_sf_rejects_it(monkeypatch, tmp
     assert result["total_records"] == 1
     assert "orderby_added" not in result
     assert any("rejected" in w for w in result["warnings"])
+
+
+def test_instructions_and_tool_descriptions_fit_client_truncation_limit():
+    # Claude Code cuts server instructions and tool descriptions at 2048 chars.
+    assert len(mcp_server.mcp.instructions) <= 2048
+    for tool in asyncio.run(mcp_server.mcp.list_tools()):
+        assert len(tool.description or "") <= 2048, tool.name

@@ -17,16 +17,18 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ### Changed
 
-- MCP server `instructions` gained a "Scope with EmpJob first" section: most
-  business scoping conditions (company, location, department, employee
-  status, ...) live on EmpJob — confirm the filter there, then apply it to
-  other entities via navigation in `$filter` (standard paths for
-  EmpEmployment, PerPerson, Per* entities, and BenefitEnrollment) instead of
-  pulling whole entity sets and joining locally. It also says to filter
-  employment status explicitly on EmpJob rather than relying on navigation
-  through `User`, and to check national IDs by `cardType`/`country` without
-  selecting the ID values. `odata_query`'s docstring points to the same
-  pattern.
+- MCP server `instructions` rewritten as an ordered query workflow: decide
+  the population filter (usually on EmpJob, with employment status explicit),
+  list the needed entities, push the filter into each via navigation in
+  `$filter` (standard paths listed), and only pull an entity in full when no
+  path exists. Also: resolve codes in bulk, and check national IDs by
+  `cardType`/`country` without selecting the ID values.
+
+### Fixed
+
+- Server instructions and the `odata_query` description are now under 2048
+  characters. Claude Code truncates at that length, so the query guidance
+  was partly cut off before reaching the model. A test enforces the limit.
 
 ## [0.2.0] - 2026-09-23
 

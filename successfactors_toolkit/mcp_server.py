@@ -63,68 +63,41 @@ async def _lifespan(server):
 mcp = MCPServer(
     name="successfactors",
     lifespan=_lifespan,
+    # Claude Code truncates server instructions (and tool descriptions) at
+    # 2048 chars — keep both under that; tests enforce it.
     instructions=(
-        "SAP SuccessFactors access: OData v2 (any entity set) and the EC "
-        "Compound Employee SOAP API. Call list_tenants first to learn which "
-        "instances are configured and what company_id to pass. To compare "
-        "configuration between two instances use compare_metadata, which does "
-        "the diff server-side; do not fetch both metadata documents and diff "
-        "them yourself. Large results are written to a file and the tool "
-        "returns the path plus counts — read the file when you need the "
-        "records themselves. The path is inside the MCP server's container; "
-        "if you're running the server via Docker, it maps to the host "
-        "directory bound to RESULTS_DIR (see the deployment's compose file), "
-        "not a path on the machine the model is reasoning from.\n\n"
-        "How to query well:\n"
-        "- Pass $select/$filter/$orderby/$top etc. via odata_query's `params`, "
-        "not appended to `path` — see that tool's docstring for how the two "
-        "combine.\n"
-        "- Always $select only the fields you need; unscoped reads on wide "
-        "entities (EmpJob, CompoundEmployee segments) are slow and bloat the "
-        "saved file.\n"
-        "- Effective-dated entities (EmpJob, Position, FO*, MDF) return only "
-        "today's time slice unless you pass fromDate/toDate or asOfDate.\n"
-        "- To resolve picklist/foreign-key codes to labels, don't do it with "
-        "N+1 calls. Either $expand the relevant navigation property in one "
-        "odata_query call (e.g. EmpJob with "
-        "$expand=jobCodeNav,locationNav&$select=...,jobCodeNav/name,... — the "
-        "nav property is usually `<field>Nav`), or look values up in bulk via "
-        "the PicklistOption / PickListValueV2 entities.\n"
-        "- Common EC join keys: EmpJob/EmpEmployment/BenefitEnrollment join on "
-        "userId (BenefitEnrollment's field is named workerId but holds the "
-        "same value); Per* entities (PerPerson, PerNationalId, ...) join on "
-        "personIdExternal; EmpEmployment carries both userId and "
-        "personIdExternal, so it's the bridge between the two families; "
-        "PerPersonRelationship links an employee's personIdExternal to a "
-        "dependent's relatedPersonIdExternal via a relationshipType picklist; "
-        "PerNationalId holds national ID numbers keyed by country and "
-        "cardType. Verify field names for the entity you're using with "
-        "odata_metadata before relying on them.\n"
-        "- Scope with EmpJob first: most business scoping conditions (company, "
-        "location, department, employee status, ...) live on EmpJob. Work "
-        "through this before pulling whole entity sets and joining locally:\n"
-        "  1. Decide the population filter. Usually it's on EmpJob, e.g. "
-        "company or status. Confirm it there and note the population size.\n"
-        "  2. List the entities the question needs.\n"
-        "  3. For each entity, check whether the same filter can be applied "
-        "directly or through a navigation path (verify with odata_metadata, "
-        "which lists navigation properties).\n"
-        "  4. If it can, filter server-side (fast, small). If it can't, pull "
-        "the entity in full and join locally.\n"
-        "Standard navigation paths: EmpEmployment -> `jobInfoNav/...`; "
-        "PerPerson -> `employmentNav/jobInfoNav/...`; Per* entities with "
-        "personNav (PerPersonRelationship, PerNationalId, ...) -> "
-        "`personNav/employmentNav/jobInfoNav/...`; BenefitEnrollment -> "
-        "`workerIdNav/empInfo/jobInfoNav/...`. PerPersonRelationship can "
-        "$expand=relNationalIdNav to pull a dependent's national ID in the "
-        "same call. Put employment status in the filter explicitly (EmpJob "
-        "emplStatus, resolved via picklist) — never rely on a navigation path "
-        "to drop terminated employees: paths through User (workerIdNav, "
-        "userNav, ...) drop some inactive users but not all. Navigation "
-        "property names vary by entity; confirm them with odata_metadata.\n"
-        "- National IDs and other sensitive values: to check whether an ID "
-        "exists, select only cardType/country (or isPrimary), never "
-        "nationalId itself, unless the user explicitly asks for the values."
+        "SAP SuccessFactors: OData v2 (any entity set) and the EC Compound "
+        "Employee SOAP API. Call list_tenants first for company_id. Diff two "
+        "instances with compare_metadata (server-side). Large results go to a "
+        "file (container path; under Docker it's the host dir bound to "
+        "RESULTS_DIR) — read it for the records.\n\n"
+        "How to query (in order):\n"
+        "1. Decide the population filter first, usually on EmpJob (company, "
+        "location, department, emplStatus). Put employment status in it "
+        "explicitly; never rely on a navigation path to drop terminated "
+        "employees.\n"
+        "2. List the entities the question needs.\n"
+        "3. Apply the same filter to each entity server-side, directly or via "
+        "navigation in $filter: EmpEmployment `jobInfoNav/...`; PerPerson "
+        "`employmentNav/jobInfoNav/...`; Per* with personNav "
+        "(PerPersonRelationship, PerNationalId, ...) "
+        "`personNav/employmentNav/jobInfoNav/...`; BenefitEnrollment "
+        "`workerIdNav/empInfo/jobInfoNav/...`. odata_metadata lists an "
+        "entity's navigation properties. Only when no path exists, pull the "
+        "entity in full and join locally.\n"
+        "4. Resolve codes in bulk: $expand the `<field>Nav`, or query "
+        "PicklistOption with `id in (...)` — no N+1 calls.\n\n"
+        "Also:\n"
+        "- Pass options in odata_query `params`; $select only needed fields.\n"
+        "- Effective-dated entities (EmpJob, Position, FO*, MDF) return "
+        "today's slice unless you pass fromDate/toDate or asOfDate.\n"
+        "- Join keys: userId (EmpJob, EmpEmployment, BenefitEnrollment "
+        "workerId); personIdExternal (Per*); EmpEmployment bridges both. "
+        "PerPersonRelationship maps personIdExternal to a dependent's "
+        "relatedPersonIdExternal via relationshipType (picklist); "
+        "$expand=relNationalIdNav returns dependents' IDs in the same call.\n"
+        "- To check whether a national ID exists, select only cardType/country "
+        "— never nationalId values unless the user asks for them."
     ),
 )
 
@@ -566,34 +539,18 @@ async def odata_query(
     on conflicts). Always $select only the fields you need. Effective-dated
     entities (EmpJob, Position, FO*, MDF) return ONLY today's time slice unless
     you pass fromDate=1900-01-01 and toDate=9999-12-31 (or asOfDate) in params.
-    To scope a query to a business population (company, location, status, ...),
-    confirm the condition on EmpJob first and push it into other entities via
-    navigation in $filter (e.g. `personNav/employmentNav/jobInfoNav/company`)
-    instead of pulling whole entity sets — see the server's "Scope with EmpJob
-    first" guidance.
+    Scope with a population filter pushed through navigation in $filter
+    (e.g. `personNav/employmentNav/jobInfoNav/company in (...)`) rather than
+    pulling whole entity sets — see the server instructions.
 
-    When max_pages > 1 and no $orderby is given (in path or params), one is
-    added automatically from the entity's $metadata key properties, so pages
-    stay stable while $skip/$skiptoken walks them — without a stable order,
-    SF can return the same row twice or skip one between pages. The result
-    reports `orderby_added` when this happened. A warning is added instead,
-    and the query still runs without one, when the key properties can't be
-    determined, or when they're known but not sortable (SF rejects $orderby
-    on those); if SF still rejects the auto-added $orderby (e.g. stale
-    metadata), the query is retried once without it and a warning says so.
-    Consider passing $orderby yourself if you see either warning. Rows already
-    in the result are also checked for duplicates by key — but only when every
-    key property is present in the returned records, since an incomplete
-    $select can make distinct rows collide on a missing key field; there is no
-    full-record fallback, since two rows can legitimately share every
-    *selected* non-key field. `duplicate_records` and a warning appear only
-    when duplicates were both checked for and found.
-
-    Some entities (MDF/custom objects) have been observed to stop returning
-    __next before all data is actually exhausted. A page that comes back
-    exactly $top-sized with no __next is flagged with a warning suggesting a
-    manual resume with $skip and an explicit $orderby — this does not change
-    what the tool returns, only what it tells you about it.
+    When max_pages > 1 and no $orderby is given, one is added from the
+    entity's key properties (reported as `orderby_added`) so $skip paging
+    can't duplicate or skip rows; if keys are unknown or unsortable, or SF
+    rejects it, the query runs without and a warning says so — then pass
+    $orderby yourself. Rows are checked for duplicate keys when every key
+    field is in the records (`duplicate_records` + warning if found). A final
+    page exactly $top-sized with no __next gets a truncation warning (some
+    MDF entities stop early); resume with $skip and an explicit $orderby.
 
     Records are written to a JSON file; the tool returns counts, the field names
     of the first record, and the path. preview accepts 0-20; values above zero
