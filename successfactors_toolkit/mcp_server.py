@@ -63,43 +63,45 @@ async def _lifespan(server):
 mcp = MCPServer(
     name="successfactors",
     lifespan=_lifespan,
+    # Claude Code truncates server instructions (and tool descriptions) at
+    # 2048 chars — keep both under that; tests enforce it.
     instructions=(
-        "SAP SuccessFactors access: OData v2 (any entity set) and the EC "
-        "Compound Employee SOAP API. Call list_tenants first to learn which "
-        "instances are configured and what company_id to pass. To compare "
-        "configuration between two instances use compare_metadata, which does "
-        "the diff server-side; do not fetch both metadata documents and diff "
-        "them yourself. Large results are written to a file and the tool "
-        "returns the path plus counts — read the file when you need the "
-        "records themselves. The path is inside the MCP server's container; "
-        "if you're running the server via Docker, it maps to the host "
-        "directory bound to RESULTS_DIR (see the deployment's compose file), "
-        "not a path on the machine the model is reasoning from.\n\n"
-        "How to query well:\n"
-        "- Pass $select/$filter/$orderby/$top etc. via odata_query's `params`, "
-        "not appended to `path` — see that tool's docstring for how the two "
-        "combine.\n"
-        "- Always $select only the fields you need; unscoped reads on wide "
-        "entities (EmpJob, CompoundEmployee segments) are slow and bloat the "
-        "saved file.\n"
-        "- Effective-dated entities (EmpJob, Position, FO*, MDF) return only "
-        "today's time slice unless you pass fromDate/toDate or asOfDate.\n"
-        "- To resolve picklist/foreign-key codes to labels, don't do it with "
-        "N+1 calls. Either $expand the relevant navigation property in one "
-        "odata_query call (e.g. EmpJob with "
-        "$expand=jobCodeNav,locationNav&$select=...,jobCodeNav/name,... — the "
-        "nav property is usually `<field>Nav`), or look values up in bulk via "
-        "the PicklistOption / PickListValueV2 entities.\n"
-        "- Common EC join keys: EmpJob/EmpEmployment/BenefitEnrollment join on "
-        "userId (BenefitEnrollment's field is named workerId but holds the "
-        "same value); Per* entities (PerPerson, PerNationalId, ...) join on "
-        "personIdExternal; EmpEmployment carries both userId and "
-        "personIdExternal, so it's the bridge between the two families; "
-        "PerPersonRelationship links an employee's personIdExternal to a "
-        "dependent's relatedPersonIdExternal via a relationshipType picklist; "
-        "PerNationalId holds national ID numbers keyed by country and "
-        "cardType. Verify field names for the entity you're using with "
-        "odata_metadata before relying on them."
+        "SAP SuccessFactors: OData v2 (any entity set) and the EC Compound "
+        "Employee SOAP API. Call list_tenants first for company_id. Diff two "
+        "instances with compare_metadata (server-side). Large results go to a "
+        "file (container path; under Docker it's the host dir bound to "
+        "RESULTS_DIR) — read it for the records.\n\n"
+        "How to query (in order):\n"
+        "1. Decide the population filter first, usually on EmpJob (company, "
+        "location, department, emplStatus). Put employment status in it "
+        "explicitly; never rely on a navigation path to drop terminated "
+        "employees.\n"
+        "2. List the entities the question needs.\n"
+        "3. Apply the same filter to each entity server-side, directly or via "
+        "navigation in $filter: EmpEmployment `jobInfoNav/...`; PerPerson "
+        "`employmentNav/jobInfoNav/...`; Per* with personNav "
+        "(PerPersonRelationship, PerNationalId, ...) "
+        "`personNav/employmentNav/jobInfoNav/...`; BenefitEnrollment "
+        "`workerIdNav/empInfo/jobInfoNav/...`. odata_metadata lists an "
+        "entity's navigation properties. Only when no path exists, pull the "
+        "entity in full and join locally.\n"
+        "4. Resolve codes in bulk: $expand the `<field>Nav`, or query "
+        "PicklistOption with `id in 1,2,...` — no N+1 calls.\n\n"
+        "Also:\n"
+        "- Pass options in odata_query `params`; $select only needed fields.\n"
+        "- Effective-dated entities (EmpJob, Position, FO*, MDF) return "
+        "today's slice unless you pass fromDate/toDate or asOfDate.\n"
+        "- Join keys: userId (EmpJob, EmpEmployment, BenefitEnrollment "
+        "workerId); personIdExternal (Per*); EmpEmployment bridges both. "
+        "PerPersonRelationship maps personIdExternal to a dependent's "
+        "relatedPersonIdExternal via relationshipType (picklist); "
+        "$expand=relNationalIdNav returns dependents' IDs in the same call.\n"
+        "- To check whether a national ID exists, select only cardType/country "
+        "— never nationalId values unless the user asks for them.\n"
+        "- Multi-value filters: `field in 'a','b'` (no parens), never "
+        "`eq...or eq...`; chunk lists over ~1000 values or long URLs.\n"
+        "- User returns active users only by default; add "
+        "`status in 't','f','T','F'` for inactive too."
     ),
 )
 
@@ -143,6 +145,17 @@ def _write(content: str, tool: str, company_id: str, suffix: str) -> str:
     return str(path)
 
 
+def _edmx_root(xml: str):
+    """Parse EDMX with the hardened settings every parser below needs (no
+    DTD/external entities, no network) and reject a DOCTYPE outright."""
+    root = etree.fromstring(
+        xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
+    )
+    if root.getroottree().docinfo.doctype:
+        raise etree.XMLSyntaxError("DOCTYPE is not supported", 0, 0, 0)
+    return root
+
+
 def _parse_edmx(xml: str) -> dict[str, dict[str, dict[str, str]]]:
     """EDMX -> {EntityType: {Property: {attribute: value}}}.
 
@@ -150,11 +163,7 @@ def _parse_edmx(xml: str) -> dict[str, dict[str, dict[str, str]]]:
     (sap:label, sap:required, sap:picklist, ...) stay readable — those
     annotations are the actual configuration being compared across instances.
     """
-    root = etree.fromstring(
-        xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
-    )
-    if root.getroottree().docinfo.doctype:
-        raise etree.XMLSyntaxError("DOCTYPE is not supported", 0, 0, 0)
+    root = _edmx_root(xml)
     out: dict[str, dict[str, dict[str, str]]] = {}
     for entity in root.iter("{*}EntityType"):
         out[entity.get("Name", "")] = {
@@ -180,11 +189,7 @@ def _parse_edmx_keys(xml: str) -> dict[str, list[str]]:
     though the key itself is known. Missing sap:sortable is treated as sortable
     (SAP's own default).
     """
-    root = etree.fromstring(
-        xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
-    )
-    if root.getroottree().docinfo.doctype:
-        raise etree.XMLSyntaxError("DOCTYPE is not supported", 0, 0, 0)
+    root = _edmx_root(xml)
     out: dict[str, list[str]] = {}
     for entity in root.iter("{*}EntityType"):
         key_names = [
@@ -197,6 +202,49 @@ def _parse_edmx_keys(xml: str) -> dict[str, list[str]]:
         if key_names and any(sortable.get(name) == "false" for name in key_names):
             key_names = []
         out[entity.get("Name", "")] = key_names
+    return out
+
+
+_NavMap = dict[str, list[dict[str, str]]]
+
+
+def _parse_edmx_navs(xml: str) -> _NavMap:
+    """EDMX -> {EntityType: [{name, target, filterable}, ...]}.
+
+    Only the full service EDMX carries NavigationProperty/Association
+    elements at all — entity-scoped $metadata omits them. `target` is the
+    navigation's target EntityType, resolved via the NavigationProperty's
+    Relationship -> the matching Association's End for ToRole; if an
+    Association can't be matched (unexpected EDMX shape), `target` falls
+    back to the raw ToRole so the caller still gets something useful.
+    """
+    root = _edmx_root(xml)
+    # Association name -> {Role: target EntityType local name}
+    associations: dict[str, dict[str, str]] = {}
+    for assoc in root.iter("{*}Association"):
+        ends = {}
+        for end in assoc.iter("{*}End"):
+            role, type_attr = end.get("Role", ""), end.get("Type", "")
+            ends[role] = type_attr.rsplit(".", 1)[-1] if type_attr else ""
+        associations[assoc.get("Name", "")] = ends
+
+    out: _NavMap = {}
+    for entity in root.iter("{*}EntityType"):
+        navs = []
+        for nav in entity.iter("{*}NavigationProperty"):
+            relationship = nav.get("Relationship", "")
+            to_role = nav.get("ToRole", "")
+            assoc_name = relationship.rsplit(".", 1)[-1] if relationship else ""
+            target = associations.get(assoc_name, {}).get(to_role) or to_role
+            navs.append(
+                {
+                    "name": nav.get("Name", ""),
+                    "target": target,
+                    "filterable": nav.get(f"{{{_SAP_NS}}}filterable", "true"),
+                }
+            )
+        if navs:
+            out[entity.get("Name", "")] = navs
     return out
 
 
@@ -270,11 +318,67 @@ async def _entity_key_properties(company_id: str, entity: str) -> list[str] | No
     return keys
 
 
+# Navigation properties only appear in the *full* service $metadata (entity-
+# scoped $metadata omits NavigationProperty entirely), and on a real tenant
+# that document can run to ~11 MB — so it's fetched at most once per
+# company_id per process. Only the parsed nav map is cached, never the raw
+# XML, per the same rationale as _key_cache.
+_nav_cache: dict[str, tuple[_NavMap, dict[str, Any] | None]] = {}
+
+
+async def _nav_properties(company_id: str) -> tuple[_NavMap, dict[str, Any] | None]:
+    """Best-effort {EntityType: [nav, ...]} for the whole service, for
+    odata_metadata to enrich its per-entity output with. Never raises: a
+    failure (or an unreachable/oversized full $metadata) is returned as a
+    warning dict and cached as such, so it can't break odata_metadata's
+    existing field output and isn't retried on every call.
+    """
+    if company_id in _nav_cache:
+        return _nav_cache[company_id]
+    navs: _NavMap = {}
+    error: dict[str, Any] | None = None
+    try:
+        xml, error = await _fetch_metadata_xml(company_id, "")
+        if error is None:
+            navs = _parse_edmx_navs(xml)
+    except Exception as exc:
+        error = {"error": "nav_parse_error", "company_id": company_id, "detail": str(exc)}
+    result = (navs, error)
+    _nav_cache[company_id] = result
+    return result
+
+
 def _entity_from_path(path: str) -> str:
     """Best-effort entity-set name from an odata_query path, e.g.
     "EmpJob('123')?$select=x" -> "EmpJob"."""
     base = path.split("?", 1)[0].split("(", 1)[0]
     return base.strip("/")
+
+
+def _looks_like_paging_rejection(body: str) -> bool:
+    """SF rejects server-side paging on some entities (e.g.
+    PerPersonRelationship) with a 400 body such as 'Cursor based pagination
+    not supported by PerPersonRelationship'."""
+    lowered = body.lower()
+    return "not supported" in lowered and ("paging" in lowered or "pagination" in lowered)
+
+
+async def _retry_extract_dropping(
+    odata: ODataClient,
+    path: str,
+    conn: ODataConnectionConfig,
+    query_params: dict[str, Any],
+    max_pages: int,
+    param: str,
+    warning: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Drop `param` (an auto-added value SF just rejected) and retry
+    extract_all once. Returns the new result and, only if the retry itself
+    didn't also error, `warning` for the caller to surface — otherwise the
+    outer http_error handling will report the real reason instead."""
+    query_params.pop(param, None)
+    r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
+    return r, (warning if r["stopped_reason"] not in ("http_error", "parse_error") else None)
 
 
 def _diff_field_maps(a: _FieldMap, b: _FieldMap) -> dict[str, Any]:
@@ -333,6 +437,9 @@ def list_tenants() -> dict[str, Any]:
     }
 
 
+_NAV_INLINE_CAP = 50
+
+
 @mcp.tool()
 async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, Any]:
     """Fetch OData $metadata (EDMX) and reduce it to a compact field map.
@@ -341,22 +448,53 @@ async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, An
     types); entity="EmpJob" pulls just that entity set. The full
     {entity: {field: attributes}} map is written to a JSON file, and a small
     map is returned inline as well, so two instances can be compared without
-    ever loading raw EDMX into the conversation.
+    ever loading raw EDMX into the conversation. When entity is given, its
+    navigation properties (name, target entity type, filterable) are listed
+    too — entity-scoped $metadata doesn't carry them, so this resolves them
+    from the full service $metadata instead (fetched once per company_id per
+    process, then cached); a lookup failure is reported as a warning and
+    never blocks the field output above. Use the navigation names to scope
+    filters into other entities via $filter (see the server's "Scope with
+    EmpJob first" guidance and odata_query's docstring) instead of pulling
+    whole entity sets and joining locally.
     """
     fields, error = await _field_map(company_id, entity)
     if error is not None:
         return error
 
-    doc = json.dumps(fields, indent=2, sort_keys=True, ensure_ascii=False)
+    fields_doc = json.dumps(fields, indent=2, sort_keys=True, ensure_ascii=False)
+    navigation: list[dict[str, str]] = []
+    nav_warning: str | None = None
+    if entity:
+        nav_map, nav_error = await _nav_properties(company_id)
+        if nav_error is not None:
+            nav_warning = (
+                f"navigation properties unavailable: {nav_error.get('error', 'unknown error')}"
+            )
+        navigation = nav_map.get(entity, [])
+
+    file_doc = json.dumps(
+        {"fields": fields, "navigation": navigation}, indent=2, sort_keys=True, ensure_ascii=False
+    )
     out: dict[str, Any] = {
         "entity_count": len(fields),
         "field_count": sum(len(v) for v in fields.values()),
-        "file": _write(doc, "odata_metadata", company_id, "json"),
+        "file": _write(file_doc, "odata_metadata", company_id, "json"),
     }
-    if len(doc) <= _INLINE_LIMIT:
+    if len(fields_doc) <= _INLINE_LIMIT:
         out["fields"] = fields
     else:
         out["entities"] = sorted(fields)
+
+    if entity:
+        out["navigation"] = navigation[:_NAV_INLINE_CAP]
+        if len(navigation) > _NAV_INLINE_CAP:
+            out["navigation_note"] = (
+                f"{len(navigation)} navigation properties total; showing the first "
+                f"{_NAV_INLINE_CAP} inline — see file for the rest."
+            )
+        if nav_warning:
+            out["navigation_warning"] = nav_warning
     return out
 
 
@@ -431,29 +569,21 @@ async def odata_query(
     on conflicts). Always $select only the fields you need. Effective-dated
     entities (EmpJob, Position, FO*, MDF) return ONLY today's time slice unless
     you pass fromDate=1900-01-01 and toDate=9999-12-31 (or asOfDate) in params.
+    Scope with a population filter pushed through navigation in $filter
+    (e.g. `personNav/employmentNav/jobInfoNav/company in (...)`) rather than
+    pulling whole entity sets — see the server instructions.
 
-    When max_pages > 1 and no $orderby is given (in path or params), one is
-    added automatically from the entity's $metadata key properties, so pages
-    stay stable while $skip/$skiptoken walks them — without a stable order,
-    SF can return the same row twice or skip one between pages. The result
-    reports `orderby_added` when this happened. A warning is added instead,
-    and the query still runs without one, when the key properties can't be
-    determined, or when they're known but not sortable (SF rejects $orderby
-    on those); if SF still rejects the auto-added $orderby (e.g. stale
-    metadata), the query is retried once without it and a warning says so.
-    Consider passing $orderby yourself if you see either warning. Rows already
-    in the result are also checked for duplicates by key — but only when every
-    key property is present in the returned records, since an incomplete
-    $select can make distinct rows collide on a missing key field; there is no
-    full-record fallback, since two rows can legitimately share every
-    *selected* non-key field. `duplicate_records` and a warning appear only
-    when duplicates were both checked for and found.
-
-    Some entities (MDF/custom objects) have been observed to stop returning
-    __next before all data is actually exhausted. A page that comes back
-    exactly $top-sized with no __next is flagged with a warning suggesting a
-    manual resume with $skip and an explicit $orderby — this does not change
-    what the tool returns, only what it tells you about it.
+    When max_pages > 1 and no $orderby is given, one is added from the
+    entity's key properties (reported as `orderby_added`) so $skip paging
+    can't duplicate or skip rows; if keys are unknown or unsortable, or SF
+    rejects it, the query runs without and a warning says so — then pass
+    $orderby yourself. Same condition also adds paging=snapshot for
+    server-side paging (reported as `paging_added`); if SF rejects it for
+    that entity, the retry drops it and warns. Rows are checked for
+    duplicate keys when every key field is in the records (`duplicate_records`
+    + warning if found). A final page exactly $top-sized with no __next gets
+    a truncation warning (some MDF entities stop early); resume with $skip
+    and an explicit $orderby.
 
     Records are written to a JSON file; the tool returns counts, the field names
     of the first record, and the path. preview accepts 0-20; values above zero
@@ -470,6 +600,7 @@ async def odata_query(
     merged_view = {**path_params, **query_params}  # what will actually be sent, for peeking
     warnings: list[str] = []
     orderby_added: str | None = None
+    paging_added: str | None = None
     keys: list[str] | None = None
     # "Paged pull" = pagination is possible at all; a single-page request can't
     # produce cross-page duplicates/gaps, so there's nothing to order or dedupe.
@@ -493,23 +624,55 @@ async def odata_query(
                     "be determined from $metadata; paged results may contain duplicated "
                     "or skipped rows. Pass $orderby explicitly to avoid this."
                 )
+        if "paging" not in merged_view:
+            paging_added = "snapshot"
+            query_params["paging"] = paging_added
 
     r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
+
+    if r["stopped_reason"] == "http_error" and paging_added:
+        # Server-side paging isn't supported on every entity (e.g.
+        # PerPersonRelationship); only retry without it when SF's error body
+        # actually says so, rather than blindly assuming it's the cause.
+        detail = await odata.request("GET", path, conn=conn, params=query_params)
+        if _looks_like_paging_rejection(str(detail["body"])):
+            rejected_paging = paging_added
+            paging_added = None
+            r, warning = await _retry_extract_dropping(
+                odata,
+                path,
+                conn,
+                query_params,
+                max_pages,
+                "paging",
+                f"Auto-added paging={rejected_paging} was rejected by SuccessFactors "
+                "for this entity; retried without it, so multi-page results use "
+                "client-side $skip paging instead. Pass paging explicitly if this "
+                "matters.",
+            )
+            if warning:
+                warnings.append(warning)
+
     if r["stopped_reason"] == "http_error" and orderby_added:
         # A key that looked sortable in $metadata (or stale/incomplete
         # metadata) can still get a 400 from SF. Retry once without forcing
         # an order rather than failing a query that would otherwise work.
         rejected_orderby = orderby_added
-        query_params.pop("$orderby", None)
         orderby_added = None
-        r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
-        if r["stopped_reason"] not in ("http_error", "parse_error"):
-            warnings.append(
-                f"Auto-added $orderby={rejected_orderby} was rejected by "
-                "SuccessFactors; retried without it, so page ordering (and "
-                "duplicate/skip safety) is not guaranteed. Pass a working $orderby "
-                "explicitly if this matters."
-            )
+        r, warning = await _retry_extract_dropping(
+            odata,
+            path,
+            conn,
+            query_params,
+            max_pages,
+            "$orderby",
+            f"Auto-added $orderby={rejected_orderby} was rejected by "
+            "SuccessFactors; retried without it, so page ordering (and "
+            "duplicate/skip safety) is not guaranteed. Pass a working $orderby "
+            "explicitly if this matters.",
+        )
+        if warning:
+            warnings.append(warning)
 
     if r["stopped_reason"] in ("http_error", "parse_error"):
         # extract_all keeps the status but drops the response body, and SF puts
@@ -568,6 +731,8 @@ async def odata_query(
     }
     if orderby_added:
         out["orderby_added"] = orderby_added
+    if paging_added:
+        out["paging_added"] = paging_added
     if duplicate_records > 0:
         out["duplicate_records"] = duplicate_records
         warnings.append(

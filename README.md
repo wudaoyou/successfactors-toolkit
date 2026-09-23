@@ -229,7 +229,7 @@ See `.env.example` for a filled-in starting point and
 | `SF_COMPANY_ID` | Default tenant/company ID. |
 | `SF_TOKEN_URL` | `https://{SF_HOST}/oauth/token`. |
 | `SF_ODATA_VERSION` | OData REST version, default `v2`. |
-| `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `30`. |
+| `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `120` (long-running queries can take minutes per SAP KBA 2735876). |
 | `TENANT_KEYS_DIR` | Where per-tenant key+cert pairs are stored (see below). Default `./tenants`. |
 | `RESULTS_DIR` | Payload output root. Program default: `./results`; MCP adds `/mcp/`. The Docker MCP guide sets `/data` and mounts a host `data` folder there. |
 
@@ -446,7 +446,7 @@ SAML Bearer flow, tenant key store, and pagination logic as the REST API:
 | Tool | Arguments | Returns |
 |---|---|---|
 | `list_tenants` | — | Registered tenants (cert expiry) plus the `.env` default. |
-| `odata_metadata` | `company_id`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. |
+| `odata_metadata` | `company_id`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. When `entity` is given, its navigation properties (name, target entity, filterable) are included too — resolved from the full service `$metadata` (cached per `company_id`) since entity-scoped `$metadata` omits them. |
 | `compare_metadata` | `company_a`, `company_b`, `entity` | `in_sync`, a summary, and the per-entity drift, diffed server-side. |
 | `odata_query` | `path`, `company_id`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview` accepts 0-20 and values above zero inline only when at most 16 KiB. Query options may be passed in `path` (`"EmpJob?$select=..."`) or `params` — both are merged, `params` wins on conflict. When paging and no `$orderby` is given, one is added automatically from the entity's key properties (reported as `orderby_added`); `duplicate_records` and `warnings` (missing keys, suspected silent truncation) are surfaced when relevant. |
 | `ce_query` | `company_id`, `person_id_external`, `user_id`, `last_modified_on`, `include_contingent_workers`, `select_segments`, `max_rows`, `max_pages` | Counts and one XML file path per page. |
