@@ -112,6 +112,31 @@ def test_token_cache_is_isolated_by_company(monkeypatch):
     assert client._token_key(a) != client._token_key(b)
 
 
+def test_path_query_options_merge_with_explicit_params(monkeypatch):
+    # "EmpJob?$filter=...&$top=..." was previously silently dropped: httpx
+    # replaces rather than merges a URL's own query when `params=` is also
+    # passed to Client.request(). Explicit params must still win on conflict.
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"d": {"results": []}})
+
+    client = client_for(handler, monkeypatch)
+    asyncio.run(
+        client.request(
+            "GET",
+            "EmpJob?$filter=jobCode eq '1'&$top=5",
+            params={"$select": "userId", "$top": "10"},
+        )
+    )
+
+    sent = requests[0].url.params
+    assert sent["$filter"] == "jobCode eq '1'"
+    assert sent["$select"] == "userId"
+    assert sent["$top"] == "10", "explicit params must win over the path's own value"
+
+
 def test_resolve_rejects_a_host_outside_the_connection_policy(monkeypatch):
     client = client_for(lambda request: httpx.Response(200), monkeypatch)
     with pytest.raises(ConnectionPolicyError):

@@ -15,6 +15,16 @@ import pytest
 from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import get_settings
 
+
+@pytest.fixture(autouse=True)
+def _clear_entity_key_cache():
+    # _entity_key_properties caches per (company_id, entity) for the life of
+    # the process; tests reuse the same entity names against different fakes,
+    # so a stale cache entry from one test would leak into the next.
+    mcp_server._key_cache.clear()
+    yield
+
+
 _EDMX = """<?xml version="1.0" encoding="utf-8"?>
 <edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx" Version="1.0">
   <edmx:DataServices xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
@@ -272,3 +282,170 @@ def test_odata_query_failure_surfaces_the_upstream_error_body(monkeypatch, tmp_p
     assert result["status_code"] == 403
     assert "No permission" in result["body"], "the status code alone never says why"
     assert not (tmp_path / "results").exists()
+
+
+# EmpJob keyed on (userId, startDate) — enough to exercise auto-$orderby.
+_EDMX_WITH_KEY = """<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx" Version="1.0">
+  <edmx:DataServices xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
+    <Schema xmlns="http://schemas.microsoft.com/ado/2008/09/edm"
+            xmlns:sap="http://www.sap.com/Protocols/SAPData" Namespace="SFOData">
+      <EntityType Name="EmpJob">
+        <Key>
+          <PropertyRef Name="userId"/>
+          <PropertyRef Name="startDate"/>
+        </Key>
+        <Property Name="userId" Type="Edm.String"/>
+        <Property Name="startDate" Type="Edm.DateTime"/>
+        <Property Name="jobCode" Type="Edm.String"/>
+      </EntityType>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>
+"""
+
+
+class _KeyedOData:
+    """Serves $metadata (with a Key, for auto-$orderby lookups) plus a canned
+    extract_all result, so pagination-correctness logic can be tested without
+    a real tenant."""
+
+    def __init__(self, extract_result, metadata_xml=_EDMX_WITH_KEY, metadata_status=200):
+        self.extract_result = extract_result
+        self.metadata_xml = metadata_xml
+        self.metadata_status = metadata_status
+        self.extract_calls: list[tuple] = []
+        self.metadata_calls: list[str] = []
+
+    async def request(self, method, path, conn=None, params=None, body=None, extra_headers=None):
+        self.metadata_calls.append(path)
+        return {"status_code": self.metadata_status, "headers": {}, "body": self.metadata_xml}
+
+    async def extract_all(self, path, conn=None, params=None, max_pages=10):
+        self.extract_calls.append((path, conn, params, max_pages))
+        return self.extract_result
+
+
+def _install_keyed(monkeypatch, tmp_path, extract_result, **kwargs):
+    odata = _KeyedOData(extract_result, **kwargs)
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+    return odata
+
+
+def test_odata_query_auto_adds_orderby_and_counts_duplicates(monkeypatch, tmp_path):
+    # The third row repeats the first row's key — simulates the unstable
+    # paging that drops/duplicates rows when no $orderby is given.
+    rows = [
+        {"userId": "1", "startDate": "2020-01-01", "jobCode": "A"},
+        {"userId": "2", "startDate": "2020-01-01", "jobCode": "B"},
+        {"userId": "1", "startDate": "2020-01-01", "jobCode": "A"},
+    ]
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": len(rows),
+            "pages_fetched": 2,
+            "next_skiptoken": None,
+            "results": rows,
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob"))
+
+    assert result["orderby_added"] == "userId,startDate"
+    assert odata.extract_calls[0][2]["$orderby"] == "userId,startDate", (
+        "the derived $orderby must actually reach extract_all"
+    )
+    assert result["duplicate_records"] == 1
+    assert any("duplicate" in w for w in result["warnings"])
+
+
+def test_odata_query_respects_an_explicit_orderby(monkeypatch, tmp_path):
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "jobCode": "A"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", params={"$orderby": "jobCode"}))
+
+    assert "orderby_added" not in result
+    assert odata.extract_calls[0][2]["$orderby"] == "jobCode"
+
+
+def test_odata_query_warns_when_keys_cannot_be_determined(monkeypatch, tmp_path):
+    # $metadata itself fails (permission, unknown entity, ...): auto-$orderby
+    # must degrade to a warning, not fail the whole query.
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"id": "1"}],
+            "last_page_size": 1,
+        },
+        metadata_status=403,
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="cust_MDFObject"))
+
+    assert "orderby_added" not in result
+    assert odata.extract_calls[0][2].get("$orderby") is None
+    assert any("could not be determined" in w for w in result["warnings"])
+
+
+def test_odata_query_warns_on_suspected_silent_truncation(monkeypatch, tmp_path):
+    rows = [{"userId": str(i), "startDate": "d"} for i in range(100)]
+    _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 100,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": rows,
+            "last_page_size": 100,
+        },
+    )
+
+    # max_pages=1 so this also proves the truncation check doesn't depend on
+    # the auto-$orderby / duplicate-counting path being active.
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", params={"$top": 100}, max_pages=1))
+
+    assert any("exactly $top=100" in w for w in result["warnings"])
+
+
+def test_odata_query_does_not_warn_when_page_is_smaller_than_top(monkeypatch, tmp_path):
+    rows = [{"userId": "1", "startDate": "d"}]
+    _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": rows,
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", params={"$top": 100}, max_pages=1))
+
+    assert "warnings" not in result

@@ -24,7 +24,7 @@ import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse, urlsplit
+from urllib.parse import parse_qs, parse_qsl, unquote, urlparse, urlsplit
 
 import httpx
 
@@ -63,6 +63,21 @@ def _parse_retry_after(value: str | None) -> float:
             return min(max(delta, 0.0), _MAX_RETRY_AFTER_SECONDS)
         except (TypeError, ValueError):
             return 1.0
+
+
+def split_path_query(path: str) -> tuple[str, dict[str, str]]:
+    """Split any ``?query`` off an OData path into (clean_path, params).
+
+    Query options embedded in ``path`` (e.g. ``"EmpJob?$filter=...&$select=..."``)
+    must be pulled out before the request URL is built: httpx *replaces* rather
+    than merges a URL's existing query string when ``params=`` is also passed to
+    ``Client.request()``, so leaving them baked into the path silently drops
+    them. Exposed (not module-private) so callers that need to know what a path
+    already asks for — e.g. detecting a caller-supplied ``$orderby`` — can reuse
+    the same parsing instead of re-deriving it.
+    """
+    base, sep, query = path.partition("?")
+    return (base, dict(parse_qsl(query, keep_blank_values=True))) if sep else (path, {})
 
 
 def _extract_skiptoken(next_url: str) -> str | None:
@@ -195,6 +210,10 @@ class ODataClient:
         body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        # Query options embedded in the path (e.g. "EmpJob?$select=userId") are
+        # pulled out here so they reach the request instead of being silently
+        # dropped when `params` is also merged in below (see split_path_query).
+        path, path_params = split_path_query(path)
         r = self._resolve(conn)
         base_url = f"https://{r['host']}/odata/{r['version']}"
         url = _odata_url(r["host"], r["version"], path)
@@ -206,8 +225,9 @@ class ODataClient:
         # §5.5.2.6 the server otherwise returns Atom XML.
         # The document may be asked for whole ('$metadata') or scoped to a
         # single entity set ('EmpJob/$metadata'); both are EDMX.
-        is_metadata = path.split("?", 1)[0].rstrip("/").endswith("$metadata")
-        effective_params: dict[str, Any] = dict(params or {})
+        is_metadata = path.rstrip("/").endswith("$metadata")
+        # Explicit `params` win over whatever the path already asked for.
+        effective_params: dict[str, Any] = {**path_params, **(params or {})}
         if not is_metadata and "$format" not in effective_params:
             effective_params["$format"] = "JSON"
 
@@ -297,6 +317,10 @@ class ODataClient:
                                                 # params to resume.
               "last_status_code": int,
               "last_headers": dict,
+              "last_page_size": int,            # records on the final page
+                                                # fetched — lets a caller spot
+                                                # a page that filled exactly
+                                                # to $top with no __next.
               "stopped_reason": str,            # 'exhausted'|'max_pages'|
                                                 # 'http_error'|'parse_error'
             }
@@ -306,6 +330,7 @@ class ODataClient:
         last_status = 0
         last_headers: dict[str, str] = {}
         pages = 0
+        last_page_size = 0
         next_skiptoken: str | None = None
         stopped = "exhausted"
 
@@ -327,6 +352,7 @@ class ODataClient:
             d = body.get("d", body)  # tolerant: some endpoints don't wrap in 'd'
             results = d.get("results", []) if isinstance(d, dict) else []
             all_results.extend(results)
+            last_page_size = len(results)
             pages += 1
 
             next_link = d.get("__next") if isinstance(d, dict) else None
@@ -352,6 +378,7 @@ class ODataClient:
             "next_skiptoken": next_skiptoken,
             "last_status_code": last_status,
             "last_headers": last_headers,
+            "last_page_size": last_page_size,
             "stopped_reason": stopped,
         }
 
