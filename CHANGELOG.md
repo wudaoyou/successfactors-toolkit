@@ -4,6 +4,29 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- `odata_metadata` now lists an entity's navigation properties (name, target
+  entity type, filterable) alongside its fields. Entity-scoped `$metadata`
+  doesn't carry `NavigationProperty` elements, so these are resolved from the
+  full service `$metadata` instead, fetched once per `company_id` per process
+  and cached; a lookup failure is reported as a warning and never blocks the
+  existing field output. The written JSON file now has the shape
+  `{"fields": ..., "navigation": [...]}`; the inline result caps the
+  navigation list at 50 entries with a note when more exist.
+
+### Changed
+
+- MCP server `instructions` gained a "Scope with EmpJob first" section: most
+  business scoping conditions (company, location, department, employee
+  status, ...) live on EmpJob — confirm the filter there, then apply it to
+  other entities via navigation in `$filter` (standard paths for
+  EmpEmployment, PerPerson, Per* entities, and BenefitEnrollment) instead of
+  pulling whole entity sets and joining locally, with a caveat that
+  navigating through `User` (`workerIdNav`, `userNav`, ...) excludes
+  inactive/terminated users. `odata_query`'s docstring points to the same
+  pattern.
+
 ## [0.2.0] - 2026-09-23
 
 ### Fixed

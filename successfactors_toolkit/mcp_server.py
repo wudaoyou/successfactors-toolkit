@@ -99,7 +99,30 @@ mcp = MCPServer(
         "dependent's relatedPersonIdExternal via a relationshipType picklist; "
         "PerNationalId holds national ID numbers keyed by country and "
         "cardType. Verify field names for the entity you're using with "
-        "odata_metadata before relying on them."
+        "odata_metadata before relying on them.\n"
+        "- Scope with EmpJob first: most business scoping conditions (company, "
+        "location, department, employee status, ...) live on EmpJob. Work "
+        "through this before pulling whole entity sets and joining locally:\n"
+        "  1. Decide the population filter. Usually it's on EmpJob, e.g. "
+        "company or status. Confirm it there and note the population size.\n"
+        "  2. List the entities the question needs.\n"
+        "  3. For each entity, check whether the same filter can be applied "
+        "directly or through a navigation path (verify with odata_metadata, "
+        "which lists navigation properties).\n"
+        "  4. If it can, filter server-side (fast, small). If it can't, pull "
+        "the entity in full and join locally.\n"
+        "Standard navigation paths: EmpEmployment -> `jobInfoNav/...`; "
+        "PerPerson -> `employmentNav/jobInfoNav/...`; Per* entities with "
+        "personNav (PerPersonRelationship, PerNationalId, ...) -> "
+        "`personNav/employmentNav/jobInfoNav/...`; BenefitEnrollment -> "
+        "`workerIdNav/empInfo/jobInfoNav/...`. PerPersonRelationship can "
+        "$expand=relNationalIdNav to pull a dependent's national ID in the "
+        "same call. Caveat: navigating through User (workerIdNav, userNav, "
+        "...) excludes inactive/terminated users, since User returns only "
+        "active users by default — if inactive employees matter (e.g. "
+        "terminated employees who keep benefits), cross-check counts or join "
+        "locally instead. Navigation property names vary by entity; confirm "
+        "them with odata_metadata."
     ),
 )
 
@@ -143,6 +166,17 @@ def _write(content: str, tool: str, company_id: str, suffix: str) -> str:
     return str(path)
 
 
+def _edmx_root(xml: str):
+    """Parse EDMX with the hardened settings every parser below needs (no
+    DTD/external entities, no network) and reject a DOCTYPE outright."""
+    root = etree.fromstring(
+        xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
+    )
+    if root.getroottree().docinfo.doctype:
+        raise etree.XMLSyntaxError("DOCTYPE is not supported", 0, 0, 0)
+    return root
+
+
 def _parse_edmx(xml: str) -> dict[str, dict[str, dict[str, str]]]:
     """EDMX -> {EntityType: {Property: {attribute: value}}}.
 
@@ -150,11 +184,7 @@ def _parse_edmx(xml: str) -> dict[str, dict[str, dict[str, str]]]:
     (sap:label, sap:required, sap:picklist, ...) stay readable — those
     annotations are the actual configuration being compared across instances.
     """
-    root = etree.fromstring(
-        xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
-    )
-    if root.getroottree().docinfo.doctype:
-        raise etree.XMLSyntaxError("DOCTYPE is not supported", 0, 0, 0)
+    root = _edmx_root(xml)
     out: dict[str, dict[str, dict[str, str]]] = {}
     for entity in root.iter("{*}EntityType"):
         out[entity.get("Name", "")] = {
@@ -180,11 +210,7 @@ def _parse_edmx_keys(xml: str) -> dict[str, list[str]]:
     though the key itself is known. Missing sap:sortable is treated as sortable
     (SAP's own default).
     """
-    root = etree.fromstring(
-        xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
-    )
-    if root.getroottree().docinfo.doctype:
-        raise etree.XMLSyntaxError("DOCTYPE is not supported", 0, 0, 0)
+    root = _edmx_root(xml)
     out: dict[str, list[str]] = {}
     for entity in root.iter("{*}EntityType"):
         key_names = [
@@ -197,6 +223,49 @@ def _parse_edmx_keys(xml: str) -> dict[str, list[str]]:
         if key_names and any(sortable.get(name) == "false" for name in key_names):
             key_names = []
         out[entity.get("Name", "")] = key_names
+    return out
+
+
+_NavMap = dict[str, list[dict[str, str]]]
+
+
+def _parse_edmx_navs(xml: str) -> _NavMap:
+    """EDMX -> {EntityType: [{name, target, filterable}, ...]}.
+
+    Only the full service EDMX carries NavigationProperty/Association
+    elements at all — entity-scoped $metadata omits them. `target` is the
+    navigation's target EntityType, resolved via the NavigationProperty's
+    Relationship -> the matching Association's End for ToRole; if an
+    Association can't be matched (unexpected EDMX shape), `target` falls
+    back to the raw ToRole so the caller still gets something useful.
+    """
+    root = _edmx_root(xml)
+    # Association name -> {Role: target EntityType local name}
+    associations: dict[str, dict[str, str]] = {}
+    for assoc in root.iter("{*}Association"):
+        ends = {}
+        for end in assoc.iter("{*}End"):
+            role, type_attr = end.get("Role", ""), end.get("Type", "")
+            ends[role] = type_attr.rsplit(".", 1)[-1] if type_attr else ""
+        associations[assoc.get("Name", "")] = ends
+
+    out: _NavMap = {}
+    for entity in root.iter("{*}EntityType"):
+        navs = []
+        for nav in entity.iter("{*}NavigationProperty"):
+            relationship = nav.get("Relationship", "")
+            to_role = nav.get("ToRole", "")
+            assoc_name = relationship.rsplit(".", 1)[-1] if relationship else ""
+            target = associations.get(assoc_name, {}).get(to_role) or to_role
+            navs.append(
+                {
+                    "name": nav.get("Name", ""),
+                    "target": target,
+                    "filterable": nav.get(f"{{{_SAP_NS}}}filterable", "true"),
+                }
+            )
+        if navs:
+            out[entity.get("Name", "")] = navs
     return out
 
 
@@ -270,6 +339,36 @@ async def _entity_key_properties(company_id: str, entity: str) -> list[str] | No
     return keys
 
 
+# Navigation properties only appear in the *full* service $metadata (entity-
+# scoped $metadata omits NavigationProperty entirely), and on a real tenant
+# that document can run to ~11 MB — so it's fetched at most once per
+# company_id per process. Only the parsed nav map is cached, never the raw
+# XML, per the same rationale as _key_cache.
+_nav_cache: dict[str, tuple[_NavMap, dict[str, Any] | None]] = {}
+
+
+async def _nav_properties(company_id: str) -> tuple[_NavMap, dict[str, Any] | None]:
+    """Best-effort {EntityType: [nav, ...]} for the whole service, for
+    odata_metadata to enrich its per-entity output with. Never raises: a
+    failure (or an unreachable/oversized full $metadata) is returned as a
+    warning dict and cached as such, so it can't break odata_metadata's
+    existing field output and isn't retried on every call.
+    """
+    if company_id in _nav_cache:
+        return _nav_cache[company_id]
+    navs: _NavMap = {}
+    error: dict[str, Any] | None = None
+    try:
+        xml, error = await _fetch_metadata_xml(company_id, "")
+        if error is None:
+            navs = _parse_edmx_navs(xml)
+    except Exception as exc:
+        error = {"error": "nav_parse_error", "company_id": company_id, "detail": str(exc)}
+    result = (navs, error)
+    _nav_cache[company_id] = result
+    return result
+
+
 def _entity_from_path(path: str) -> str:
     """Best-effort entity-set name from an odata_query path, e.g.
     "EmpJob('123')?$select=x" -> "EmpJob"."""
@@ -333,6 +432,9 @@ def list_tenants() -> dict[str, Any]:
     }
 
 
+_NAV_INLINE_CAP = 50
+
+
 @mcp.tool()
 async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, Any]:
     """Fetch OData $metadata (EDMX) and reduce it to a compact field map.
@@ -341,22 +443,53 @@ async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, An
     types); entity="EmpJob" pulls just that entity set. The full
     {entity: {field: attributes}} map is written to a JSON file, and a small
     map is returned inline as well, so two instances can be compared without
-    ever loading raw EDMX into the conversation.
+    ever loading raw EDMX into the conversation. When entity is given, its
+    navigation properties (name, target entity type, filterable) are listed
+    too — entity-scoped $metadata doesn't carry them, so this resolves them
+    from the full service $metadata instead (fetched once per company_id per
+    process, then cached); a lookup failure is reported as a warning and
+    never blocks the field output above. Use the navigation names to scope
+    filters into other entities via $filter (see the server's "Scope with
+    EmpJob first" guidance and odata_query's docstring) instead of pulling
+    whole entity sets and joining locally.
     """
     fields, error = await _field_map(company_id, entity)
     if error is not None:
         return error
 
-    doc = json.dumps(fields, indent=2, sort_keys=True, ensure_ascii=False)
+    fields_doc = json.dumps(fields, indent=2, sort_keys=True, ensure_ascii=False)
+    navigation: list[dict[str, str]] = []
+    nav_warning: str | None = None
+    if entity:
+        nav_map, nav_error = await _nav_properties(company_id)
+        if nav_error is not None:
+            nav_warning = (
+                f"navigation properties unavailable: {nav_error.get('error', 'unknown error')}"
+            )
+        navigation = nav_map.get(entity, [])
+
+    file_doc = json.dumps(
+        {"fields": fields, "navigation": navigation}, indent=2, sort_keys=True, ensure_ascii=False
+    )
     out: dict[str, Any] = {
         "entity_count": len(fields),
         "field_count": sum(len(v) for v in fields.values()),
-        "file": _write(doc, "odata_metadata", company_id, "json"),
+        "file": _write(file_doc, "odata_metadata", company_id, "json"),
     }
-    if len(doc) <= _INLINE_LIMIT:
+    if len(fields_doc) <= _INLINE_LIMIT:
         out["fields"] = fields
     else:
         out["entities"] = sorted(fields)
+
+    if entity:
+        out["navigation"] = navigation[:_NAV_INLINE_CAP]
+        if len(navigation) > _NAV_INLINE_CAP:
+            out["navigation_note"] = (
+                f"{len(navigation)} navigation properties total; showing the first "
+                f"{_NAV_INLINE_CAP} inline — see file for the rest."
+            )
+        if nav_warning:
+            out["navigation_warning"] = nav_warning
     return out
 
 
@@ -431,6 +564,11 @@ async def odata_query(
     on conflicts). Always $select only the fields you need. Effective-dated
     entities (EmpJob, Position, FO*, MDF) return ONLY today's time slice unless
     you pass fromDate=1900-01-01 and toDate=9999-12-31 (or asOfDate) in params.
+    To scope a query to a business population (company, location, status, ...),
+    confirm the condition on EmpJob first and push it into other entities via
+    navigation in $filter (e.g. `personNav/employmentNav/jobInfoNav/company`)
+    instead of pulling whole entity sets — see the server's "Scope with EmpJob
+    first" guidance.
 
     When max_pages > 1 and no $orderby is given (in path or params), one is
     added automatically from the entity's $metadata key properties, so pages
