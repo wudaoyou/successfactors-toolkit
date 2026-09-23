@@ -22,9 +22,10 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   status, ...) live on EmpJob — confirm the filter there, then apply it to
   other entities via navigation in `$filter` (standard paths for
   EmpEmployment, PerPerson, Per* entities, and BenefitEnrollment) instead of
-  pulling whole entity sets and joining locally, with a caveat that
-  navigating through `User` (`workerIdNav`, `userNav`, ...) excludes
-  inactive/terminated users. `odata_query`'s docstring points to the same
+  pulling whole entity sets and joining locally. It also says to filter
+  employment status explicitly on EmpJob rather than relying on navigation
+  through `User`, and to check national IDs by `cardType`/`country` without
+  selecting the ID values. `odata_query`'s docstring points to the same
   pattern.
 
 ## [0.2.0] - 2026-09-23

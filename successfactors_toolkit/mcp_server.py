@@ -117,12 +117,14 @@ mcp = MCPServer(
         "`personNav/employmentNav/jobInfoNav/...`; BenefitEnrollment -> "
         "`workerIdNav/empInfo/jobInfoNav/...`. PerPersonRelationship can "
         "$expand=relNationalIdNav to pull a dependent's national ID in the "
-        "same call. Caveat: navigating through User (workerIdNav, userNav, "
-        "...) excludes inactive/terminated users, since User returns only "
-        "active users by default — if inactive employees matter (e.g. "
-        "terminated employees who keep benefits), cross-check counts or join "
-        "locally instead. Navigation property names vary by entity; confirm "
-        "them with odata_metadata."
+        "same call. Put employment status in the filter explicitly (EmpJob "
+        "emplStatus, resolved via picklist) — never rely on a navigation path "
+        "to drop terminated employees: paths through User (workerIdNav, "
+        "userNav, ...) drop some inactive users but not all. Navigation "
+        "property names vary by entity; confirm them with odata_metadata.\n"
+        "- National IDs and other sensitive values: to check whether an ID "
+        "exists, select only cardType/country (or isPrimary), never "
+        "nationalId itself, unless the user explicitly asks for the values."
     ),
 )
 
