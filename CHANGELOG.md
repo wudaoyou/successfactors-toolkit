@@ -4,6 +4,43 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-23
+
+### Fixed
+
+- OData query options embedded in `odata_query`'s `path` (e.g.
+  `"EmpJob?$filter=...&$select=..."`) were silently dropped whenever `params`
+  was also passed. They are now parsed out of `path` and merged into the
+  request, with explicit `params` winning on conflicts — fixed at the root in
+  `ODataClient.request()`, so every caller benefits.
+- `odata_query` paged pulls without an explicit `$orderby` could return
+  duplicated and skipped rows. When a pull may span multiple pages and no
+  `$orderby` is given, one is now derived automatically from the entity's
+  `$metadata` key properties (cached per entity in-process, skipping any key
+  marked `sap:sortable="false"` since SF rejects `$orderby` on those) and
+  reported as `orderby_added`; if the key can't be determined or used, the
+  query still runs but a warning is added. If SF rejects the auto-added
+  `$orderby` outright (e.g. stale metadata), the query is retried once
+  without it and a warning notes ordering isn't guaranteed. Duplicate records
+  are counted and surfaced as `duplicate_records` with a warning, but only
+  when every key property is actually present in the returned records — an
+  incomplete `$select` (or unusable key) skips duplicate counting entirely
+  rather than risk false positives.
+- `odata_query` now warns when a page comes back sized exactly to `$top` with
+  no `__next` link — some MDF/custom entities have been observed to stop
+  paging silently even though more data exists. The warning suggests a manual
+  `$skip` resume with an explicit `$orderby`; behavior is unchanged.
+
+### Added
+
+- MCP server `instructions` and the `odata_query`/`ce_query` tool docstrings
+  now include general SuccessFactors querying guidance: how `path`/`params`
+  combine, effective-dating, resolving picklist/foreign-key codes via
+  `$expand` or `PicklistOption`/`PickListValueV2` instead of N+1 calls, common
+  EC join keys (`userId`, `personIdExternal`, `PerPersonRelationship`,
+  `PerNationalId`), the CompoundEmployee SFQL single-condition limit on
+  `last_modified_on`, and `isNotFirstQuery` delta-filter semantics.
+
 ## [0.1.2] - 2026-09-20
 
 ### Changed
@@ -152,7 +189,8 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.2.0
 [0.1.2]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.2
 [0.1.1]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1
 [0.1.0]: https://github.com/wudaoyou/successfactors-toolkit/tree/v0.1.0

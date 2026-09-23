@@ -35,7 +35,7 @@ from successfactors_toolkit.models.common import ODataConnectionConfig, SFAPICon
 from successfactors_toolkit.models.sfapi import CEQueryFilter
 from successfactors_toolkit.services.ce_query_builder import COMMON_SEGMENTS, build_query_string
 from successfactors_toolkit.services.ce_response import parse_page
-from successfactors_toolkit.services.odata_client import ODataClient
+from successfactors_toolkit.services.odata_client import ODataClient, split_path_query
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
 from successfactors_toolkit.services.tenant_store import TenantStore
 
@@ -71,7 +71,35 @@ mcp = MCPServer(
         "the diff server-side; do not fetch both metadata documents and diff "
         "them yourself. Large results are written to a file and the tool "
         "returns the path plus counts — read the file when you need the "
-        "records themselves."
+        "records themselves. The path is inside the MCP server's container; "
+        "if you're running the server via Docker, it maps to the host "
+        "directory bound to RESULTS_DIR (see the deployment's compose file), "
+        "not a path on the machine the model is reasoning from.\n\n"
+        "How to query well:\n"
+        "- Pass $select/$filter/$orderby/$top etc. via odata_query's `params`, "
+        "not appended to `path` — see that tool's docstring for how the two "
+        "combine.\n"
+        "- Always $select only the fields you need; unscoped reads on wide "
+        "entities (EmpJob, CompoundEmployee segments) are slow and bloat the "
+        "saved file.\n"
+        "- Effective-dated entities (EmpJob, Position, FO*, MDF) return only "
+        "today's time slice unless you pass fromDate/toDate or asOfDate.\n"
+        "- To resolve picklist/foreign-key codes to labels, don't do it with "
+        "N+1 calls. Either $expand the relevant navigation property in one "
+        "odata_query call (e.g. EmpJob with "
+        "$expand=jobCodeNav,locationNav&$select=...,jobCodeNav/name,... — the "
+        "nav property is usually `<field>Nav`), or look values up in bulk via "
+        "the PicklistOption / PickListValueV2 entities.\n"
+        "- Common EC join keys: EmpJob/EmpEmployment/BenefitEnrollment join on "
+        "userId (BenefitEnrollment's field is named workerId but holds the "
+        "same value); Per* entities (PerPerson, PerNationalId, ...) join on "
+        "personIdExternal; EmpEmployment carries both userId and "
+        "personIdExternal, so it's the bridge between the two families; "
+        "PerPersonRelationship links an employee's personIdExternal to a "
+        "dependent's relatedPersonIdExternal via a relationshipType picklist; "
+        "PerNationalId holds national ID numbers keyed by country and "
+        "cardType. Verify field names for the entity you're using with "
+        "odata_metadata before relying on them."
     ),
 )
 
@@ -140,11 +168,45 @@ def _parse_edmx(xml: str) -> dict[str, dict[str, dict[str, str]]]:
     return out
 
 
+_SAP_NS = "http://www.sap.com/Protocols/SAPData"
+
+
+def _parse_edmx_keys(xml: str) -> dict[str, list[str]]:
+    """EDMX -> {EntityType: [key property names, in declaration order]}.
+
+    Maps to ``[]`` (found, but unusable), rather than the real names, when any
+    key property is annotated ``sap:sortable="false"`` — SF answers 400 to an
+    ``$orderby`` naming one of those, so it's not usable for auto-ordering even
+    though the key itself is known. Missing sap:sortable is treated as sortable
+    (SAP's own default).
+    """
+    root = etree.fromstring(
+        xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
+    )
+    if root.getroottree().docinfo.doctype:
+        raise etree.XMLSyntaxError("DOCTYPE is not supported", 0, 0, 0)
+    out: dict[str, list[str]] = {}
+    for entity in root.iter("{*}EntityType"):
+        key_names = [
+            ref.get("Name", "") for ref in entity.iter("{*}PropertyRef") if ref.get("Name")
+        ]
+        sortable = {
+            prop.get("Name"): prop.get(f"{{{_SAP_NS}}}sortable", "true")
+            for prop in entity.iter("{*}Property")
+        }
+        if key_names and any(sortable.get(name) == "false" for name in key_names):
+            key_names = []
+        out[entity.get("Name", "")] = key_names
+    return out
+
+
 _FieldMap = dict[str, dict[str, dict[str, str]]]
 
 
-async def _field_map(company_id: str, entity: str) -> tuple[_FieldMap, dict[str, Any] | None]:
-    """Fetch one instance's $metadata and reduce it. Returns (fields, error)."""
+async def _fetch_metadata_xml(company_id: str, entity: str) -> tuple[str, dict[str, Any] | None]:
+    """Fetch one instance's raw $metadata (EDMX). entity="" fetches the whole
+    service. Returns (xml, error); shared by every metadata consumer below so
+    the request shape (path, company override) stays in one place."""
     odata, _ = _clients()
     path = f"{entity}/$metadata" if entity else "$metadata"
     r = await odata.request(
@@ -152,21 +214,67 @@ async def _field_map(company_id: str, entity: str) -> tuple[_FieldMap, dict[str,
     )
     body = str(r["body"])
     if r["status_code"] >= 400:
-        return {}, {
+        return "", {
             "error": "http_error",
             "company_id": company_id,
             "status_code": r["status_code"],
             "body": body[:2000],
         }
+    return body, None
+
+
+async def _field_map(company_id: str, entity: str) -> tuple[_FieldMap, dict[str, Any] | None]:
+    """Fetch one instance's $metadata and reduce it. Returns (fields, error)."""
+    xml, error = await _fetch_metadata_xml(company_id, entity)
+    if error is not None:
+        return {}, error
     try:
-        return _parse_edmx(body), None
+        return _parse_edmx(xml), None
     except etree.XMLSyntaxError as exc:
         return {}, {
             "error": "parse_error",
             "company_id": company_id,
             "detail": str(exc),
-            "body": body[:2000],
+            "body": xml[:2000],
         }
+
+
+# Entity key lookups are cached per (company_id, entity) for the life of the
+# process — $metadata rarely changes and re-fetching it on every paged query
+# would double the request count for no benefit.
+_key_cache: dict[tuple[str, str], list[str] | None] = {}
+
+
+async def _entity_key_properties(company_id: str, entity: str) -> list[str] | None:
+    """Best-effort $metadata lookup of an entity's key properties, for
+    auto-$orderby. Only an exact EntityType-name match is used — guessing at
+    an arbitrary entity in the document would hand back the wrong keys.
+
+    Returns None if the entity (or its key) couldn't be determined at all —
+    including on any failure, since this is an optimization and a broken or
+    unreachable metadata endpoint must not be allowed to fail the actual
+    query. Returns [] if the entity's key is known but unusable for
+    $orderby (see _parse_edmx_keys). Both cases are cached.
+    """
+    cache_key = (company_id, entity)
+    if cache_key in _key_cache:
+        return _key_cache[cache_key]
+    keys: list[str] | None = None
+    try:
+        xml, error = await _fetch_metadata_xml(company_id, entity)
+        if error is None:
+            keys = _parse_edmx_keys(xml).get(entity)
+    except Exception:
+        keys = None
+    _key_cache[cache_key] = keys
+    return keys
+
+
+def _entity_from_path(path: str) -> str:
+    """Best-effort entity-set name from an odata_query path, e.g.
+    "EmpJob('123')?$select=x" -> "EmpJob"."""
+    base = path.split("?", 1)[0].split("(", 1)[0]
+    return base.strip("/")
 
 
 def _diff_field_maps(a: _FieldMap, b: _FieldMap) -> dict[str, Any]:
@@ -318,9 +426,34 @@ async def odata_query(
     """Run an OData v2 query, following __next until exhausted or max_pages.
 
     path is the entity set and may carry query options, e.g. "FOCompany" or
-    "EmpJob?$select=userId,jobCode". Effective-dated entities (EmpJob, Position,
-    FO*, MDF) return ONLY today's time slice unless you pass
-    fromDate=1900-01-01 and toDate=9999-12-31 in params.
+    "EmpJob?$select=userId,jobCode" — those are parsed out of path and merged
+    into the request; pass options either way, but prefer `params` (params win
+    on conflicts). Always $select only the fields you need. Effective-dated
+    entities (EmpJob, Position, FO*, MDF) return ONLY today's time slice unless
+    you pass fromDate=1900-01-01 and toDate=9999-12-31 (or asOfDate) in params.
+
+    When max_pages > 1 and no $orderby is given (in path or params), one is
+    added automatically from the entity's $metadata key properties, so pages
+    stay stable while $skip/$skiptoken walks them — without a stable order,
+    SF can return the same row twice or skip one between pages. The result
+    reports `orderby_added` when this happened. A warning is added instead,
+    and the query still runs without one, when the key properties can't be
+    determined, or when they're known but not sortable (SF rejects $orderby
+    on those); if SF still rejects the auto-added $orderby (e.g. stale
+    metadata), the query is retried once without it and a warning says so.
+    Consider passing $orderby yourself if you see either warning. Rows already
+    in the result are also checked for duplicates by key — but only when every
+    key property is present in the returned records, since an incomplete
+    $select can make distinct rows collide on a missing key field; there is no
+    full-record fallback, since two rows can legitimately share every
+    *selected* non-key field. `duplicate_records` and a warning appear only
+    when duplicates were both checked for and found.
+
+    Some entities (MDF/custom objects) have been observed to stop returning
+    __next before all data is actually exhausted. A page that comes back
+    exactly $top-sized with no __next is flagged with a warning suggesting a
+    manual resume with $skip and an explicit $orderby — this does not change
+    what the tool returns, only what it tells you about it.
 
     Records are written to a JSON file; the tool returns counts, the field names
     of the first record, and the path. preview accepts 0-20; values above zero
@@ -331,12 +464,58 @@ async def odata_query(
         raise ValueError("max_pages must be 1-10000 and preview must be 0-20.")
     odata, _ = _clients()
     conn = ODataConnectionConfig(company_id=company_id or None)
-    r = await odata.extract_all(path=path, conn=conn, params=params, max_pages=max_pages)
+
+    query_params = dict(params or {})
+    _, path_params = split_path_query(path)
+    merged_view = {**path_params, **query_params}  # what will actually be sent, for peeking
+    warnings: list[str] = []
+    orderby_added: str | None = None
+    keys: list[str] | None = None
+    # "Paged pull" = pagination is possible at all; a single-page request can't
+    # produce cross-page duplicates/gaps, so there's nothing to order or dedupe.
+    paged = max_pages > 1
+    if paged:
+        keys = await _entity_key_properties(company_id, _entity_from_path(path))
+        if "$orderby" not in merged_view:
+            if keys:
+                orderby_added = ",".join(keys)
+                query_params["$orderby"] = orderby_added
+            elif keys == []:
+                warnings.append(
+                    "No $orderby was given and this entity's key properties are not "
+                    "sortable (SuccessFactors rejects $orderby on them); paged results "
+                    "may contain duplicated or skipped rows. Pass $orderby explicitly "
+                    "to avoid this."
+                )
+            else:
+                warnings.append(
+                    "No $orderby was given and this entity's key properties could not "
+                    "be determined from $metadata; paged results may contain duplicated "
+                    "or skipped rows. Pass $orderby explicitly to avoid this."
+                )
+
+    r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
+    if r["stopped_reason"] == "http_error" and orderby_added:
+        # A key that looked sortable in $metadata (or stale/incomplete
+        # metadata) can still get a 400 from SF. Retry once without forcing
+        # an order rather than failing a query that would otherwise work.
+        rejected_orderby = orderby_added
+        query_params.pop("$orderby", None)
+        orderby_added = None
+        r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
+        if r["stopped_reason"] not in ("http_error", "parse_error"):
+            warnings.append(
+                f"Auto-added $orderby={rejected_orderby} was rejected by "
+                "SuccessFactors; retried without it, so page ordering (and "
+                "duplicate/skip safety) is not guaranteed. Pass a working $orderby "
+                "explicitly if this matters."
+            )
+
     if r["stopped_reason"] in ("http_error", "parse_error"):
         # extract_all keeps the status but drops the response body, and SF puts
         # the actual reason (unknown entity, missing permission, bad $filter)
         # in that body. One extra call on the failure path buys a usable error.
-        detail = await odata.request("GET", path, conn=conn, params=params)
+        detail = await odata.request("GET", path, conn=conn, params=query_params)
         return {
             "error": r["stopped_reason"],
             "status_code": r["last_status_code"],
@@ -345,6 +524,35 @@ async def odata_query(
         }
 
     results = r["results"]
+    duplicate_records = 0
+    # Only count duplicates when every key property actually made it into the
+    # records — an incomplete $select (e.g. omitting a composite key part)
+    # makes distinct rows collide on a missing/None field. No full-record
+    # fallback either: two rows can legitimately share every *selected*
+    # non-key field.
+    if paged and keys and results and all(k in results[0] for k in keys):
+        seen: set[tuple[Any, ...]] = set()
+        for record in results:
+            identity = tuple(record.get(k) for k in keys)
+            if identity in seen:
+                duplicate_records += 1
+            else:
+                seen.add(identity)
+
+    top = merged_view.get("$top")
+    if r["stopped_reason"] == "exhausted" and top is not None and r.get("last_page_size"):
+        try:
+            top_n = int(top)
+        except (TypeError, ValueError):
+            top_n = None
+        if top_n and r["last_page_size"] == top_n:
+            warnings.append(
+                f"The last page returned exactly $top={top_n} rows with no __next link "
+                "(reported 'exhausted'). Some MDF/custom entities silently stop paging "
+                "before all data is returned — if the row count looks short, resume "
+                "manually with $skip (and an explicit $orderby) past this point."
+            )
+
     out: dict[str, Any] = {
         "total_records": r["total_records"],
         "pages_fetched": r["pages_fetched"],
@@ -358,6 +566,17 @@ async def odata_query(
             "json",
         ),
     }
+    if orderby_added:
+        out["orderby_added"] = orderby_added
+    if duplicate_records > 0:
+        out["duplicate_records"] = duplicate_records
+        warnings.append(
+            f"{duplicate_records} duplicate record(s) detected across pages — see "
+            "duplicate_records. Re-run with an explicit $orderby on a fully unique key "
+            "if this persists."
+        )
+    if warnings:
+        out["warnings"] = warnings
     if preview > 0:
         preview_records = results[:preview]
         if (
@@ -389,6 +608,21 @@ async def ce_query(
     every other filter when set. last_modified_on is an ISO datetime for a delta
     pull (SAP allows at most 3 months of look-back). With no filter at all this
     is a full extract, capped by max_pages.
+
+    CompoundEmployee SFQL allows only ONE condition on last_modified_on in the
+    WHERE clause — a query with both a lower and an upper bound
+    (last_modified_on>X and last_modified_on<=Y) fails with INVALID_SFQL: Only
+    one condition is allowed. This tool only ever emits the lower bound; apply
+    any upper bound to the returned rows client-side, not by adding a second
+    last_modified_on condition.
+
+    last_modified_on's filtering also depends on an SFQL parameter,
+    isNotFirstQuery, that this tool does not currently set: per tenant testing,
+    a query without isNotFirstQuery ignores last_modified_on entirely and
+    returns a full snapshot of the matching window, while isNotFirstQuery=true
+    makes last_modified_on act as a real delta filter. Until this tool exposes
+    that parameter, treat last_modified_on here as a full-window snapshot, not
+    a guaranteed delta — don't rely on it alone to mean "only changed rows".
 
     select_segments defaults to the widely supported COMMON_SEGMENTS. If SF
     answers INVALID_SFQL naming a segment, that module is not enabled on the
