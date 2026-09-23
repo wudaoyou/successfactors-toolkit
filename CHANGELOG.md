@@ -4,6 +4,17 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-23
+
+### Fixed
+
+- MCP server `instructions` now say that "active" employees usually include
+  paid and unpaid leave, not only status A: resolve the `emplStatus` picklist
+  and state which statuses were counted. Without this, runs of the same
+  question disagreed on whether employees on leave were in scope. The
+  `params`/`$select` reminder was dropped (the `odata_query` description
+  already covers it) to stay under the 2048-character limit.
+
 ## [0.2.1] - 2026-09-23
 
 ### Added
@@ -238,7 +249,8 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.2.0
 [0.1.2]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.2
