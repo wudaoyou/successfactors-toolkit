@@ -10,7 +10,8 @@ client_key), with a lock to coalesce concurrent first-call token storms.
 
 Retry policy (§12.7, p.228-229):
   * 401 once  — refresh token, retry
-  * 429 up to MAX_RETRIES — honor Retry-After header (capped at 60s)
+  * 429 up to MAX_RETRIES — honor Retry-After header (capped at 300s; SAP rate
+    limiting has been observed returning a 300s Retry-After)
   * 5xx up to MAX_RETRIES — exponential backoff; ONLY for idempotent methods
     (GET/HEAD) since POST/PATCH/PUT/DELETE may have already mutated state.
 """
@@ -24,7 +25,7 @@ import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import parse_qs, parse_qsl, unquote, urlparse, urlsplit
+from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse, urlsplit
 
 import httpx
 
@@ -42,7 +43,7 @@ _RESERVED_HEADERS = {"host", "authorization"}
 _IDEMPOTENT_FOR_5XX_RETRY = {"GET", "HEAD"}
 _TOKEN_EXPIRY_SLACK_SECONDS = 60
 _MAX_RETRIES = 3
-_MAX_RETRY_AFTER_SECONDS = 60.0
+_MAX_RETRY_AFTER_SECONDS = 300.0
 _ODATA_VERSIONS = {"v2", "v4"}
 
 
@@ -51,7 +52,7 @@ def _eff(override: str | None, default: str) -> str:
 
 
 def _parse_retry_after(value: str | None) -> float:
-    """Parse Retry-After header (seconds or HTTP-date). Bounded to [0, 60]."""
+    """Parse Retry-After header (seconds or HTTP-date). Bounded to [0, 300]."""
     if not value:
         return 1.0
     try:
@@ -78,6 +79,32 @@ def split_path_query(path: str) -> tuple[str, dict[str, str]]:
     """
     base, sep, query = path.partition("?")
     return (base, dict(parse_qsl(query, keep_blank_values=True))) if sep else (path, {})
+
+
+# Conservative URL-length budget for a chunked $filter: KBA 2576271 cites a
+# ~2KB GET URL limit; 1800 leaves room for the rest of the query string
+# (path, $select, $orderby, paging, ...) that shares the same URL.
+_MAX_FILTER_ENCODED_LEN = 1800
+
+
+def _in_clause(column: str, values: list[str]) -> str:
+    """Build ``column in 'v1','v2',...`` — confirmed working on EmpJob,
+    BenefitEnrollment and nav paths without the parenthesised `in (...)` form
+    the dev guide's grammar suggests (that form 400s). OData literal escaping
+    doubles an embedded single quote.
+    """
+    escaped = (v.replace("'", "''") for v in values)
+    return f"{column} in " + ",".join(f"'{v}'" for v in escaped)
+
+
+def _combined_filter(base_filter: str, column: str, values: list[str]) -> str:
+    in_clause = _in_clause(column, values)
+    return f"({base_filter}) and ({in_clause})" if base_filter else in_clause
+
+
+def _encoded_len(filter_value: str) -> int:
+    """Estimate the URL-encoded length of a $filter value."""
+    return len(quote(filter_value, safe=""))
 
 
 def _extract_skiptoken(next_url: str) -> str | None:
@@ -393,7 +420,9 @@ class ODataClient:
         max_pages_per_chunk: int = 100,
     ) -> dict[str, Any]:
         """Extract records where ``column in (values...)``, chunking the IN
-        list to stay under SF's 1000-value-per-$filter limit (§12.7, p.228).
+        list to stay under SF's 1000-value-per-$filter limit (§12.7, p.228)
+        and under a conservative URL-length budget (`_MAX_FILTER_ENCODED_LEN`;
+        KBA 2576271 cites a ~2KB GET URL limit).
 
         Typical use case: enrich CompoundEmployee codes — collect distinct
         jobCode / locationCode / etc. from a CE payload, then fetch the
@@ -418,20 +447,31 @@ class ODataClient:
 
         base_params = dict(params or {})
         base_filter = base_params.pop("$filter", "")
+
+        chunks: list[list[str]] = []
+        current: list[str] = []
+        for value in deduped:
+            candidate = current + [value]
+            over_count = len(candidate) > chunk_size
+            over_length = (
+                current
+                and _encoded_len(_combined_filter(base_filter, column, candidate))
+                > _MAX_FILTER_ENCODED_LEN
+            )
+            if current and (over_count or over_length):
+                chunks.append(current)
+                current = [value]
+            else:
+                current = candidate
+        if current:
+            chunks.append(current)
+
         all_results: list[dict[str, Any]] = []
         diagnostics: list[dict[str, Any]] = []
         total_pages = 0
 
-        for offset in range(0, len(deduped), chunk_size):
-            chunk = deduped[offset : offset + chunk_size]
-            # SF OData V2 doesn't accept `column in (...)` despite the dev
-            # guide §12.7 listing it. The `eq A or eq B` chain works on every
-            # entity and version. URL escaping of single quotes inside values:
-            # OData literal escaping doubles the quote.
-            escaped = (v.replace("'", "''") for v in chunk)
-            or_clause = " or ".join(f"{column} eq '{v}'" for v in escaped)
-            combined = f"({base_filter}) and ({or_clause})" if base_filter else or_clause
-            chunk_params = {**base_params, "$filter": combined}
+        for index, chunk in enumerate(chunks):
+            chunk_params = {**base_params, "$filter": _combined_filter(base_filter, column, chunk)}
             result = await self.extract_all(
                 path=path,
                 conn=conn,
@@ -442,7 +482,7 @@ class ODataClient:
             total_pages += result["pages_fetched"]
             diagnostics.append(
                 {
-                    "chunk_index": offset // chunk_size,
+                    "chunk_index": index,
                     "chunk_size": len(chunk),
                     "records_fetched": len(result["results"]),
                     "pages_fetched": result["pages_fetched"],

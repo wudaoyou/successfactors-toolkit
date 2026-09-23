@@ -4,6 +4,55 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-23
+
+### Added
+
+- `odata_metadata` now lists an entity's navigation properties (name, target
+  entity type, filterable) alongside its fields. Entity-scoped `$metadata`
+  doesn't carry `NavigationProperty` elements, so these are resolved from the
+  full service `$metadata` instead, fetched once per `company_id` per process
+  and cached; a lookup failure is reported as a warning and never blocks the
+  existing field output. The written JSON file now has the shape
+  `{"fields": ..., "navigation": [...]}`; the inline result caps the
+  navigation list at 50 entries with a note when more exist.
+- `odata_query` now adds `paging=snapshot` automatically whenever `max_pages`
+  > 1 and the caller hasn't passed `paging` (in `params` or `path`), reported
+  as `paging_added`. Server-side snapshot paging pages 1000 rows at a time
+  via `$skiptoken` with no duplicate keys, and is SAP's recommended
+  alternative to client-side `$skip` paging. If SF answers with an HTTP 400
+  whose body says paging/pagination isn't supported for that entity (e.g.
+  `PerPersonRelationship`), the query retries once without it and adds a
+  warning — mirroring the existing auto-`$orderby` fallback.
+
+### Changed
+
+- MCP server `instructions` rewritten as an ordered query workflow: decide
+  the population filter (usually on EmpJob, with employment status explicit),
+  list the needed entities, push the filter into each via navigation in
+  `$filter` (standard paths listed), and only pull an entity in full when no
+  path exists. Also: resolve codes in bulk, and check national IDs by
+  `cardType`/`country` without selecting the ID values. Two more `Also:`
+  bullets cover multi-value filters (`field in 'a','b'`, no parentheses;
+  chunk long lists) and that `User` returns active users only by default.
+- `extract_by_filter_in` now builds `column in 'v1','v2',...` (no
+  parentheses) instead of an `eq A or eq B` chain — confirmed working on
+  EmpJob, BenefitEnrollment and nav paths; the old comment claiming `in`
+  isn't accepted was only true of the parenthesised `in (...)` form. Chunking
+  now also splits before the URL-encoded `$filter` would exceed ~1800 chars,
+  on top of the existing 1000-value-per-chunk cap (SAP KBA 2576271 cites a
+  ~2KB GET URL limit).
+- SAP rate limiting has been observed returning a 300s `Retry-After`, so the
+  cap on honoring it (`_MAX_RETRY_AFTER_SECONDS`) is raised from 60s to 300s.
+  Long-running queries can take minutes (SAP KBA 2735876), so the default
+  `REQUEST_TIMEOUT` is raised from 30s to 120s.
+
+### Fixed
+
+- Server instructions and the `odata_query` description are now under 2048
+  characters. Claude Code truncates at that length, so the query guidance
+  was partly cut off before reaching the model. A test enforces the limit.
+
 ## [0.2.0] - 2026-09-23
 
 ### Fixed
@@ -189,7 +238,8 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.2.0
 [0.1.2]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.2
 [0.1.1]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.1.1

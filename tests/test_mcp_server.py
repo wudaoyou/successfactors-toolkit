@@ -19,10 +19,12 @@ from successfactors_toolkit.config import get_settings
 
 @pytest.fixture(autouse=True)
 def _clear_entity_key_cache():
-    # _entity_key_properties caches per (company_id, entity) for the life of
-    # the process; tests reuse the same entity names against different fakes,
-    # so a stale cache entry from one test would leak into the next.
+    # _entity_key_properties and _nav_properties cache per process (the
+    # latter per company_id); tests reuse the same company_id/entity names
+    # against different fakes, so a stale cache entry would leak into the
+    # next test.
     mcp_server._key_cache.clear()
+    mcp_server._nav_cache.clear()
     yield
 
 
@@ -34,10 +36,17 @@ _EDMX = """<?xml version="1.0" encoding="utf-8"?>
       <EntityType Name="EmpJob">
         <Property Name="userId" Type="Edm.String" Nullable="false" sap:label="User"/>
         <Property Name="jobCode" Type="Edm.String" MaxLength="128" sap:required="true"/>
+        <NavigationProperty Name="userNav" Relationship="SFOData.userNav_FK"
+                             FromRole="FromRole_userNav" ToRole="ToRole_userNav"
+                             sap:filterable="true"/>
       </EntityType>
       <EntityType Name="FOCompany">
         <Property Name="externalCode" Type="Edm.String" Nullable="false"/>
       </EntityType>
+      <Association Name="userNav_FK">
+        <End Type="SFOData.User" Multiplicity="0..1" Role="ToRole_userNav"/>
+        <End Type="SFOData.EmpJob" Multiplicity="*" Role="FromRole_userNav"/>
+      </Association>
     </Schema>
   </edmx:DataServices>
 </edmx:Edmx>
@@ -147,7 +156,97 @@ def test_odata_metadata_summarises_edmx_fields_and_annotations(monkeypatch, tmp_
     assert sorted(fields["EmpJob"]) == ["jobCode", "userId"]
     assert fields["EmpJob"]["userId"]["label"] == "User", "sap: annotations carry the config"
     assert fields["EmpJob"]["jobCode"]["required"] == "true"
-    assert json.loads(open(result["file"], encoding="utf-8").read()) == fields
+    # Navigation properties: entity-scoped $metadata doesn't carry them, so
+    # they're resolved from a full-service fetch and merged in.
+    assert result["navigation"] == [{"name": "userNav", "target": "User", "filterable": "true"}]
+    assert "navigation_warning" not in result
+    on_disk = json.loads(open(result["file"], encoding="utf-8").read())
+    assert on_disk == {"fields": fields, "navigation": result["navigation"]}
+
+
+def test_odata_metadata_whole_service_pull_skips_navigation(monkeypatch, tmp_path):
+    # entity="" already returns everything the full EDMX has; resolving navs
+    # per-entity on top of that isn't attempted (and isn't needed).
+    _install(monkeypatch, tmp_path)
+
+    result = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity=""))
+
+    assert "navigation" not in result
+
+
+def test_odata_metadata_caches_the_full_metadata_fetch_per_company(monkeypatch, tmp_path):
+    odata, _ = _install(monkeypatch, tmp_path)
+    paths: list[str] = []
+    original_request = odata.request
+
+    async def _counting(method, path, **kwargs):
+        paths.append(path)
+        return await original_request(method, path, **kwargs)
+
+    monkeypatch.setattr(odata, "request", _counting)
+
+    asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="EmpJob"))
+    asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="FOCompany"))
+
+    # One entity-scoped fetch per call, but the full-service $metadata that
+    # navigation properties are resolved from is fetched once and reused.
+    assert paths.count("EmpJob/$metadata") == 1
+    assert paths.count("FOCompany/$metadata") == 1
+    assert paths.count("$metadata") == 1
+
+
+class _NavFailingOData:
+    """Entity-scoped $metadata works; the full-service fetch navigation
+    properties need fails."""
+
+    async def request(self, method, path, conn=None, params=None, body=None, extra_headers=None):
+        if path == "$metadata":
+            return {"status_code": 500, "headers": {}, "body": "boom"}
+        return {"status_code": 200, "headers": {}, "body": _EDMX}
+
+
+def test_odata_metadata_navigation_failure_does_not_break_field_output(monkeypatch, tmp_path):
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (_NavFailingOData(), _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="EmpJob"))
+
+    assert result["entity_count"] == 2
+    assert result["fields"]["EmpJob"]["userId"]["label"] == "User", "field output is unaffected"
+    assert result["navigation"] == []
+    assert "navigation_warning" in result
+
+
+def test_parse_edmx_navs_resolves_target_via_association_and_falls_back_to_role():
+    xml = """<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx" Version="1.0">
+  <edmx:DataServices xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
+    <Schema xmlns="http://schemas.microsoft.com/ado/2008/09/edm"
+            xmlns:sap="http://www.sap.com/Protocols/SAPData" Namespace="SFOData">
+      <EntityType Name="EmpJob">
+        <Property Name="userId" Type="Edm.String"/>
+        <NavigationProperty Name="userNav" Relationship="SFOData.userNav_FK"
+                             FromRole="FromRole_userNav" ToRole="ToRole_userNav"/>
+        <NavigationProperty Name="unresolvedNav" Relationship="SFOData.missing_FK"
+                             FromRole="FromRole_x" ToRole="ToRole_x" sap:filterable="false"/>
+      </EntityType>
+      <Association Name="userNav_FK">
+        <End Type="SFOData.User" Multiplicity="0..1" Role="ToRole_userNav"/>
+        <End Type="SFOData.EmpJob" Multiplicity="*" Role="FromRole_userNav"/>
+      </Association>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>
+"""
+
+    navs = mcp_server._parse_edmx_navs(xml)
+
+    assert navs["EmpJob"] == [
+        {"name": "userNav", "target": "User", "filterable": "true"},
+        # Relationship doesn't match any Association: falls back to ToRole.
+        {"name": "unresolvedNav", "target": "ToRole_x", "filterable": "false"},
+    ]
 
 
 def test_compare_metadata_reports_drift_between_two_instances(monkeypatch, tmp_path):
@@ -558,3 +657,159 @@ def test_odata_query_retries_without_orderby_when_sf_rejects_it(monkeypatch, tmp
     assert result["total_records"] == 1
     assert "orderby_added" not in result
     assert any("rejected" in w for w in result["warnings"])
+
+
+def test_odata_query_adds_snapshot_paging_for_multi_page_reads(monkeypatch, tmp_path):
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob"))
+
+    assert result["paging_added"] == "snapshot"
+    assert odata.extract_calls[0][2]["paging"] == "snapshot"
+
+
+def test_odata_query_does_not_override_caller_supplied_paging(monkeypatch, tmp_path):
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", params={"paging": "cursor"}))
+
+    assert "paging_added" not in result
+    assert odata.extract_calls[0][2]["paging"] == "cursor"
+
+
+def test_odata_query_does_not_override_paging_given_in_path(monkeypatch, tmp_path):
+    # "paging=cursor" lives in path's own query string, not in query_params —
+    # the client merges the two later (split_path_query); odata_query must
+    # still recognise it's present and skip adding its own.
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob?paging=cursor"))
+
+    assert "paging_added" not in result
+    assert "paging" not in odata.extract_calls[0][2]
+
+
+def test_odata_query_does_not_add_paging_for_a_single_page_request(monkeypatch, tmp_path):
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", max_pages=1))
+
+    assert "paging_added" not in result
+    assert "paging" not in odata.extract_calls[0][2]
+
+
+class _PagingRetryOData:
+    """Fails the first extract_all call with SF's "paging not supported"
+    error (as PerPersonRelationship does for cursor paging); metadata lookups
+    fail too so orderby_added never gets involved, isolating the paging
+    fallback."""
+
+    def __init__(self, success_result):
+        self.success_result = success_result
+        self.extract_calls: list[tuple] = []
+        self.request_calls: list[str] = []
+        # query_params is a single dict mutated in place across retries, so a
+        # stored reference reflects its *final* state, not what it held at
+        # call time — capture the value eagerly instead (mirrors
+        # _RetryOData.orderby_seen above).
+        self.paging_seen: list[Any] = []
+
+    async def request(self, method, path, conn=None, params=None, body=None, extra_headers=None):
+        self.request_calls.append(path)
+        if path.rstrip("/").endswith("$metadata"):
+            return {"status_code": 403, "headers": {}, "body": "no permission"}
+        return {
+            "status_code": 400,
+            "headers": {},
+            "body": "Snapshot based pagination not supported by PerPersonRelationship",
+        }
+
+    async def extract_all(self, path, conn=None, params=None, max_pages=10):
+        self.extract_calls.append((path, conn, params, max_pages))
+        self.paging_seen.append((params or {}).get("paging"))
+        if len(self.extract_calls) == 1:
+            return {
+                "stopped_reason": "http_error",
+                "last_status_code": 400,
+                "total_records": 0,
+                "pages_fetched": 0,
+                "next_skiptoken": None,
+                "results": [],
+                "last_page_size": 0,
+            }
+        return self.success_result
+
+
+def test_odata_query_retries_without_paging_when_sf_rejects_it(monkeypatch, tmp_path):
+    odata = _PagingRetryOData(
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"personIdExternal": "1"}],
+            "last_page_size": 1,
+        }
+    )
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(mcp_server.odata_query(path="PerPersonRelationship"))
+
+    assert len(odata.extract_calls) == 2
+    assert odata.paging_seen == ["snapshot", None]
+    assert result["total_records"] == 1
+    assert "paging_added" not in result
+    assert any("paging" in w.lower() and "rejected" in w.lower() for w in result["warnings"])
+
+
+def test_instructions_and_tool_descriptions_fit_client_truncation_limit():
+    # Claude Code cuts server instructions and tool descriptions at 2048 chars.
+    assert len(mcp_server.mcp.instructions) <= 2048
+    for tool in asyncio.run(mcp_server.mcp.list_tools()):
+        assert len(tool.description or "") <= 2048, tool.name

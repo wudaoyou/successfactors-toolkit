@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = []
 
     # ── General ───────────────────────────────────────────────────────────────
-    request_timeout: int = 30
+    request_timeout: int = 120
 
     # Directory for payloads written to disk instead of returned in-band: the
     # MCP tools write under {results_dir}/mcp/. Relative paths resolve against
