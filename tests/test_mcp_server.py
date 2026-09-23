@@ -9,6 +9,7 @@ import asyncio
 import json
 import stat
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -449,3 +450,111 @@ def test_odata_query_does_not_warn_when_page_is_smaller_than_top(monkeypatch, tm
     result = asyncio.run(mcp_server.odata_query(path="EmpJob", params={"$top": 100}, max_pages=1))
 
     assert "warnings" not in result
+
+
+def test_odata_query_skips_duplicate_counting_when_select_omits_a_key_field(monkeypatch, tmp_path):
+    # $select left out startDate, half of EmpJob's composite key. Two rows
+    # that are genuinely distinct (different startDate) look identical once
+    # that field is missing — must not be flagged as duplicates.
+    rows = [
+        {"userId": "1", "jobCode": "A"},
+        {"userId": "1", "jobCode": "B"},
+    ]
+    _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 2,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": rows,
+            "last_page_size": 2,
+        },
+    )
+
+    result = asyncio.run(
+        mcp_server.odata_query(
+            path="EmpJob", params={"$select": "userId,jobCode", "$orderby": "userId"}
+        )
+    )
+
+    assert "duplicate_records" not in result
+    assert "warnings" not in result
+
+
+_EDMX_UNSORTABLE_KEY = _EDMX_WITH_KEY.replace(
+    '<Property Name="startDate" Type="Edm.DateTime"/>',
+    '<Property Name="startDate" Type="Edm.DateTime" sap:sortable="false"/>',
+)
+
+
+def test_odata_query_warns_when_key_properties_are_not_sortable(monkeypatch, tmp_path):
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+        metadata_xml=_EDMX_UNSORTABLE_KEY,
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob"))
+
+    assert "orderby_added" not in result
+    assert odata.extract_calls[0][2].get("$orderby") is None
+    assert any("not sortable" in w for w in result["warnings"])
+    assert "duplicate_records" not in result, "an unusable key is the same as no key for dedup too"
+
+
+class _RetryOData(_KeyedOData):
+    """Fails the first extract_all call (as if SF rejected the auto-added
+    $orderby) and succeeds on the retry."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.orderby_seen: list[Any] = []
+
+    async def extract_all(self, path, conn=None, params=None, max_pages=10):
+        self.extract_calls.append((path, conn, params, max_pages))
+        self.orderby_seen.append((params or {}).get("$orderby"))
+        if len(self.extract_calls) == 1:
+            return {
+                "stopped_reason": "http_error",
+                "last_status_code": 400,
+                "total_records": 0,
+                "pages_fetched": 0,
+                "next_skiptoken": None,
+                "results": [],
+                "last_page_size": 0,
+            }
+        return self.extract_result
+
+
+def test_odata_query_retries_without_orderby_when_sf_rejects_it(monkeypatch, tmp_path):
+    odata = _RetryOData(
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d", "jobCode": "A"}],
+            "last_page_size": 1,
+        }
+    )
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob"))
+
+    assert len(odata.extract_calls) == 2
+    assert odata.orderby_seen == ["userId,startDate", None]
+    assert result["total_records"] == 1
+    assert "orderby_added" not in result
+    assert any("rejected" in w for w in result["warnings"])

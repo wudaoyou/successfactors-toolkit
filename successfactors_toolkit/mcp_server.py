@@ -168,19 +168,36 @@ def _parse_edmx(xml: str) -> dict[str, dict[str, dict[str, str]]]:
     return out
 
 
+_SAP_NS = "http://www.sap.com/Protocols/SAPData"
+
+
 def _parse_edmx_keys(xml: str) -> dict[str, list[str]]:
-    """EDMX -> {EntityType: [key property names, in declaration order]}."""
+    """EDMX -> {EntityType: [key property names, in declaration order]}.
+
+    Maps to ``[]`` (found, but unusable), rather than the real names, when any
+    key property is annotated ``sap:sortable="false"`` — SF answers 400 to an
+    ``$orderby`` naming one of those, so it's not usable for auto-ordering even
+    though the key itself is known. Missing sap:sortable is treated as sortable
+    (SAP's own default).
+    """
     root = etree.fromstring(
         xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
     )
     if root.getroottree().docinfo.doctype:
         raise etree.XMLSyntaxError("DOCTYPE is not supported", 0, 0, 0)
-    return {
-        entity.get("Name", ""): [
+    out: dict[str, list[str]] = {}
+    for entity in root.iter("{*}EntityType"):
+        key_names = [
             ref.get("Name", "") for ref in entity.iter("{*}PropertyRef") if ref.get("Name")
         ]
-        for entity in root.iter("{*}EntityType")
-    }
+        sortable = {
+            prop.get("Name"): prop.get(f"{{{_SAP_NS}}}sortable", "true")
+            for prop in entity.iter("{*}Property")
+        }
+        if key_names and any(sortable.get(name) == "false" for name in key_names):
+            key_names = []
+        out[entity.get("Name", "")] = key_names
+    return out
 
 
 _FieldMap = dict[str, dict[str, dict[str, str]]]
@@ -230,9 +247,15 @@ _key_cache: dict[tuple[str, str], list[str] | None] = {}
 
 async def _entity_key_properties(company_id: str, entity: str) -> list[str] | None:
     """Best-effort $metadata lookup of an entity's key properties, for
-    auto-$orderby. Returns None (and caches that) on any failure — this is an
-    optimization, not something a broken/unreachable metadata endpoint should
-    be allowed to turn into a failed query."""
+    auto-$orderby. Only an exact EntityType-name match is used — guessing at
+    an arbitrary entity in the document would hand back the wrong keys.
+
+    Returns None if the entity (or its key) couldn't be determined at all —
+    including on any failure, since this is an optimization and a broken or
+    unreachable metadata endpoint must not be allowed to fail the actual
+    query. Returns [] if the entity's key is known but unusable for
+    $orderby (see _parse_edmx_keys). Both cases are cached.
+    """
     cache_key = (company_id, entity)
     if cache_key in _key_cache:
         return _key_cache[cache_key]
@@ -240,8 +263,7 @@ async def _entity_key_properties(company_id: str, entity: str) -> list[str] | No
     try:
         xml, error = await _fetch_metadata_xml(company_id, entity)
         if error is None:
-            keymap = _parse_edmx_keys(xml)
-            keys = keymap.get(entity) or next(iter(keymap.values()), None) or None
+            keys = _parse_edmx_keys(xml).get(entity)
     except Exception:
         keys = None
     _key_cache[cache_key] = keys
@@ -414,11 +436,18 @@ async def odata_query(
     added automatically from the entity's $metadata key properties, so pages
     stay stable while $skip/$skiptoken walks them — without a stable order,
     SF can return the same row twice or skip one between pages. The result
-    reports `orderby_added` when this happened. If the key properties can't be
-    determined, the query still runs, but a warning is added; consider passing
-    $orderby yourself in that case. Rows are also checked for duplicates by key
-    (or by full-record identity if keys are unknown); `duplicate_records` and a
-    warning appear only if any were found.
+    reports `orderby_added` when this happened. A warning is added instead,
+    and the query still runs without one, when the key properties can't be
+    determined, or when they're known but not sortable (SF rejects $orderby
+    on those); if SF still rejects the auto-added $orderby (e.g. stale
+    metadata), the query is retried once without it and a warning says so.
+    Consider passing $orderby yourself if you see either warning. Rows already
+    in the result are also checked for duplicates by key — but only when every
+    key property is present in the returned records, since an incomplete
+    $select can make distinct rows collide on a missing key field; there is no
+    full-record fallback, since two rows can legitimately share every
+    *selected* non-key field. `duplicate_records` and a warning appear only
+    when duplicates were both checked for and found.
 
     Some entities (MDF/custom objects) have been observed to stop returning
     __next before all data is actually exhausted. A page that comes back
@@ -451,6 +480,13 @@ async def odata_query(
             if keys:
                 orderby_added = ",".join(keys)
                 query_params["$orderby"] = orderby_added
+            elif keys == []:
+                warnings.append(
+                    "No $orderby was given and this entity's key properties are not "
+                    "sortable (SuccessFactors rejects $orderby on them); paged results "
+                    "may contain duplicated or skipped rows. Pass $orderby explicitly "
+                    "to avoid this."
+                )
             else:
                 warnings.append(
                     "No $orderby was given and this entity's key properties could not "
@@ -459,6 +495,22 @@ async def odata_query(
                 )
 
     r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
+    if r["stopped_reason"] == "http_error" and orderby_added:
+        # A key that looked sortable in $metadata (or stale/incomplete
+        # metadata) can still get a 400 from SF. Retry once without forcing
+        # an order rather than failing a query that would otherwise work.
+        rejected_orderby = orderby_added
+        query_params.pop("$orderby", None)
+        orderby_added = None
+        r = await odata.extract_all(path=path, conn=conn, params=query_params, max_pages=max_pages)
+        if r["stopped_reason"] not in ("http_error", "parse_error"):
+            warnings.append(
+                f"Auto-added $orderby={rejected_orderby} was rejected by "
+                "SuccessFactors; retried without it, so page ordering (and "
+                "duplicate/skip safety) is not guaranteed. Pass a working $orderby "
+                "explicitly if this matters."
+            )
+
     if r["stopped_reason"] in ("http_error", "parse_error"):
         # extract_all keeps the status but drops the response body, and SF puts
         # the actual reason (unknown entity, missing permission, bad $filter)
@@ -473,14 +525,15 @@ async def odata_query(
 
     results = r["results"]
     duplicate_records = 0
-    if paged and results:
-        seen: set[Any] = set()
+    # Only count duplicates when every key property actually made it into the
+    # records — an incomplete $select (e.g. omitting a composite key part)
+    # makes distinct rows collide on a missing/None field. No full-record
+    # fallback either: two rows can legitimately share every *selected*
+    # non-key field.
+    if paged and keys and results and all(k in results[0] for k in keys):
+        seen: set[tuple[Any, ...]] = set()
         for record in results:
-            identity = (
-                tuple(record.get(k) for k in keys)
-                if keys
-                else json.dumps(record, sort_keys=True, ensure_ascii=False, default=str)
-            )
+            identity = tuple(record.get(k) for k in keys)
             if identity in seen:
                 duplicate_records += 1
             else:
