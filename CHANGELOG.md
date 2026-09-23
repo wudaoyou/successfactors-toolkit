@@ -4,6 +4,15 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP server `instructions` now say that "active" employees usually include
+  paid and unpaid leave, not only status A: resolve the `emplStatus` picklist
+  and state which statuses were counted. Without this, runs of the same
+  question disagreed on whether employees on leave were in scope. The
+  `params`/`$select` reminder was dropped (the `odata_query` description
+  already covers it) to stay under the 2048-character limit.
+
 ## [0.2.1] - 2026-09-23
 
 ### Added
