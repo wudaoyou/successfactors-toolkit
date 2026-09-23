@@ -67,14 +67,16 @@ mcp = MCPServer(
     # 2048 chars — keep both under that; tests enforce it.
     instructions=(
         "SAP SuccessFactors: OData v2 (any entity set) and the EC Compound "
-        "Employee SOAP API. Call list_tenants first for company_id. Diff two "
-        "instances with compare_metadata (server-side). Large results go to a "
-        "file (container path; under Docker it's the host dir bound to "
+        "Employee SOAP API. Call list_tenants first for company_id. "
+        "compare_metadata diffs two instances. Large results go to a "
+        "file (container path; under Docker, the host dir bound to "
         "RESULTS_DIR) — read it for the records.\n\n"
         "How to query (in order):\n"
         "1. Decide the population filter first, usually on EmpJob (company, "
         "location, department, emplStatus). Put employment status in it "
-        "explicitly; never rely on a navigation path to drop terminated "
+        'explicitly: resolve the emplStatus picklist; "active" usually '
+        "includes paid/unpaid leave, not just A — say which statuses you "
+        "counted. Never rely on a navigation path to drop terminated "
         "employees.\n"
         "2. List the entities the question needs.\n"
         "3. Apply the same filter to each entity server-side, directly or via "
@@ -88,7 +90,6 @@ mcp = MCPServer(
         "4. Resolve codes in bulk: $expand the `<field>Nav`, or query "
         "PicklistOption with `id in 1,2,...` — no N+1 calls.\n\n"
         "Also:\n"
-        "- Pass options in odata_query `params`; $select only needed fields.\n"
         "- Effective-dated entities (EmpJob, Position, FO*, MDF) return "
         "today's slice unless you pass fromDate/toDate or asOfDate.\n"
         "- Join keys: userId (EmpJob, EmpEmployment, BenefitEnrollment "
