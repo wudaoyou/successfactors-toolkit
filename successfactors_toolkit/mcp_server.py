@@ -86,7 +86,7 @@ mcp = MCPServer(
         "entity's navigation properties. Only when no path exists, pull the "
         "entity in full and join locally.\n"
         "4. Resolve codes in bulk: $expand the `<field>Nav`, or query "
-        "PicklistOption with `id in (...)` — no N+1 calls.\n\n"
+        "PicklistOption with `id in 1,2,...` — no N+1 calls.\n\n"
         "Also:\n"
         "- Pass options in odata_query `params`; $select only needed fields.\n"
         "- Effective-dated entities (EmpJob, Position, FO*, MDF) return "
