@@ -510,6 +510,12 @@ def _diff_field_maps(a: _FieldMap, b: _FieldMap) -> dict[str, Any]:
     return out
 
 
+def _plugin_statuses() -> dict[str, Any]:
+    from successfactors_toolkit import plugin_api  # imports this module; lazy to avoid a cycle
+
+    return plugin_api._statuses()
+
+
 @mcp.tool()
 def list_tenants() -> dict[str, Any]:
     """List the SuccessFactors instances this server can reach.
@@ -517,6 +523,7 @@ def list_tenants() -> dict[str, Any]:
     Call this first: the company_id values it returns are what the other tools
     take as their `company_id` argument. An empty company_id always means the
     instance configured in the server's own .env, reported here as "default".
+    "plugins" reports each installed plugin and whether it loaded.
     """
     settings = get_settings()
     tenants = [
@@ -538,6 +545,7 @@ def list_tenants() -> dict[str, Any]:
             "odata_version": settings.sf_odata_version,
         },
         "keys_dir": settings.tenant_keys_dir,
+        "plugins": _plugin_statuses(),
     }
 
 
@@ -999,8 +1007,16 @@ def main() -> None:
         # httpx logs every request URL at INFO; with tokens resolved, that URL
         # can hold plaintext PII.
         logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    from successfactors_toolkit import plugin_api
+
+    plugin_api._load_plugins(mcp)
     mcp.run()
 
 
 if __name__ == "__main__":
-    main()
+    # Serve from the importable module, not this __main__ copy: plugins reach
+    # the server through plugin_api, which imports successfactors_toolkit.mcp_server.
+    from successfactors_toolkit.mcp_server import main as _main
+
+    _main()
