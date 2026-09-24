@@ -116,10 +116,8 @@ def _extract_skiptoken(next_url: str) -> str | None:
     return vals[0] if vals else None
 
 
-def _odata_url(host: str, version: str, path: str) -> str:
-    """Build an OData URL without letting caller input escape its API root."""
-    if version not in _ODATA_VERSIONS:
-        raise ConnectionPolicyError("OData version must be 'v2' or 'v4'.")
+def api_url(host: str, prefix: str, path: str) -> str:
+    """Build https://{host}{prefix}{path} without letting caller input escape `prefix`."""
     if "\\" in path or any(ord(char) < 32 for char in path):
         raise ConnectionPolicyError("OData path contains invalid characters.")
     try:
@@ -142,11 +140,17 @@ def _odata_url(host: str, version: str, path: str) -> str:
     else:
         raise ConnectionPolicyError("OData path has too many encoding layers.")
 
-    prefix = f"/odata/{version}/"
     url = httpx.URL(f"https://{host}{prefix}{path.lstrip('/')}")
     if not url.path.startswith(prefix):
         raise ConnectionPolicyError("OData path must stay inside the configured API root.")
     return str(url)
+
+
+def _odata_url(host: str, version: str, path: str) -> str:
+    """Build an OData URL without letting caller input escape its API root."""
+    if version not in _ODATA_VERSIONS:
+        raise ConnectionPolicyError("OData version must be 'v2' or 'v4'.")
+    return api_url(host, f"/odata/{version}/", path)
 
 
 class ODataClient:

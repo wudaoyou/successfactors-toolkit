@@ -17,7 +17,7 @@ from successfactors_toolkit.services.connection_policy import (
     check_key_path,
     check_token_url,
 )
-from successfactors_toolkit.services.odata_client import ODataClient
+from successfactors_toolkit.services.odata_client import ODataClient, api_url
 
 
 @pytest.fixture
@@ -306,3 +306,19 @@ def test_odata_request_preserves_v4(settings):
     asyncio.run(client.request("GET", "User", conn=ODataConnectionConfig(odata_version="v4")))
 
     assert http.url == "https://api.example.invalid/odata/v4/User"
+
+
+def test_api_url_builds_under_a_custom_prefix():
+    assert (
+        api_url("t1.example.invalid", "/api/v1/", "Things")
+        == "https://t1.example.invalid/api/v1/Things"
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../oauth/token", "%2e%2e/oauth/token", "%252e%252e/x", "https://evil.example/x", "a\\b"],
+)
+def test_api_url_refuses_paths_that_leave_the_prefix(path):
+    with pytest.raises(ConnectionPolicyError):
+        api_url("t1.example.invalid", "/api/v1/", path)
