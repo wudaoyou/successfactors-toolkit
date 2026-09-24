@@ -497,11 +497,13 @@ plaintext stays in a local vault under `PII_VAULT_DIR`.
   server resolves it before calling SuccessFactors.
 - Binary content (photos, document scans) becomes `[PII-T<n>-REDACTED]`.
 - Tiers are cumulative: tier 1 covers national IDs, passports, work permits,
-  bank accounts and credentials. Tier 2 adds birth dates, home address and
-  personal contact data, nationality, race/ethnicity, disability and veteran
-  status. Tier 3 adds names, gender, marital status, photos and business
-  contact data. The full map is in `successfactors_toolkit/services/pii_filter.py`.
-  Relabeled custom fields go in `PII_EXTRA_FIELDS`.
+  bank accounts and credentials. Tier 2 adds birth dates, home address,
+  contact data on Per* entities (all emails and phones), nationality,
+  race/ethnicity, disability and veteran status. Tier 3 adds names, gender,
+  marital status, photos and User-entity contact fields (email, business
+  phone, cell phone). The full map is in
+  `successfactors_toolkit/services/pii_filter.py`. Relabeled custom fields go
+  in `PII_EXTRA_FIELDS`.
 - To restore plaintext in a report the model wrote, run it locally:
   `successfactors-pii-reveal report.md -o ~/private/report.md`.
   Without `-o`, it writes `report.revealed.md` next to the input, which is

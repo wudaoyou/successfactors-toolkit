@@ -19,10 +19,11 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   back as `[PII-T1-REDACTED]`. Set `PII_FILTER_TIER=0` to get the previous
   plaintext results.
 - `PII_FILTER_TIER` (0–3) sets how far tokenization goes. Tier 2 adds birth
-  dates, home address, personal email and phone, nationality, ethnicity,
-  disability and veteran status. Tier 3 adds names, gender, marital status,
-  photos and business contact data. `PII_EXTRA_FIELDS` maps tenant-specific
-  fields to a tier, e.g. `{"PerPersonal": {"customString6": 2}}`.
+  dates, home address, contact data on Per* entities (all emails and
+  phones), nationality, ethnicity, disability and veteran status. Tier 3
+  adds names, gender, marital status, photos and User-entity contact fields
+  (email, business phone, cell phone). `PII_EXTRA_FIELDS` maps
+  tenant-specific fields to a tier, e.g. `{"PerPersonal": {"customString6": 2}}`.
 - A token passed back in an `odata_query` `$filter` or path is resolved to
   its plaintext before the request is sent, so filtering on a national ID
   still works. If SuccessFactors echoes that value in an error, it is

@@ -80,11 +80,12 @@ The AI application needs permission to write to that folder. Original query file
 
 Fields in tiers 1 through `PII_FILTER_TIER` are tokenized before the AI ever
 sees them, so a report it writes under `sf-toolkit/data/mcp` contains tokens, not
-plaintext. To restore plaintext, run the reveal command against the file
-inside the container and send the output to a folder AI tools don't read:
+plaintext. To restore plaintext, run the reveal command from `~/sf-toolkit`
+(where `compose.yaml` lives) against the file inside the container, and send
+the output to a folder AI tools don't read:
 
 ```bash
-docker compose -f docker-compose.mcp.yml run --rm -T mcp \
+docker compose run --rm -T mcp \
   python -m successfactors_toolkit.pii_reveal /data/mcp/report.md -o - > ~/Documents/report.md
 ```
 
@@ -162,8 +163,9 @@ volumes:
 The AI client starts this service with Docker Compose using the AI client connection settings below. Compose automatically obtains the pinned release image when needed. No separate image download, source checkout, Python installation, or local build is required. No network port is exposed.
 
 The image digest pins the exact release used by this configuration. PII
-tokenization needs an image built from this release or later; an older
-pinned digest fails vault setup at the default tier.
+tokenization needs an image built from this release or later. An older
+image ignores the PII settings and returns plaintext; check that
+`odata_query` results carry `pii_filter_tier`.
 
 ### B. Connection files
 
