@@ -12,7 +12,11 @@ def isolated_configuration(monkeypatch, tmp_path):
     import os
 
     for name in list(os.environ):
-        if name.startswith("SF_") or name in {"API_KEY", "ADMIN_API_KEY", "TENANT_KEYS_DIR"}:
+        if name.startswith(("SF_", "PII_")) or name in {
+            "API_KEY",
+            "ADMIN_API_KEY",
+            "TENANT_KEYS_DIR",
+        }:
             monkeypatch.delenv(name)
     monkeypatch.setenv("SF_HOST", "api.example.invalid")
     monkeypatch.setenv("TENANT_KEYS_DIR", str(tmp_path / "tenants"))

@@ -1,6 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +47,17 @@ class Settings(BaseSettings):
     api_key: str = ""
     cors_origins: list[str] = []
 
+    # ── PII tokenization (MCP only) ───────────────────────────────────────────
+    # Values of mapped fields reach the model as [PII-T<tier>-<hex>] tokens;
+    # the plaintext stays in the vault. See services/pii_filter.py.
+    # 0 = off; N = tokenize every field whose tier <= N.
+    pii_filter_tier: int = Field(default=1, ge=0, le=3)
+    # Tenant-specific additions, e.g. {"PerPersonal": {"customString6": 2}}.
+    pii_extra_fields: dict[str, dict[str, Annotated[int, Field(ge=1, le=3)]]] = {}
+    # HMAC key + token vault. Must persist, and must stay out of RESULTS_DIR
+    # (the model reads that directory).
+    pii_vault_dir: Path = Path("pii_vault")
+
     # ── General ───────────────────────────────────────────────────────────────
     request_timeout: int = 120
 
@@ -53,6 +66,14 @@ class Settings(BaseSettings):
     # the working directory, so an MCP host that starts the server elsewhere
     # should set RESULTS_DIR to an absolute path.
     results_dir: Path = Path("results")
+
+    @model_validator(mode="after")
+    def _vault_outside_results(self) -> "Settings":
+        if self.pii_filter_tier and self.pii_vault_dir.resolve().is_relative_to(
+            self.results_dir.resolve()
+        ):
+            raise ValueError("PII_VAULT_DIR must not be inside RESULTS_DIR")
+        return self
 
 
 @lru_cache
