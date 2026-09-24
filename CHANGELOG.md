@@ -4,6 +4,17 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- MCP plugin interface: entry-point group `successfactors_toolkit.plugins`,
+  the `plugin_api` import surface, and a `plugins` block in `list_tenants`.
+
+### Security
+
+- OData paths whose segment is `..` or `.` followed by `;parameters` (e.g.
+  `..;/`) are now rejected, since some servers drop `;parameters` before
+  resolving dot segments.
+
 ## [0.2.3] - 2026-09-24
 
 ### Security
