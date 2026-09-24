@@ -10,6 +10,7 @@ package. Import only the names below; everything else is internal.
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Callable
 from importlib.metadata import entry_points
@@ -89,8 +90,12 @@ def _statuses() -> dict[str, dict[str, Any]]:
         fn = _status_fns.get(name)
         if base["loaded"] and fn is not None:
             try:
-                entry.update(fn())
+                candidate = dict(base)
+                candidate.update(fn())
+                json.dumps(candidate)  # a plugin can return values the SDK can't serialize
             except Exception as exc:
                 entry["status_error"] = type(exc).__name__
+            else:
+                entry = candidate
         out[name] = entry
     return out

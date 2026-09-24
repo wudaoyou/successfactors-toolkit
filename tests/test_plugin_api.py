@@ -93,6 +93,16 @@ def test_status_callable_error_does_not_break_list_tenants(monkeypatch):
     }
 
 
+def test_status_non_json_serializable_value_reports_status_error(monkeypatch):
+    def register(mcp):
+        plugin_api.set_status("example", lambda: {"client": object()})
+
+    _load(monkeypatch, _EntryPoint("example", register))
+    assert mcp_server.list_tenants()["plugins"] == {
+        "example": {"loaded": True, "status_error": "TypeError"}
+    }
+
+
 def test_list_tenants_reports_no_plugins_by_default():
     assert mcp_server.list_tenants()["plugins"] == {}
 
