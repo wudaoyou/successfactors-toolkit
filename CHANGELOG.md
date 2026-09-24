@@ -39,8 +39,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   outside the AI's workspace.
 - Docker: the image creates `/vault`, and `docker-compose.mcp.yml` sets
   `PII_VAULT_DIR=/vault/store` on a named volume `sf-toolkit-pii-vault`. If
-  you run your own compose file, add the same volume. Otherwise every data
-  tool returns `pii_vault_unavailable` at the default tier.
+  you run your own compose file, add the same volume. Otherwise `odata_query`
+  and `ce_query` return `pii_vault_unavailable` at the default tier.
 - With tokenization on, OData results no longer include `__metadata.uri`,
   `__deferred.uri` or media links, because those URIs repeat key values such
   as work-permit numbers. HTTP request-URL logging is also turned down so
