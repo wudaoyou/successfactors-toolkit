@@ -4,6 +4,52 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-24
+
+### Security
+
+- PII tokenization for MCP tool results. Before `odata_query` and `ce_query`
+  output reaches the AI, whether as a saved file, an inline preview or an
+  error body, PII fields are replaced by stable tokens such as
+  `[PII-T1-3f9a1c2b7d10e4a5]`. The same value always gets the same token, so
+  the model can still compare, group and count. Plaintext stays in a local
+  vault (`PII_VAULT_DIR`, default `./pii_vault`), which must not be inside
+  `RESULTS_DIR`.
+- **Behavior change:** tokenization is on by default at tier 1. National IDs,
+  work-permit and personal-document numbers, bank account numbers and IBANs,
+  and passwords come back as tokens. Attachment and document content comes
+  back as `[PII-T1-REDACTED]`. Set `PII_FILTER_TIER=0` to get the previous
+  plaintext results.
+- `PII_FILTER_TIER` (0–3) sets how far tokenization goes. Tier 2 adds birth
+  dates, home address, contact data on Per* entities (all emails and
+  phones), nationality, ethnicity, disability and veteran status. Tier 3
+  adds names, gender, marital status, photos and User-entity contact fields
+  (email, business phone, cell phone). `PII_EXTRA_FIELDS` maps
+  tenant-specific fields to a tier, e.g. `{"PerPersonal": {"customString6": 2}}`.
+- A token passed back in an `odata_query` `$filter` or path is resolved to
+  its plaintext before the request is sent, so filtering on a national ID
+  still works. If SuccessFactors echoes that value in an error, it is
+  replaced by the token again. An unknown token is refused with
+  `pii_unknown_token` and nothing is sent.
+- New results and errors:
+  - Tool results carry `pii_filter_tier`, `pii_tokenized` and `pii_note`.
+  - `pii_vault_unavailable` means the vault can't be opened.
+  - `pii_tokenize_failed` means a page couldn't be tokenized, so it is
+    withheld instead of being returned in plaintext.
+- New local command `successfactors-pii-reveal <file> -o <path>` restores
+  plaintext in a report the AI wrote. It is not an MCP tool. Write its output
+  outside the AI's workspace.
+- Docker: the image creates `/vault`, and `docker-compose.mcp.yml` sets
+  `PII_VAULT_DIR=/vault/store` on a named volume `sf-toolkit-pii-vault`. If
+  you run your own compose file, add the same volume. Otherwise `odata_query`
+  and `ce_query` return `pii_vault_unavailable` at the default tier.
+- With tokenization on, OData results no longer include `__metadata.uri`,
+  `__deferred.uri` or media links, because those URIs repeat key values such
+  as work-permit numbers. HTTP request-URL logging is also turned down so
+  resolved plaintext doesn't reach the server log.
+- This protects the normal tool flow. It does not stop an agent that can read
+  the vault directly. The README lists deny rules for local installs.
+
 ## [0.2.2] - 2026-09-23
 
 ### Fixed
@@ -249,7 +295,8 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/wudaoyou/successfactors-toolkit/releases/tag/v0.2.0
