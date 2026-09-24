@@ -10,13 +10,13 @@ package. Import only the names below; everything else is internal.
 
 from __future__ import annotations
 
-import json
 import sys
 from collections.abc import Callable
 from importlib.metadata import entry_points
 from typing import Any
 
 import httpx
+from pydantic_core import to_jsonable_python
 
 from successfactors_toolkit import mcp_server as _server
 from successfactors_toolkit.config import Settings, get_settings
@@ -92,7 +92,8 @@ def _statuses() -> dict[str, dict[str, Any]]:
             try:
                 candidate = dict(base)
                 candidate.update(fn())
-                json.dumps(candidate)  # a plugin can return values the SDK can't serialize
+                # Fail here, not in the SDK's result serialization, which would sink list_tenants.
+                to_jsonable_python(candidate)
             except Exception as exc:
                 entry["status_error"] = type(exc).__name__
             else:

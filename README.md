@@ -601,8 +601,9 @@ example = "example_plugin:register"
 
 `register(mcp)` runs once at startup and adds tools with `@mcp.tool()`.
 Import only from `successfactors_toolkit.plugin_api`, which holds the
-supported helpers: settings, the shared HTTP pool, result-file writing,
-previews, and PII tokenization. Call `set_status("<entry point name>", fn)`
+supported helpers: settings, the shared HTTP pool, URL building that
+caller input can't escape, result-file writing, previews, and PII
+tokenization. Call `set_status("<entry point name>", fn)`
 to report a status block in `list_tenants`. A plugin that fails to load is
 skipped: it is logged to stderr and listed as `loaded: false`. Plugins run
 with the server's full privileges, so install only packages you trust.

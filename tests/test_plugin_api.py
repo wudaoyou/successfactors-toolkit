@@ -3,6 +3,8 @@
 import asyncio
 import runpy
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from mcp.server.mcpserver import MCPServer
@@ -99,7 +101,19 @@ def test_status_non_json_serializable_value_reports_status_error(monkeypatch):
 
     _load(monkeypatch, _EntryPoint("example", register))
     assert mcp_server.list_tenants()["plugins"] == {
-        "example": {"loaded": True, "status_error": "TypeError"}
+        "example": {"loaded": True, "status_error": "PydanticSerializationError"}
+    }
+
+
+def test_status_with_values_the_sdk_serializes_is_kept(monkeypatch):
+    when = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def register(mcp):
+        plugin_api.set_status("example", lambda: {"expires": when, "path": Path("/x")})
+
+    _load(monkeypatch, _EntryPoint("example", register))
+    assert mcp_server.list_tenants()["plugins"] == {
+        "example": {"loaded": True, "expires": when, "path": Path("/x")}
     }
 
 
