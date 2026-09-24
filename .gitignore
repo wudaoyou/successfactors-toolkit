@@ -27,6 +27,7 @@ logs/
 *.p12
 *.pfx
 *.zip
+pii_vault/
 
 # Local assistant/editor configuration
 AGENTS.md

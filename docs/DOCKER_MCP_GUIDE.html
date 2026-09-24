@@ -520,6 +520,16 @@ change that default for future queries.</p>
 range, fields, record count, and whether the query completed. A saved
 file may contain only part of the requested data. Ask the AI to explain
 any incomplete result before using it in a report.</p>
+<h3 id="revealing-pii-in-a-saved-report">Revealing PII in a saved
+report</h3>
+<p>Fields in tiers 1 through <code>PII_FILTER_TIER</code> are tokenized
+before the AI ever sees them, so a report it writes under
+<code>sf-toolkit/data/mcp</code> contains tokens, not plaintext. To
+restore plaintext, run the reveal command from <code>~/sf-toolkit</code>
+(where <code>compose.yaml</code> lives) against the file inside the
+container, and send the output to a folder AI tools don’t read:</p>
+<pre class="bash"><code>docker compose run --rm -T mcp \
+  python -m successfactors_toolkit.pii_reveal /data/mcp/report.md -o - &gt; ~/Documents/report.md</code></pre>
 <h2 id="if-something-does-not-work">If something does not work</h2>
 <table>
 <colgroup>
@@ -558,6 +568,14 @@ destination folder in your AI application.</td>
 <td>The AI reports a file but you cannot find it</td>
 <td>Ask: “Give me the file path on my computer, not the path inside
 Docker.” Check <code>sf-toolkit/data/mcp</code>.</td>
+</tr>
+<tr class="even">
+<td>Results say <code>pii_vault_unavailable</code></td>
+<td>Ask IT to check the PII vault volume. If no report has been revealed
+from it yet, IT can remove it with <code>docker volume rm
+sf-toolkit-pii-vault</code> and reopen the AI application; Docker recreates
+it with the right permissions. Don't remove a vault that has been used —
+its tokens can't be revealed afterwards.</td>
 </tr>
 </tbody>
 </table>
@@ -643,6 +661,7 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
     environment:
       TENANT_KEYS_DIR: /credentials/tenants
       RESULTS_DIR: /data
+      PII_VAULT_DIR: /vault/store
     volumes:
       - type: bind
         source: ./credentials/tenants
@@ -654,13 +673,25 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
         source: ./data
         target: /data
         bind:
-          create_host_path: false</code></pre>
+          create_host_path: false
+      # PII token vault: a named volume, deliberately not a host folder, so
+      # host-side AI tools can&#39;t read it. Deleting it makes old tokens unrecoverable.
+      - type: volume
+        source: pii_vault
+        target: /vault
+
+volumes:
+  pii_vault:
+    name: sf-toolkit-pii-vault</code></pre>
 <p>The AI client starts this service with Docker Compose using the AI client connection settings below.
 Compose automatically obtains the pinned release image when needed. No
 separate image download, source checkout, Python installation, or local
 build is required. No network port is exposed.</p>
 <p>The image digest pins the exact release used by this
-configuration.</p>
+configuration. PII tokenization needs an image built from this release or
+later. An older image ignores the PII settings and returns plaintext;
+check that <code>odata_query</code> results carry
+<code>pii_filter_tier</code>.</p>
 <h3 id="b.-connection-files">B. Connection files</h3>
 <p>Create a working directory outside the repository:</p>
 <pre class="sh"><code>mkdir -p &quot;$HOME/sf-toolkit/credentials/tenants/demo&quot; &quot;$HOME/sf-toolkit/data&quot;
@@ -697,7 +728,12 @@ SF_COMPANY_ID=demo
 SF_TOKEN_URL=https://your-api-host.sapsf.com/oauth/token
 SF_ODATA_VERSION=v2
 TENANT_KEYS_DIR=/credentials/tenants
-RESULTS_DIR=/data</code></pre>
+RESULTS_DIR=/data
+PII_VAULT_DIR=/vault/store
+# Optional: raise or lower PII tokenization (0 off - 3 most aggressive); default 1.
+# PII_FILTER_TIER=1
+# Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
+# PII_EXTRA_FIELDS={&quot;PerPersonal&quot;: {&quot;customString6&quot;: 2}}</code></pre>
 <p><code>SF_HOST</code> excludes <code>https://</code>;
 <code>SF_TOKEN_URL</code> includes the scheme and
 <code>/oauth/token</code>. Follow the project’s convention that the
@@ -882,6 +918,16 @@ data/mcp；若要改变今后的默认目录，请 IT 调整设置。</p>
 <p><strong>分享前检查：</strong>
 环境、日期范围、字段、记录数，以及查询是否完整结束。文件已生成不代表数据完整；如有缺失或限制，先让
 AI 解释再用于报告。</p>
+<h3 id="zh-business-还原已保存报告中的pii">还原已保存报告中的 PII</h3>
+<p>第 1 至 <code>PII_FILTER_TIER</code>
+层的字段会在 AI 看到之前完成脱敏，因此它保存到
+<code>sf-toolkit/data/mcp</code>
+下的报告只包含 token，不含明文。如需还原明文，请在
+<code>~/sf-toolkit</code>（<code>compose.yaml</code>
+所在目录）下对容器内的文件执行还原命令，并将输出发送到 AI
+工具不会读取的目录：</p>
+<pre class="bash"><code>docker compose run --rm -T mcp \
+  python -m successfactors_toolkit.pii_reveal /data/mcp/report.md -o - &gt; ~/Documents/report.md</code></pre>
 <h2 id="zh-business-遇到问题怎么办">遇到问题怎么办</h2>
 <table>
 <colgroup>
@@ -916,6 +962,13 @@ AI 解释再用于报告。</p>
 <td>AI 说已保存但找不到文件</td>
 <td>问：“告诉我电脑上的完整路径，不要给 Docker 内部路径。”检查
 sf-toolkit/data/mcp。</td>
+</tr>
+<tr class="even">
+<td>结果显示 <code>pii_vault_unavailable</code></td>
+<td>请 IT 检查 PII 保险库卷。如果还没有从中还原过任何报告，IT 可以用
+<code>docker volume rm sf-toolkit-pii-vault</code> 删除它并重新打开 AI
+应用，Docker 会以正确的权限重新创建；不要删除已经使用过的保险库——其中的
+token 之后将无法还原。</td>
 </tr>
 </tbody>
 </table>
@@ -981,6 +1034,7 @@ AI 应用中验证。</p>
     environment:
       TENANT_KEYS_DIR: /credentials/tenants
       RESULTS_DIR: /data
+      PII_VAULT_DIR: /vault/store
     volumes:
       - type: bind
         source: ./credentials/tenants
@@ -993,8 +1047,20 @@ AI 应用中验证。</p>
         target: /data
         bind:
           create_host_path: false
+      # PII token vault: a named volume, deliberately not a host folder, so
+      # host-side AI tools can&#39;t read it. Deleting it makes old tokens unrecoverable.
+      - type: volume
+        source: pii_vault
+        target: /vault
+
+volumes:
+  pii_vault:
+    name: sf-toolkit-pii-vault
 </code></pre>
-<p>按下方客户端配置，由 AI 客户端通过 Compose 启动 MCP，Compose 自动获取固定版本镜像。无需单独下载镜像、获取源码、安装 Python 或自行构建；不开放网络端口。</p><p>镜像 digest 固定此配置使用的具体发布版本。</p><h3 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
+<p>按下方客户端配置，由 AI 客户端通过 Compose 启动 MCP，Compose 自动获取固定版本镜像。无需单独下载镜像、获取源码、安装 Python 或自行构建；不开放网络端口。</p><p>镜像 digest 固定此配置使用的具体发布版本。PII
+脱敏需要使用本版本或更新版本构建的镜像；旧版镜像会忽略 PII
+相关设置并直接返回明文，请检查 <code>odata_query</code>
+的结果是否带有 <code>pii_filter_tier</code>。</p><h3 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
 并放入指定目录</h3>
 <p>在代码仓库之外准备一个工作目录：</p>
 <pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
@@ -1027,7 +1093,12 @@ SF_COMPANY_ID=demo
 SF_TOKEN_URL=https://your-api-host.sapsf.com/oauth/token
 SF_ODATA_VERSION=v2
 TENANT_KEYS_DIR=/credentials/tenants
-RESULTS_DIR=/data</code></pre>
+RESULTS_DIR=/data
+PII_VAULT_DIR=/vault/store
+# Optional: raise or lower PII tokenization (0 off - 3 most aggressive); default 1.
+# PII_FILTER_TIER=1
+# Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
+# PII_EXTRA_FIELDS={&quot;PerPersonal&quot;: {&quot;customString6&quot;: 2}}</code></pre>
 <p><code>SF_HOST</code> 不带
 <code>https://</code>；<code>SF_TOKEN_URL</code> 包含协议和
 <code>/oauth/token</code>。技术用户按项目约定与证书 CN

@@ -44,6 +44,7 @@ Changelog = "https://github.com/wudaoyou/successfactors-toolkit/blob/main/CHANGE
 
 [project.scripts]
 successfactors-mcp = "successfactors_toolkit.mcp_server:main"
+successfactors-pii-reveal = "successfactors_toolkit.pii_reveal:main"
 
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }
