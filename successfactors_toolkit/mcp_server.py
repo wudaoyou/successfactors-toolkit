@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -33,9 +34,11 @@ from pydantic import Field
 from successfactors_toolkit.config import get_settings
 from successfactors_toolkit.models.common import ODataConnectionConfig, SFAPIConnectionConfig
 from successfactors_toolkit.models.sfapi import CEQueryFilter
+from successfactors_toolkit.services import pii_filter
 from successfactors_toolkit.services.ce_query_builder import COMMON_SEGMENTS, build_query_string
 from successfactors_toolkit.services.ce_response import parse_page
 from successfactors_toolkit.services.odata_client import ODataClient, split_path_query
+from successfactors_toolkit.services.pii_filter import PiiUnknownTokenError, PiiVaultError
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
 from successfactors_toolkit.services.tenant_store import TenantStore
 
@@ -144,6 +147,106 @@ def _write(content: str, tool: str, company_id: str, suffix: str) -> str:
     with os.fdopen(descriptor, "w", encoding="utf-8") as output:
         output.write(content)
     return str(path)
+
+
+def _attach_preview(out: dict[str, Any], records: list[Any], preview: int) -> None:
+    """Inline the first `preview` records when they fit in 16 KiB."""
+    if preview <= 0:
+        return
+    head = records[:preview]
+    encoded = json.dumps(head, ensure_ascii=False, default=str).encode("utf-8")
+    if len(encoded) <= _PREVIEW_INLINE_LIMIT:
+        out["preview"] = head
+    else:
+        out["preview_error"] = (
+            "Requested preview exceeds the 16 KiB inline limit; inspect the saved file locally."
+        )
+
+
+_PII_NOTE = (
+    "Values like [PII-T1-<hex>] are PII tokens: the same value always gives the "
+    "same token, so compare, group and count them freely, and pass them "
+    "unchanged in $filter or path — the server resolves them. "
+    "[PII-T<n>-REDACTED] marks binary content that is not available."
+)
+
+
+def _pii_error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, PiiUnknownTokenError):
+        return {
+            "error": "pii_unknown_token",
+            "tokens": exc.tokens,
+            "detail": "Not issued by this server's vault; use tokens exactly as returned.",
+        }
+    return {"error": "pii_vault_unavailable", "detail": str(exc)}
+
+
+def _pii_request(
+    path: str, params: dict[str, Any] | None
+) -> tuple[pii_filter.PiiFilter | None, str, dict[str, Any] | None, dict[str, str]]:
+    """The configured filter, plus path/params with any tokens resolved to
+    plaintext and the substitutions made (for retokenizing error bodies).
+    Raises PiiVaultError / PiiUnknownTokenError."""
+    pii = pii_filter.from_settings(get_settings())
+    if pii is None:
+        return None, path, params, {}
+    # The query half is parsed (and URL-decoded) later, so values put there
+    # are percent-encoded to keep a +, & or = in the plaintext intact.
+    head, sep, query = path.partition("?")
+    head, subs = pii_filter.detokenize(head, pii.vault)
+    query, more = pii_filter.detokenize(query, pii.vault, encode=True)
+    subs.update(more)
+    path = head + sep + query
+    if params is not None:
+        resolved = {}
+        for key, value in params.items():
+            if isinstance(value, str):
+                value, more = pii_filter.detokenize(value, pii.vault)
+                subs.update(more)
+            resolved[key] = value
+        params = resolved
+    return pii, path, params, subs
+
+
+def _pii_mark(out: dict[str, Any], pii: pii_filter.PiiFilter | None, count: int) -> None:
+    if pii is not None:
+        out["pii_filter_tier"] = pii.tier
+        out["pii_tokenized"] = count
+        out["pii_note"] = _PII_NOTE
+
+
+def _pii_tokenize_json_records(text: str, pii: pii_filter.PiiFilter) -> str | None:
+    """`text`'s OData v2 records ({"d": {"results": [...]}}, {"d": {...}} for
+    a single entity, or a bare list), tokenized -- or None if it doesn't parse
+    as JSON in one of those shapes and so can't be safely returned. Raises
+    PiiVaultError if the vault itself is unavailable."""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    data = parsed.get("d", parsed) if isinstance(parsed, dict) else parsed
+    records = data.get("results", [data]) if isinstance(data, dict) else data
+    if not isinstance(records, list):
+        return None
+    records, _ = pii.tokenize_records(records)
+    return json.dumps(records, ensure_ascii=False, default=str)
+
+
+def _pii_safe_error_body(
+    text: str, status_code: int, pii: pii_filter.PiiFilter | None, subs: dict[str, str]
+) -> str | None:
+    """The body to hand back for a failed odata_query call. A >=400
+    status is a genuine SF fault: only the plaintext the caller's own request
+    put on the wire is put back under its token. A <400 status means the
+    request that produced this body actually succeeded — it's not a fault,
+    so its shape can't be trusted to be free of untokenized PII — so it's
+    tokenized like any other OData JSON page, or withheld if it doesn't even
+    parse as one. Raises PiiVaultError if the vault itself is unavailable."""
+    if pii is None:
+        return text
+    if status_code >= 400:
+        return pii_filter.retokenize(text, subs)
+    return _pii_tokenize_json_records(text, pii)
 
 
 def _edmx_root(xml: str):
@@ -593,6 +696,10 @@ async def odata_query(
     """
     if not 1 <= max_pages <= 10000 or not 0 <= preview <= 20:
         raise ValueError("max_pages must be 1-10000 and preview must be 0-20.")
+    try:
+        pii, path, params, pii_subs = _pii_request(path, params)
+    except (PiiVaultError, PiiUnknownTokenError) as exc:
+        return _pii_error(exc)
     odata, _ = _clients()
     conn = ODataConnectionConfig(company_id=company_id or None)
 
@@ -680,11 +787,18 @@ async def odata_query(
         # the actual reason (unknown entity, missing permission, bad $filter)
         # in that body. One extra call on the failure path buys a usable error.
         detail = await odata.request("GET", path, conn=conn, params=query_params)
+        try:
+            error_body = _pii_safe_error_body(
+                str(detail["body"]), int(detail["status_code"]), pii, pii_subs
+            )
+        except PiiVaultError as exc:
+            return _pii_error(exc)
         return {
             "error": r["stopped_reason"],
             "status_code": r["last_status_code"],
             "records_before_error": r["total_records"],
-            "body": str(detail["body"])[:2000],
+            # Cut after retokenizing/tokenizing, so no plaintext fragment survives it.
+            "body": error_body[:2000] if error_body is not None else None,
         }
 
     results = r["results"]
@@ -717,6 +831,13 @@ async def odata_query(
                 "manually with $skip (and an explicit $orderby) past this point."
             )
 
+    pii_count = 0
+    if pii is not None:
+        try:
+            results, pii_count = pii.tokenize_records(results)
+        except PiiVaultError as exc:
+            return _pii_error(exc)
+
     out: dict[str, Any] = {
         "total_records": r["total_records"],
         "pages_fetched": r["pages_fetched"],
@@ -743,17 +864,8 @@ async def odata_query(
         )
     if warnings:
         out["warnings"] = warnings
-    if preview > 0:
-        preview_records = results[:preview]
-        if (
-            len(json.dumps(preview_records, ensure_ascii=False, default=str).encode("utf-8"))
-            <= _PREVIEW_INLINE_LIMIT
-        ):
-            out["preview"] = preview_records
-        else:
-            out["preview_error"] = (
-                "Requested preview exceeds the 16 KiB inline limit; inspect the saved file locally."
-            )
+    _pii_mark(out, pii, pii_count)
+    _attach_preview(out, results, preview)
     return out
 
 
@@ -799,6 +911,11 @@ async def ce_query(
     """
     if not 1 <= max_pages <= 500:
         raise ValueError("max_pages must be 1-500.")
+    try:
+        pii = pii_filter.from_settings(get_settings())
+    except PiiVaultError as exc:
+        return _pii_error(exc)
+    pii_count = 0
     _, sfapi = _clients()
     conn = SFAPIConnectionConfig(company_id=company_id or None)
     query = build_query_string(
@@ -823,33 +940,65 @@ async def ce_query(
         body = str(result["body"])
         num_results, has_more, session, error = parse_page(body, int(result["status_code"]))
         if error:
+            error_body: str | None = body[:2000]
+            if pii is not None:
+                # A soap_fault is a short fault string, but missing_query_session
+                # and parse_error can both be a full, valid, otherwise-normal
+                # employee page (e.g. missing_query_session is just SF's
+                # continuation token going missing) — tokenize it like any
+                # other page before it's shown, and withhold it entirely if
+                # it isn't even valid XML.
+                try:
+                    tokenized_body, _ = pii.tokenize_xml(body)
+                except etree.XMLSyntaxError:
+                    # A >=400 non-XML body is an auth/gateway page: the request
+                    # carried only IDs, so there is nothing of ours to echo.
+                    if int(result["status_code"]) < 400:
+                        error_body = None
+                except PiiVaultError as exc:
+                    return {**_pii_error(exc), "files": files}
+                else:
+                    error_body = tokenized_body[:2000]
             return {
                 "error": error,
                 "status_code": result["status_code"],
                 "failed_on_page": pages + 1,
-                # Faults are short and name the offending segment/filter — the
-                # one payload the model must actually see.
-                "body": body[:2000],
+                "body": error_body,
                 "files": files,
             }
         pages += 1
         total += num_results or 0
+        if pii is not None:
+            try:
+                body, tokenized = pii.tokenize_xml(body)
+            except etree.XMLSyntaxError:
+                return {"error": "pii_tokenize_failed", "failed_on_page": pages, "files": files}
+            except PiiVaultError as exc:
+                return {**_pii_error(exc), "files": files}
+            pii_count += tokenized
         files.append(_write(body, f"ce_query_p{pages}", company_id, "xml"))
         if not (has_more and session and pages < max_pages):
             break
         result = await sfapi.query_more(session, conn=conn)
 
-    return {
+    out = {
         "page_count": pages,
         "total_records": total,
         "truncated": bool(has_more) and pages >= max_pages,
         "query": query,
         "files": files,
     }
+    _pii_mark(out, pii, pii_count)
+    return out
 
 
 def main() -> None:
     """Console-script entry point: serve MCP over stdio."""
+    settings = get_settings()  # bad PII (or other) settings stop the server here
+    if settings.pii_filter_tier:
+        # httpx logs every request URL at INFO; with tokens resolved, that URL
+        # can hold plaintext PII.
+        logging.getLogger("httpx").setLevel(logging.WARNING)
     mcp.run()
 
 
