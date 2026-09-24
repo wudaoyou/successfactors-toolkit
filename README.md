@@ -232,6 +232,9 @@ See `.env.example` for a filled-in starting point and
 | `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `120` (long-running queries can take minutes per SAP KBA 2735876). |
 | `TENANT_KEYS_DIR` | Where per-tenant key+cert pairs are stored (see below). Default `./tenants`. |
 | `RESULTS_DIR` | Payload output root. Program default: `./results`; MCP adds `/mcp/`. The Docker MCP guide sets `/data` and mounts a host `data` folder there. |
+| `PII_FILTER_TIER` | MCP PII tokenization level: `0` off, `1` (default) stand-alone sensitive PII such as national IDs and bank accounts, `2` adds birth dates, home contact data and protected characteristics, `3` adds names and other identifying data. |
+| `PII_EXTRA_FIELDS` | JSON map of tenant-specific fields to tokenize, e.g. `{"PerPersonal": {"customString6": 2}}`. |
+| `PII_VAULT_DIR` | Where the token key and vault live. Default `./pii_vault`. Must persist and must not be inside `RESULTS_DIR`. |
 
 ### Private key resolution order
 
@@ -482,6 +485,52 @@ Before reporting a complete export, check that OData `stopped_reason` is
 `exhausted`, or that Compound Employee has no error and `truncated` is false.
 An existing file is not proof that all pages were retrieved.
 
+### PII tokenization
+
+At `PII_FILTER_TIER` 1 or higher, PII values in MCP results — files and
+previews from `odata_query` and `ce_query` — are replaced with
+tokens such as `[PII-T1-3f9a1c2b7d10e4a5]` before anything is written. The
+plaintext stays in a local vault under `PII_VAULT_DIR`.
+
+- The same value always gets the same token, so the model can still compare,
+  group, count and join. It can also pass a token back in `$filter`; the
+  server resolves it before calling SuccessFactors.
+- Binary content (photos, document scans) becomes `[PII-T<n>-REDACTED]`.
+- Tiers are cumulative: tier 1 covers national IDs, passports, work permits,
+  bank accounts and credentials. Tier 2 adds birth dates, home address and
+  personal contact data, nationality, race/ethnicity, disability and veteran
+  status. Tier 3 adds names, gender, marital status, photos and business
+  contact data. The full map is in `successfactors_toolkit/services/pii_filter.py`.
+  Relabeled custom fields go in `PII_EXTRA_FIELDS`.
+- To restore plaintext in a report the model wrote, run it locally:
+  `successfactors-pii-reveal report.md -o ~/private/report.md`.
+  Without `-o`, it writes `report.revealed.md` next to the input, which is
+  still inside the AI's workspace and thus still readable by the model —
+  always pass `-o` to a path the AI can't read (or `-o -` for stdout).
+  `PII_VAULT_DIR` must resolve to the same vault the server used to write the
+  tokens; its default is relative to the current working directory, so run
+  the command from the same directory as the server, or set `PII_VAULT_DIR`
+  explicitly.
+
+This keeps PII out of the model's context in the normal tool flow. It is not a
+sandbox against an agent that deliberately reads the vault or runs the reveal
+command. With a local (non-Docker) server, deny both in Claude Code, e.g. in
+`.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Read(//absolute/path/to/pii_vault/**)",
+      "Bash(successfactors-pii-reveal:*)"
+    ]
+  }
+}
+```
+
+The Docker setup keeps the vault in a named volume that is not mounted on the
+host, which is the stronger option.
+
 ### Alternative: configure a locally installed MCP server
 
 The primary Docker setup is in the guide linked above. The following examples
@@ -503,7 +552,8 @@ agent; use its MCP settings or configuration file:
         "SF_COMPANY_ID": "demo",
         "SF_TOKEN_URL": "https://example.invalid/oauth/token",
         "TENANT_KEYS_DIR": "/absolute/path/to/tenants",
-        "RESULTS_DIR": "/absolute/path/to/data"
+        "RESULTS_DIR": "/absolute/path/to/data",
+        "PII_VAULT_DIR": "/absolute/path/to/pii_vault"
       }
     }
   }

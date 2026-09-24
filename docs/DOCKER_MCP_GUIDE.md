@@ -76,6 +76,18 @@ The AI application needs permission to write to that folder. Original query file
 
 **Check before sharing:** confirm the environment, date range, fields, record count, and whether the query completed. A saved file may contain only part of the requested data. Ask the AI to explain any incomplete result before using it in a report.
 
+### Revealing PII in a saved report
+
+Fields in tiers 1 through `PII_FILTER_TIER` are tokenized before the AI ever
+sees them, so a report it writes under `sf-toolkit/data/mcp` contains tokens, not
+plaintext. To restore plaintext, run the reveal command against the file
+inside the container and send the output to a folder AI tools don't read:
+
+```bash
+docker compose -f docker-compose.mcp.yml run --rm -T mcp \
+  python -m successfactors_toolkit.pii_reveal /data/mcp/report.md -o - > ~/Documents/report.md
+```
+
 ## If something does not work
 
 | What you see | What to do |
@@ -123,6 +135,7 @@ services:
     environment:
       TENANT_KEYS_DIR: /credentials/tenants
       RESULTS_DIR: /data
+      PII_VAULT_DIR: /vault/store
     volumes:
       - type: bind
         source: ./credentials/tenants
@@ -135,11 +148,22 @@ services:
         target: /data
         bind:
           create_host_path: false
+      # PII token vault: a named volume, deliberately not a host folder, so
+      # host-side AI tools can't read it. Deleting it makes old tokens unrecoverable.
+      - type: volume
+        source: pii_vault
+        target: /vault
+
+volumes:
+  pii_vault:
+    name: sf-toolkit-pii-vault
 ```
 
 The AI client starts this service with Docker Compose using the AI client connection settings below. Compose automatically obtains the pinned release image when needed. No separate image download, source checkout, Python installation, or local build is required. No network port is exposed.
 
-The image digest pins the exact release used by this configuration.
+The image digest pins the exact release used by this configuration. PII
+tokenization needs an image built from this release or later; an older
+pinned digest fails vault setup at the default tier.
 
 ### B. Connection files
 
@@ -180,6 +204,11 @@ SF_TOKEN_URL=https://your-api-host.sapsf.com/oauth/token
 SF_ODATA_VERSION=v2
 TENANT_KEYS_DIR=/credentials/tenants
 RESULTS_DIR=/data
+PII_VAULT_DIR=/vault/store
+# Optional: raise or lower PII tokenization (0 off - 3 most aggressive); default 1.
+# PII_FILTER_TIER=1
+# Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
+# PII_EXTRA_FIELDS={"PerPersonal": {"customString6": 2}}
 ```
 
 `SF_HOST` excludes `https://`; `SF_TOKEN_URL` includes the scheme and `/oauth/token`. Follow the project's convention that the technical user matches the certificate CN. Enter literal values in the environment file; do not rely on `$VARIABLE` expansion.
