@@ -11,6 +11,7 @@ services:
     environment:
       TENANT_KEYS_DIR: /credentials/tenants
       RESULTS_DIR: /data
+      PII_VAULT_DIR: /vault/store
     volumes:
       - type: bind
         source: ./credentials/tenants
@@ -23,3 +24,12 @@ services:
         target: /data
         bind:
           create_host_path: false
+      # PII token vault: a named volume, deliberately not a host folder, so
+      # host-side AI tools can't read it. Deleting it makes old tokens unrecoverable.
+      - type: volume
+        source: pii_vault
+        target: /vault
+
+volumes:
+  pii_vault:
+    name: sf-toolkit-pii-vault
