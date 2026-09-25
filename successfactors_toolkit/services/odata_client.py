@@ -116,10 +116,10 @@ def _extract_skiptoken(next_url: str) -> str | None:
     return vals[0] if vals else None
 
 
-def _odata_url(host: str, version: str, path: str) -> str:
-    """Build an OData URL without letting caller input escape its API root."""
-    if version not in _ODATA_VERSIONS:
-        raise ConnectionPolicyError("OData version must be 'v2' or 'v4'.")
+def api_url(host: str, prefix: str, path: str) -> str:
+    """Build https://{host}{prefix}{path} without letting caller input escape `prefix`."""
+    if not prefix.startswith("/") or not prefix.endswith("/"):
+        raise ConnectionPolicyError("OData API root prefix must start and end with '/'.")
     if "\\" in path or any(ord(char) < 32 for char in path):
         raise ConnectionPolicyError("OData path contains invalid characters.")
     try:
@@ -133,7 +133,10 @@ def _odata_url(host: str, version: str, path: str) -> str:
     for _ in range(4):
         if "\\" in decoded_path or any(ord(char) < 32 for char in decoded_path):
             raise ConnectionPolicyError("OData path contains invalid characters.")
-        if any(segment in {".", ".."} for segment in decoded_path.split("/")):
+        # Servlet containers (Tomcat/Spring) strip `;params` from a path segment
+        # before dot-segment normalization, so `..;/x` and `.;/x` still resolve
+        # as `..`/`.` on the backend even though the literal segment isn't `..`.
+        if any(segment.split(";", 1)[0] in {".", ".."} for segment in decoded_path.split("/")):
             raise ConnectionPolicyError("OData path must stay inside the configured API root.")
         unquoted = unquote(decoded_path)
         if unquoted == decoded_path:
@@ -142,11 +145,17 @@ def _odata_url(host: str, version: str, path: str) -> str:
     else:
         raise ConnectionPolicyError("OData path has too many encoding layers.")
 
-    prefix = f"/odata/{version}/"
     url = httpx.URL(f"https://{host}{prefix}{path.lstrip('/')}")
     if not url.path.startswith(prefix):
         raise ConnectionPolicyError("OData path must stay inside the configured API root.")
     return str(url)
+
+
+def _odata_url(host: str, version: str, path: str) -> str:
+    """Build an OData URL without letting caller input escape its API root."""
+    if version not in _ODATA_VERSIONS:
+        raise ConnectionPolicyError("OData version must be 'v2' or 'v4'.")
+    return api_url(host, f"/odata/{version}/", path)
 
 
 class ODataClient:
