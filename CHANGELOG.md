@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-25
+
 ### Changed (breaking)
 
 - `odata_query` and `ce_query` refuse a tenant that has not declared whether
