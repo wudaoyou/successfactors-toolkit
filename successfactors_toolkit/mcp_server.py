@@ -38,7 +38,11 @@ from successfactors_toolkit.services import pii_filter
 from successfactors_toolkit.services.ce_query_builder import COMMON_SEGMENTS, build_query_string
 from successfactors_toolkit.services.ce_response import parse_page
 from successfactors_toolkit.services.odata_client import ODataClient, split_path_query
-from successfactors_toolkit.services.pii_filter import PiiUnknownTokenError, PiiVaultError
+from successfactors_toolkit.services.pii_filter import (
+    PiiUnknownTokenError,
+    PiiVaultError,
+    TenantEnvironmentUnset,
+)
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
 from successfactors_toolkit.services.tenant_store import TenantStore
 
@@ -172,6 +176,12 @@ _PII_NOTE = (
 
 
 def _pii_error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, TenantEnvironmentUnset):
+        return {
+            "error": "tenant_environment_unset",
+            "company_id": exc.company_id,
+            "detail": str(exc),
+        }
     if isinstance(exc, PiiUnknownTokenError):
         return {
             "error": "pii_unknown_token",
@@ -182,12 +192,13 @@ def _pii_error(exc: Exception) -> dict[str, Any]:
 
 
 def _pii_request(
-    path: str, params: dict[str, Any] | None
+    path: str, params: dict[str, Any] | None, company_id: str = ""
 ) -> tuple[pii_filter.PiiFilter | None, str, dict[str, Any] | None, dict[str, str]]:
-    """The configured filter, plus path/params with any tokens resolved to
+    """The tenant's filter, plus path/params with any tokens resolved to
     plaintext and the substitutions made (for retokenizing error bodies).
-    Raises PiiVaultError / PiiUnknownTokenError."""
-    pii = pii_filter.from_settings(get_settings())
+    Raises PiiVaultError (TenantEnvironmentUnset included) /
+    PiiUnknownTokenError."""
+    pii = pii_filter.for_tenant(get_settings(), company_id)
     if pii is None:
         return None, path, params, {}
     # The query half is parsed (and URL-decoded) later, so values put there
@@ -524,8 +535,11 @@ def list_tenants() -> dict[str, Any]:
     take as their `company_id` argument. An empty company_id always means the
     instance configured in the server's own .env, reported here as "default".
     "plugins" reports each installed plugin and whether it loaded.
+    "production" is the tenant's declared environment; odata_query and
+    ce_query refuse a tenant where it is null.
     """
     settings = get_settings()
+    store = TenantStore(settings.tenant_keys_dir)
     tenants = [
         {
             "company_id": t.company_id,
@@ -534,19 +548,34 @@ def list_tenants() -> dict[str, Any]:
             "technical_user": settings.sf_user_id,
             "cert_expires": t.certificate.not_after.isoformat(),
             "cert_days_left": t.certificate.days_until_expiry,
+            "production": t.production,
+            "pii_filter_tier": pii_filter.tier_for(settings, t.production),
         }
-        for t in TenantStore(settings.tenant_keys_dir).list_tenants()
+        for t in store.list_tenants()
     ]
-    return {
+    default_production = store.production(settings.sf_company_id)
+    out: dict[str, Any] = {
         "tenants": tenants,
         "default": {
             "company_id": settings.sf_company_id,
             "host": settings.sf_host,
             "odata_version": settings.sf_odata_version,
+            "production": default_production,
+            "pii_filter_tier": pii_filter.tier_for(settings, default_production),
         },
         "keys_dir": settings.tenant_keys_dir,
         "plugins": _plugin_statuses(),
     }
+    unset = {t["company_id"] for t in tenants if t["production"] is None}
+    if settings.sf_company_id and default_production is None:
+        unset.add(settings.sf_company_id)
+    if unset:
+        out["warnings"] = [
+            f"No production/test environment declared for {', '.join(sorted(unset))}: "
+            "odata_query and ce_query refuse them until the admin creates "
+            "<company_id>/tenant.json under keys_dir."
+        ]
+    return out
 
 
 _NAV_INLINE_CAP = 50
@@ -705,7 +734,7 @@ async def odata_query(
     if not 1 <= max_pages <= 10000 or not 0 <= preview <= 20:
         raise ValueError("max_pages must be 1-10000 and preview must be 0-20.")
     try:
-        pii, path, params, pii_subs = _pii_request(path, params)
+        pii, path, params, pii_subs = _pii_request(path, params, company_id)
     except (PiiVaultError, PiiUnknownTokenError) as exc:
         return _pii_error(exc)
     odata, _ = _clients()
@@ -921,7 +950,7 @@ async def ce_query(
     if not 1 <= max_pages <= 500:
         raise ValueError("max_pages must be 1-500.")
     try:
-        pii = pii_filter.from_settings(get_settings())
+        pii = pii_filter.for_tenant(get_settings(), company_id)
     except PiiVaultError as exc:
         return _pii_error(exc)
     pii_count = 0
@@ -1003,11 +1032,11 @@ async def ce_query(
 
 def main() -> None:
     """Console-script entry point: serve MCP over stdio."""
-    settings = get_settings()  # bad PII (or other) settings stop the server here
-    if settings.pii_filter_tier:
-        # httpx logs every request URL at INFO; with tokens resolved, that URL
-        # can hold plaintext PII.
-        logging.getLogger("httpx").setLevel(logging.WARNING)
+    get_settings()  # bad PII (or other) settings stop the server here
+    # httpx logs every request URL at INFO; with tokens resolved, that URL can
+    # hold plaintext PII. Whatever PII_FILTER_TIER says: production tenants
+    # always tokenize.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     from successfactors_toolkit import plugin_api
 

@@ -5,14 +5,21 @@ Directory layout (one subdir per SF company):
     ${tenant_keys_dir}/
     ├── example-dev/
     │   ├── sf_private_key_example-dev.pem      (mode 600)
-    │   └── sf_saml_signing_example-dev.crt     (mode 644)
+    │   ├── sf_saml_signing_example-dev.crt     (mode 644)
+    │   └── tenant.json                         (mode 644)
     ├── example-test/
     │   ├── sf_private_key_example-test.pem
-    │   └── sf_saml_signing_example-test.crt
+    │   ├── sf_saml_signing_example-test.crt
+    │   └── tenant.json
     └── ...
 
 Filenames are derived from company_id; the API rejects uploads that
 contain a key/cert that don't pair, or where the cert is expired.
+
+tenant.json, {"production": true|false}, declares the tenant's environment,
+which sets its MCP PII tier (see services/pii_filter.for_tenant). It may exist
+without a key+cert pair (a default tenant keyed from the environment); such a
+directory is not listed as a tenant.
 
 Writes are atomic: contents go to a temp directory, then `os.replace` swaps
 it into place. A half-written tenant directory should never be visible.
@@ -20,6 +27,7 @@ it into place. A half-written tenant directory should never be visible.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -36,6 +44,10 @@ from cryptography.x509.oid import NameOID
 
 # company_id allowed chars — also enforced at the URL routing layer.
 _COMPANY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+# Ids the flag is read for: the ones credentials.load_key_pem resolves keys
+# for, so a mixed-case SF_COMPANY_ID keyed from the environment has one too.
+_FLAG_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}")
+_FLAG_FILE = "tenant.json"
 
 
 class TenantStoreError(Exception):
@@ -112,6 +124,7 @@ class TenantInfo:
     certificate_path: str
     certificate: CertMetadata
     private_key: KeyMetadata
+    production: bool | None
 
 
 def validate_company_id(company_id: str) -> None:
@@ -220,7 +233,20 @@ class TenantStore:
             private_key=KeyMetadata(
                 algorithm=type(key).__name__.replace("PrivateKey", ""), size_bits=key.key_size
             ),
+            production=self.production(company_id),
         )
+
+    def production(self, company_id: str) -> bool | None:
+        """The declared environment: True = production, False = test, None =
+        unset (no file, unreadable, not JSON, or no boolean "production")."""
+        if not _FLAG_ID_RE.fullmatch(company_id):
+            return None
+        try:
+            data = json.loads((self.tenant_dir(company_id) / _FLAG_FILE).read_text("utf-8"))
+        except (OSError, ValueError):
+            return None
+        value = data.get("production") if isinstance(data, dict) else None
+        return value if isinstance(value, bool) else None
 
     # ── mutations ─────────────────────────────────────────────────────────
     def install(
@@ -273,6 +299,9 @@ class TenantStore:
             os.chmod(tmp_cert, 0o644)
 
             dest = self.tenant_dir(company_id)
+            # A key rotation keeps the tenant's declared environment.
+            if (dest / _FLAG_FILE).exists():
+                shutil.copy2(dest / _FLAG_FILE, stage_path / _FLAG_FILE)
             if dest.exists():
                 shutil.rmtree(dest)
             # Rename the temp dir into place. Both paths are on the same
@@ -284,6 +313,21 @@ class TenantStore:
             stage_path.mkdir(exist_ok=True)
 
         return self.get(company_id)
+
+    def set_production(self, company_id: str, production: bool) -> None:
+        """Write tenant.json atomically (temp file, then os.replace)."""
+        validate_company_id(company_id)
+        dest = self.tenant_dir(company_id)
+        dest.mkdir(parents=True, exist_ok=True)
+        descriptor, tmp = tempfile.mkstemp(prefix=f".{_FLAG_FILE}-", dir=dest)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as out:
+                json.dump({"production": production}, out)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, dest / _FLAG_FILE)
+        except BaseException:
+            os.unlink(tmp)
+            raise
 
     def delete(self, company_id: str) -> None:
         validate_company_id(company_id)

@@ -14,6 +14,7 @@ from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import get_settings
 from successfactors_toolkit.services.odata_client import split_path_query
 from successfactors_toolkit.services.pii_filter import PiiFilter, PiiVaultError, Vault
+from successfactors_toolkit.services.tenant_store import TenantStore
 
 _SSN = "123-45-6789"
 _TOKEN = re.compile(r"\[PII-T1-[0-9a-f]{16}\]")
@@ -58,12 +59,19 @@ class _SFAPI:
         return {"status_code": 200, "headers": {}, "body": body}
 
 
-def _install(monkeypatch, tmp_path, odata=None, sfapi=None, tier="1", vault_dir=None):
+def _install(
+    monkeypatch, tmp_path, odata=None, sfapi=None, tier="1", vault_dir=None, production=False
+):
+    """Fake clients; the default tenant (SF_COMPANY_ID=example-a) declared
+    test unless production is True, or left unset when it is None."""
     monkeypatch.setattr(mcp_server, "_clients", lambda: (odata or _OData(), sfapi or _SFAPI("")))
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     monkeypatch.setenv("PII_FILTER_TIER", tier)
     monkeypatch.setenv("PII_VAULT_DIR", str(vault_dir or tmp_path / "vault"))
+    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
     get_settings.cache_clear()
+    if production is not None:
+        TenantStore(get_settings().tenant_keys_dir).set_production("example-a", production)
 
 
 def _national_id_record():
@@ -254,8 +262,10 @@ def test_odata_query_token_in_path_query_keeps_special_characters(monkeypatch, t
     assert params == {"$filter": "emailAddress eq 'a+b&c''s@x.com'"}
 
 
-def test_main_quiets_httpx_request_logging_when_tokenizing(monkeypatch):
-    monkeypatch.setenv("PII_FILTER_TIER", "1")
+# Tier 0 too: it only covers test tenants, a production tenant still tokenizes.
+@pytest.mark.parametrize("tier", ["0", "1"])
+def test_main_quiets_httpx_request_logging_when_tokenizing(monkeypatch, tier):
+    monkeypatch.setenv("PII_FILTER_TIER", tier)
     get_settings.cache_clear()
     monkeypatch.setattr(mcp_server.mcp, "run", lambda: None)
     logger = logging.getLogger("httpx")
@@ -328,3 +338,58 @@ def test_ce_query_vault_failure_on_a_later_page_reports_the_files_written(monkey
     assert result["error"] == "pii_vault_unavailable"
     [written] = result["files"]
     assert Path(written).exists()
+
+
+class _SFAPICounting(_SFAPI):
+    def __init__(self):
+        super().__init__("")
+        self.calls = 0
+
+    async def query(self, query_string, conn=None, params=None):
+        self.calls += 1
+        return await super().query(query_string, conn, params)
+
+
+@pytest.mark.parametrize(("default", "company_id"), [(None, ""), (False, "example-b")])
+def test_unset_tenant_is_refused_before_any_request(monkeypatch, tmp_path, default, company_id):
+    odata, sfapi = _OData([_national_id_record()]), _SFAPICounting()
+    _install(monkeypatch, tmp_path, odata=odata, sfapi=sfapi, production=default)
+    cid = company_id or "example-a"
+    for result in (
+        asyncio.run(mcp_server.odata_query("PerNationalId", company_id=company_id)),
+        asyncio.run(mcp_server.ce_query(company_id=company_id)),
+    ):
+        assert result["error"] == "tenant_environment_unset"
+        assert result["company_id"] == cid
+        assert f"{cid}/tenant.json" in result["detail"]
+        assert f"/api/tenants/{cid}/environment" in result["detail"]
+    assert odata.sent == [] and sfapi.calls == 0
+    assert not (tmp_path / "results").exists() and not (tmp_path / "vault").exists()
+
+
+def _person():
+    return {"__metadata": {"type": "SFOData.PerPersonal"}, "firstName": "Alice"}
+
+
+@pytest.mark.parametrize("tier", ["0", "1"])
+def test_production_tenant_tokenizes_tier_three_whatever_the_setting(monkeypatch, tmp_path, tier):
+    _install(monkeypatch, tmp_path, odata=_OData([_person()]), tier=tier, production=True)
+    result = asyncio.run(mcp_server.odata_query("PerPersonal", max_pages=1, preview=1))
+    assert re.fullmatch(r"\[PII-T3-[0-9a-f]{16}\]", result["preview"][0]["firstName"])
+    assert result["pii_filter_tier"] == 3
+
+
+def test_test_tenant_at_default_tier_leaves_tier_three_plain(monkeypatch, tmp_path):
+    _install(monkeypatch, tmp_path, odata=_OData([_person()]))
+    monkeypatch.delenv("PII_FILTER_TIER")
+    get_settings.cache_clear()
+    result = asyncio.run(mcp_server.odata_query("PerPersonal", max_pages=1, preview=1))
+    assert result["preview"][0]["firstName"] == "Alice" and result["pii_filter_tier"] == 1
+
+
+def test_each_call_uses_its_own_tenant_flag(monkeypatch, tmp_path):
+    _install(monkeypatch, tmp_path, production=True)
+    TenantStore(get_settings().tenant_keys_dir).set_production("example-b", False)
+    assert asyncio.run(mcp_server.ce_query())["pii_filter_tier"] == 3
+    assert asyncio.run(mcp_server.ce_query(company_id="example-a"))["pii_filter_tier"] == 3
+    assert asyncio.run(mcp_server.ce_query(company_id="example-b"))["pii_filter_tier"] == 1

@@ -15,6 +15,7 @@ import pytest
 
 from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import get_settings
+from successfactors_toolkit.services.tenant_store import TenantStore
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +27,15 @@ def _clear_entity_key_cache():
     mcp_server._key_cache.clear()
     mcp_server._nav_cache.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _declared_test_tenant(monkeypatch):
+    # odata_query / ce_query refuse a tenant that has not declared its
+    # environment; example-a doubles as the default tenant.
+    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
+    get_settings.cache_clear()
+    TenantStore(get_settings().tenant_keys_dir).set_production("example-a", False)
 
 
 _EDMX = """<?xml version="1.0" encoding="utf-8"?>

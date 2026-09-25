@@ -4,6 +4,28 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- `odata_query` and `ce_query` refuse a tenant that has not declared whether
+  it is production, returning `tenant_environment_unset` before anything is
+  sent to SuccessFactors. Declare it in
+  `{TENANT_KEYS_DIR}/{company_id}/tenant.json` as `{"production": true}` or
+  `{"production": false}`; the default tenant reads `SF_COMPANY_ID`'s file.
+- Production tenants are always PII tier 3. `PII_FILTER_TIER` now sets the
+  tier for test tenants only (default still 1).
+- `PII_VAULT_DIR` inside `RESULTS_DIR` is rejected at `PII_FILTER_TIER=0` too.
+- The MCP server always keeps httpx request logging at WARNING.
+
+### Added
+
+- `PUT /api/tenants/{company_id}/environment` with `{"production": bool}`
+  sets the flag for a registered tenant. The tenant list and get responses
+  carry `production`, and replacing a key with `?force=true` keeps it.
+- `list_tenants` reports `production` and the effective `pii_filter_tier`
+  for each tenant and the default, and warns about tenants without a flag.
+- Plugins: `pii_request` takes `company_id=""`. Pass the tool's `company_id`
+  so the right tenant's flag applies; without it the default tenant's is used.
+
 ## [0.3.2] - 2026-09-25
 
 ### Fixed

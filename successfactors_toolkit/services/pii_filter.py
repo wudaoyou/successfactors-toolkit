@@ -25,6 +25,8 @@ from urllib.parse import quote, quote_plus
 
 from lxml import etree
 
+from successfactors_toolkit.services.tenant_store import TenantStore
+
 _KEY_BYTES = 32
 _HEX_LEN = 16
 # Under SQLite's default limit of 999 host parameters per statement.
@@ -41,6 +43,21 @@ class PiiUnknownTokenError(Exception):
     def __init__(self, tokens: list[str]):
         super().__init__(f"Unknown PII token(s): {', '.join(tokens)}")
         self.tokens = tokens
+
+
+class TenantEnvironmentUnset(PiiVaultError):
+    """The tenant has not declared production or test, so it has no PII tier.
+
+    A PiiVaultError subclass: every `except PiiVaultError` site that answers
+    with pii_error, plugins included, refuses the call without changes."""
+
+    def __init__(self, company_id: str):
+        super().__init__(
+            f"Declare whether this tenant is production: create {company_id}/tenant.json "
+            'under TENANT_KEYS_DIR containing {"production": true} or {"production": false}, '
+            f"or PUT that body to /api/tenants/{company_id}/environment."
+        )
+        self.company_id = company_id
 
 
 def _secure(path: Path, mode: int, *, regular_file: bool) -> None:
@@ -389,13 +406,25 @@ class PiiFilter:
         return etree.tostring(root, encoding="unicode"), count
 
 
-def from_settings(settings) -> PiiFilter | None:
-    """The configured filter, or None when PII_FILTER_TIER is 0."""
-    if not settings.pii_filter_tier:
+def tier_for(settings, production: bool | None) -> int | None:
+    """Production is tier 3 whatever PII_FILTER_TIER says; test is
+    PII_FILTER_TIER; unset (None) has no tier."""
+    if production is None:
         return None
-    return PiiFilter(
-        settings.pii_filter_tier, settings.pii_extra_fields, Vault(settings.pii_vault_dir)
-    )
+    return 3 if production else settings.pii_filter_tier
+
+
+def for_tenant(settings, company_id: str) -> PiiFilter | None:
+    """The filter for a tenant ("" = SF_COMPANY_ID), or None for a test tenant
+    at tier 0. Raises TenantEnvironmentUnset when the tenant has not declared
+    production or test."""
+    company_id = company_id or settings.sf_company_id
+    tier = tier_for(settings, TenantStore(settings.tenant_keys_dir).production(company_id))
+    if tier is None:
+        raise TenantEnvironmentUnset(company_id)
+    if not tier:
+        return None
+    return PiiFilter(tier, settings.pii_extra_fields, Vault(settings.pii_vault_dir))
 
 
 # A token as the model may write it: literal brackets or percent-encoded.

@@ -50,7 +50,8 @@ class Settings(BaseSettings):
     # ── PII tokenization (MCP only) ───────────────────────────────────────────
     # Values of mapped fields reach the model as [PII-T<tier>-<hex>] tokens;
     # the plaintext stays in the vault. See services/pii_filter.py.
-    # 0 = off; N = tokenize every field whose tier <= N.
+    # The tier for test tenants: 0 = off; N = tokenize every field whose
+    # tier <= N. Production tenants are always 3 ({tenant}/tenant.json).
     pii_filter_tier: int = Field(default=1, ge=0, le=3)
     # Tenant-specific additions, e.g. {"PerPersonal": {"customString6": 2}}.
     pii_extra_fields: dict[str, dict[str, Annotated[int, Field(ge=1, le=3)]]] = {}
@@ -69,9 +70,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _vault_outside_results(self) -> "Settings":
-        if self.pii_filter_tier and self.pii_vault_dir.resolve().is_relative_to(
-            self.results_dir.resolve()
-        ):
+        # Whatever PII_FILTER_TIER says: production tenants always use the vault.
+        if self.pii_vault_dir.resolve().is_relative_to(self.results_dir.resolve()):
             raise ValueError("PII_VAULT_DIR must not be inside RESULTS_DIR")
         return self
 
