@@ -46,10 +46,28 @@ An existing file is not proof that all pages were retrieved.
 
 ## PII tokenization
 
-At `PII_FILTER_TIER` 1 or higher, PII values in MCP results — files and
-previews from `odata_query` and `ce_query` — are replaced with
-tokens such as `[PII-T1-3f9a1c2b7d10e4a5]` before anything is written. The
-plaintext stays in a local vault under `PII_VAULT_DIR`.
+PII values in MCP results — files and previews from `odata_query` and
+`ce_query` — are replaced with tokens such as `[PII-T1-3f9a1c2b7d10e4a5]`
+before anything is written. The plaintext stays in a local vault under
+`PII_VAULT_DIR`.
+
+How far tokenization goes depends on whether the tenant is production, which
+you declare per tenant in `{TENANT_KEYS_DIR}/{company_id}/tenant.json` (see
+[Production or test](CONNECT.md#production-or-test)):
+
+| `tenant.json` | Tier |
+|---|---|
+| `{"production": true}` | 3, always. `PII_FILTER_TIER` cannot lower it. |
+| `{"production": false}` | `PII_FILTER_TIER` (`0`–`3`, default `1`; `0` = off). |
+| missing, or anything else | The call is refused. |
+
+A refused call returns `{"error": "tenant_environment_unset", "company_id":
+..., "detail": ...}` before anything is sent to SuccessFactors; `detail` says
+where to put the file. An empty `company_id` means `SF_COMPANY_ID`, whose
+flag is read the same way. `list_tenants` reports `production` and the
+effective `pii_filter_tier` for each tenant and the default, and warns about
+tenants without a flag. `odata_metadata` and `compare_metadata` return schema
+only and do not check it.
 
 - The same value always gets the same token, so the model can still compare,
   group, count and join. It can also pass a token back in `$filter`; the

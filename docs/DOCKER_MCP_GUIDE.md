@@ -78,8 +78,8 @@ The AI application needs permission to write to that folder. Original query file
 
 ### Revealing PII in a saved report
 
-Fields in tiers 1 through `PII_FILTER_TIER` are tokenized before the AI ever
-sees them, so a report it writes under `sf-toolkit/data/mcp` contains tokens, not
+Fields in tiers 1 through `PII_FILTER_TIER` (all three tiers for a production
+tenant) are tokenized before the AI ever sees them, so a report it writes under `sf-toolkit/data/mcp` contains tokens, not
 plaintext. To restore plaintext, run the reveal command from `~/sf-toolkit`
 (where `compose.yaml` lives) against the file inside the container, and send
 the output to a folder AI tools don't read:
@@ -98,6 +98,7 @@ docker compose run --rm -T mcp \
 | No matching records | Confirm the environment, employee identifier, effective date, and permitted data scope. |
 | CSV or custom-folder save unavailable | Ask IT to enable approved local file tools and access to the destination folder in your AI application. |
 | The AI reports a file but you cannot find it | Ask: “Give me the file path on my computer, not the path inside Docker.” Check `sf-toolkit/data/mcp`. |
+| Results say `tenant_environment_unset` | The environment has not been declared as production or test, so queries are refused. Ask IT to create `tenant.json` for that company ID (setup step B). |
 | Results say `pii_vault_unavailable` | Ask IT to check the PII vault volume. If no report has been revealed from it yet, IT can remove it with `docker volume rm sf-toolkit-pii-vault` and reopen the AI application; Docker recreates it with the right permissions. Don't remove a vault that has been used — its tokens can't be revealed afterwards. If the detail says the vault is owned by another user, the vault is a host folder mounted into the container, which Docker Desktop reports as root-owned; use the named volume from the setup section instead. |
 
 ## Three-minute walkthrough
@@ -187,7 +188,8 @@ Use this layout. Replace `demo` with your actual company ID consistently in fold
 │   └── tenants/
 │       └── demo/
 │           ├── sf_private_key_demo.pem
-│           └── sf_saml_signing_demo.crt
+│           ├── sf_saml_signing_demo.crt
+│           └── tenant.json
 └── data/
     └── mcp/                      # Created on the first export
 ```
@@ -195,6 +197,20 @@ Use this layout. Replace `demo` with your actual company ID consistently in fold
 Place your matching PEM private key and X.509 certificate in this folder using the names shown. Register the certificate with the corresponding SuccessFactors OAuth2 Client Application. The technical user needs access to the target APIs and data. Keep the private key on your machine; do not paste it into chat.
 
 If you need a key pair, see [Connect to SuccessFactors](CONNECT.md#connect-to-successfactors). Use `scripts/generate-keypair.sh`, then register the certificate in SF. Placing files manually does not run the REST upload endpoint's key-pair and expiry validation; verify that the files match and the certificate is valid.
+
+Declare whether the environment is production. The container mounts
+`tenants` read-only, so create the file on the host, with `true` for
+production or `false` for a test environment:
+
+```sh
+printf '{"production": true}\n' > "$HOME/sf-toolkit/credentials/tenants/demo/tenant.json"
+```
+
+A production environment always gets the strictest PII tokenization (tier 3,
+names included), whatever `PII_FILTER_TIER` says. A test environment uses
+`PII_FILTER_TIER`. Without this file, `odata_query` and `ce_query` refuse the
+environment with `tenant_environment_unset`. The value must be `true` or
+`false` without quotes.
 
 Create `~/sf-toolkit/credentials/sf.env` with your connection settings:
 
@@ -208,7 +224,8 @@ SF_ODATA_VERSION=v2
 TENANT_KEYS_DIR=/credentials/tenants
 RESULTS_DIR=/data
 PII_VAULT_DIR=/vault/store
-# Optional: raise or lower PII tokenization (0 off - 3 most aggressive); default 1.
+# Optional: raise or lower PII tokenization for test environments
+# (0 off - 3 most aggressive); default 1. Production is always 3.
 # PII_FILTER_TIER=1
 # Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
 # PII_EXTRA_FIELDS={"PerPersonal": {"customString6": 2}}

@@ -25,7 +25,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from successfactors_toolkit.config import Settings, get_settings
 from successfactors_toolkit.services.tenant_store import (
@@ -88,6 +88,13 @@ class TenantInfoDTO(BaseModel):
     certificate_path: str
     certificate: CertMetadataDTO
     private_key: KeyMetadataDTO
+    production: Optional[bool] = Field(
+        description="From tenant.json; null = unset, so the MCP data tools refuse the tenant.",
+    )
+
+
+class EnvironmentDTO(BaseModel):
+    production: StrictBool
 
 
 def _to_dto(info: TenantInfo) -> TenantInfoDTO:
@@ -113,6 +120,7 @@ def _to_dto(info: TenantInfo) -> TenantInfoDTO:
             algorithm=info.private_key.algorithm,
             size_bits=info.private_key.size_bits,
         ),
+        production=info.production,
     )
 
 
@@ -218,6 +226,24 @@ async def install_keypair(
         _raise_http(e)
     _invalidate_session_cache(request, company_id)
     return _to_dto(info)
+
+
+@router.put(
+    "/{company_id}/environment",
+    response_model=TenantInfoDTO,
+    summary="Declare a tenant production or test (sets its MCP PII tier)",
+)
+async def set_environment(
+    company_id: Annotated[str, CompanyIdPath],
+    body: EnvironmentDTO,
+    store: Annotated[TenantStore, Depends(get_tenant_store)],
+) -> TenantInfoDTO:
+    try:
+        store.get(company_id)  # tenant_not_found before anything is written
+        store.set_production(company_id, body.production)
+        return _to_dto(store.get(company_id))
+    except TenantStoreError as e:
+        _raise_http(e)
 
 
 @router.delete(

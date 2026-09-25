@@ -18,12 +18,14 @@ from successfactors_toolkit.services.pii_filter import (
     PiiFilter,
     PiiUnknownTokenError,
     PiiVaultError,
+    TenantEnvironmentUnset,
     Vault,
     detokenize,
-    from_settings,
+    for_tenant,
     retokenize,
     reveal,
 )
+from successfactors_toolkit.services.tenant_store import TenantStore
 
 _TOKEN = re.compile(r"\[PII-T([1-3])-([0-9a-f]{16})\]")
 
@@ -224,11 +226,13 @@ def test_settings_reject_vault_inside_results_dir(monkeypatch, tmp_path):
         Settings()
 
 
-def test_settings_allow_vault_inside_results_dir_when_filter_is_off(monkeypatch, tmp_path):
+def test_settings_reject_vault_inside_results_dir_even_at_tier_zero(monkeypatch, tmp_path):
+    # Production tenants are tier 3 whatever PII_FILTER_TIER says.
     monkeypatch.setenv("PII_FILTER_TIER", "0")
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "results" / "vault"))
-    assert Settings().pii_filter_tier == 0
+    with pytest.raises(ValidationError, match="PII_VAULT_DIR"):
+        Settings()
 
 
 def _filter(tmp_path, tier=1, extra=None):
@@ -368,15 +372,49 @@ def test_non_string_values_are_tokenized_as_text(tmp_path):
     assert pii.vault.load([hex_]) == {hex_: "123456789"}
 
 
-def test_from_settings_is_none_when_off(monkeypatch):
-    monkeypatch.setenv("PII_FILTER_TIER", "0")
-    assert from_settings(Settings()) is None
-
-
-def test_from_settings_builds_a_filter(monkeypatch, tmp_path):
+def _tenant_settings(monkeypatch, tmp_path, production, tier=None):
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
-    pii = from_settings(Settings())
-    assert pii.tier == 1 and (tmp_path / "vault" / "key").exists()
+    if tier is not None:
+        monkeypatch.setenv("PII_FILTER_TIER", tier)
+    settings = Settings()
+    if production is not None:
+        TenantStore(settings.tenant_keys_dir).set_production("example-a", production)
+    return settings
+
+
+@pytest.mark.parametrize("tier", [None, "0", "1"])
+def test_for_tenant_production_is_always_tier_three(monkeypatch, tmp_path, tier):
+    pii = for_tenant(_tenant_settings(monkeypatch, tmp_path, True, tier), "example-a")
+    assert pii.tier == 3 and (tmp_path / "vault" / "key").exists()
+
+
+@pytest.mark.parametrize(("tier", "expected"), [(None, 1), ("2", 2), ("3", 3)])
+def test_for_tenant_test_uses_pii_filter_tier_or_one(monkeypatch, tmp_path, tier, expected):
+    pii = for_tenant(_tenant_settings(monkeypatch, tmp_path, False, tier), "example-a")
+    assert pii.tier == expected
+
+
+def test_for_tenant_test_at_tier_zero_is_none(monkeypatch, tmp_path):
+    assert for_tenant(_tenant_settings(monkeypatch, tmp_path, False, "0"), "example-a") is None
+    assert not (tmp_path / "vault").exists()
+
+
+@pytest.mark.parametrize("tier", ["0", "3"])
+def test_for_tenant_unset_raises_before_touching_the_vault(monkeypatch, tmp_path, tier):
+    settings = _tenant_settings(monkeypatch, tmp_path, None, tier)
+    with pytest.raises(TenantEnvironmentUnset) as caught:
+        for_tenant(settings, "example-a")
+    assert caught.value.company_id == "example-a"
+    assert "example-a/tenant.json" in str(caught.value)
+    assert not (tmp_path / "vault").exists()
+
+
+def test_for_tenant_empty_company_id_reads_the_default_tenant(monkeypatch, tmp_path):
+    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
+    assert for_tenant(_tenant_settings(monkeypatch, tmp_path, True), "").tier == 3
+    monkeypatch.delenv("SF_COMPANY_ID")
+    with pytest.raises(TenantEnvironmentUnset):
+        for_tenant(Settings(), "")
 
 
 def _ce(inner):

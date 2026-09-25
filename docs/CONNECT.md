@@ -68,7 +68,7 @@ See `.env.example` for a filled-in starting point and
 | `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `120` (long-running queries can take minutes per SAP KBA 2735876). |
 | `TENANT_KEYS_DIR` | Where per-tenant key+cert pairs are stored (see below). Default `./tenants`. |
 | `RESULTS_DIR` | Payload output root. Program default: `./results`; MCP adds `/mcp/`. The Docker MCP guide sets `/data` and mounts a host `data` folder there. |
-| `PII_FILTER_TIER` | MCP PII tokenization level: `0` off, `1` (default) stand-alone sensitive PII such as national IDs and bank accounts, `2` adds birth dates, home contact data and protected characteristics, `3` adds names and other identifying data. |
+| `PII_FILTER_TIER` | MCP PII tokenization level for **test** tenants: `0` off, `1` (default) stand-alone sensitive PII such as national IDs and bank accounts, `2` adds birth dates, home contact data and protected characteristics, `3` adds names and other identifying data. Production tenants are always tier 3 (see [Production or test](#production-or-test)). |
 | `PII_EXTRA_FIELDS` | JSON map of tenant-specific fields to tokenize, e.g. `{"PerPersonal": {"customString6": 2}}`. |
 | `PII_VAULT_DIR` | Where the token key and vault live. Default `./pii_vault`. Must persist and must not be inside `RESULTS_DIR`. |
 
@@ -111,3 +111,33 @@ the tenant already exists (bypass with `?force=true`), and returns
 certificate metadata including a `days_until_expiry` warning once a cert has
 under 90 days left. Installing or deleting a tenant's key invalidates any
 cached SFAPI session or OData token for that `company_id`.
+
+### Production or test
+
+Every tenant the MCP `odata_query` and `ce_query` tools read must say whether
+it is production, in `{TENANT_KEYS_DIR}/{company_id}/tenant.json`:
+
+```json
+{"production": true}
+```
+
+`true` makes the tenant's PII tier 3, which `PII_FILTER_TIER` cannot lower;
+`false` makes it `PII_FILTER_TIER` (default 1). The value must be a JSON
+boolean. Without the file, or with any other content, those tools refuse the
+tenant with `tenant_environment_unset` before anything is sent to
+SuccessFactors. The host name is never used to guess. Replacing a key with
+`?force=true` keeps the file; deleting the tenant removes it. For the default
+tenant keyed from `SF_PRIVATE_KEY_PEM`, create the `{SF_COMPANY_ID}` folder
+holding only `tenant.json`; it is not listed as a registered tenant.
+
+For a registered tenant, set or change it through the API (`404` for an
+unknown tenant). The list and get responses carry `production` too (`null` =
+not declared):
+
+```bash
+curl -X PUT http://127.0.0.1:8000/api/tenants/demo/environment \
+  -H "X-API-Key: $API_KEY" -H "X-Admin-Key: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" -d '{"production": false}'
+```
+
+The REST data routes do not tokenize and do not check the flag.
