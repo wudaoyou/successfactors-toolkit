@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-24
+
 ### Changed
 
 - README split into topic pages under `docs/`.
@@ -332,7 +334,8 @@ SuccessFactors responses, not a live tenant.
 - Migration-era planning documents that are no longer needed now that the
   migration is complete.
 
-[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/wudaoyou/successfactors-toolkit/compare/v0.2.1...v0.2.2
