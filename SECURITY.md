@@ -70,7 +70,8 @@ records via Compound Employee and OData). Treat it accordingly:
   plaintext HTTP beyond localhost.
 - **Keep private keys out of the image and out of Git.** Use the tenant
   keypair API or the `SF_PRIVATE_KEY_PEM*` / `SF_PRIVATE_KEY_PATH` env vars
-  described in the README; never bake a key into a committed file.
+  described in [Private key resolution order](docs/CONNECT.md#private-key-resolution-order);
+  never bake a key into a committed file.
 - **Restrict `TENANT_KEYS_DIR` and `RESULTS_DIR`** to storage only the
   service account can read — the former holds private keys, the latter can
   hold extracted employee payloads.

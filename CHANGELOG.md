@@ -4,6 +4,10 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Changed
+
+- README split into topic pages under `docs/`.
+
 ## [0.3.0] - 2026-09-24
 
 ### Added
