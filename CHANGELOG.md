@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-25
+
 ### Changed (breaking)
 
 - The tenant flag file is now `{TENANT_KEYS_DIR}/{company_id}/{company_id}.json`
