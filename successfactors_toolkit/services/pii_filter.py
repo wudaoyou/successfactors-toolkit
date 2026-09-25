@@ -43,14 +43,20 @@ class PiiUnknownTokenError(Exception):
         self.tokens = tokens
 
 
-def _secure(path: Path, mode: int, *, refuse_symlink: bool) -> None:
+def _secure(path: Path, mode: int, *, regular_file: bool) -> None:
     """Before reusing an existing vault path: refuse one we don't own outright,
-    and tighten one we own but that has stray group/other bits. Checked with
-    lstat so a symlink is judged (and, for key/db, refused) on its own terms,
-    never the target's. Never touches anything above `path` itself."""
-    st = path.lstat()
-    if refuse_symlink and stat.S_ISLNK(st.st_mode):
-        raise PiiVaultError(f"PII vault path {path} is a symlink; refusing to use it")
+    and tighten one we own but that has stray group/other bits.
+
+    For the key and vault.sqlite (regular_file=True), checked with lstat and
+    refused outright unless it's a plain regular file — a symlink, FIFO, dir
+    or device is judged (and refused) on its own terms, never a target's.
+    For the vault directory (regular_file=False), checked with stat, so a
+    directory reached through a symlink is judged — and, if loose, tightened
+    — on the real directory, not the (always world-permissive) link. Never
+    touches anything above `path` itself."""
+    st = path.lstat() if regular_file else path.stat()
+    if regular_file and not stat.S_ISREG(st.st_mode):
+        raise PiiVaultError(f"PII vault path {path} is not a regular file; refusing to use it")
     if st.st_uid != os.geteuid():
         raise PiiVaultError(f"PII vault path {path} is owned by another user")
     if stat.S_IMODE(st.st_mode) & 0o077:
@@ -62,8 +68,15 @@ def _load_or_create_key(path: Path) -> bytes:
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        _secure(path, 0o600, refuse_symlink=True)
-        key = path.read_bytes()
+        _secure(path, 0o600, regular_file=True)
+        # O_NOFOLLOW + an fstat check close the gap between that check and
+        # this read: nothing can swap `path` for a symlink or FIFO in between.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            raise PiiVaultError(f"PII vault path {path} is not a regular file; refusing to use it")
+        with os.fdopen(fd, "rb") as handle:
+            key = handle.read()
     else:
         key = secrets.token_bytes(_KEY_BYTES)
         with os.fdopen(descriptor, "wb") as output:
@@ -80,13 +93,13 @@ class Vault:
         self._db_path = directory / "vault.sqlite"
         try:
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-            _secure(directory, 0o700, refuse_symlink=False)
+            _secure(directory, 0o700, regular_file=False)
             self._key = _load_or_create_key(directory / "key")
             try:
                 # Create the file owner-only before sqlite opens it under the umask.
                 os.close(os.open(self._db_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
             except FileExistsError:
-                _secure(self._db_path, 0o600, refuse_symlink=True)
+                _secure(self._db_path, 0o600, regular_file=True)
             self._run(
                 lambda db: db.execute(
                     "CREATE TABLE IF NOT EXISTS token (hex TEXT PRIMARY KEY, value TEXT NOT NULL)"
@@ -411,9 +424,20 @@ def _substitute(text: str, vault: Vault, *, request: bool, encode: bool = False)
             substitutions[raw] = match.group(0)
             # A server that echoes the request URL back in an error body may
             # encode it differently than we did on the way out (a different
-            # quote() `safe`, quote_plus's '+' for spaces, or HTML entities)
-            # — cover those too, or retokenize won't find the exact substring.
-            for variant in (quote(raw, safe=""), quote(raw), quote_plus(raw), html.escape(raw)):
+            # quote() `safe`, quote_plus's '+' for spaces, HTML entities with
+            # or without quotes escaped, numeric vs. hex entity, or lowercase
+            # percent-hex) — cover those too, or retokenize won't find the
+            # exact substring. Not covered: a value double-encoded by SF
+            # itself (e.g. percent-encoded twice) — rare enough to skip.
+            for variant in (
+                quote(raw, safe=""),
+                quote(raw),
+                quote_plus(raw),
+                html.escape(raw),
+                html.escape(raw, quote=False),
+                html.escape(raw).replace("&#x27;", "&#39;"),
+                re.sub(r"%[0-9A-F]{2}", lambda m: m[0].lower(), quote(raw, safe="")),
+            ):
                 if variant != raw:
                     substitutions[variant] = match.group(0)
         replaced += 1

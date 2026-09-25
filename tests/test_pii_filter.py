@@ -121,6 +121,62 @@ def test_vault_refuses_a_symlinked_database(tmp_path):
         Vault(vault_dir)
 
 
+def test_vault_dir_as_a_symlink_to_a_tight_directory_we_own_is_silent(tmp_path, capsys):
+    real = tmp_path / "real"
+    real.mkdir()
+    os.chmod(real, 0o700)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+
+    Vault(link)
+
+    assert _mode(real) == 0o700
+    assert "tightened" not in capsys.readouterr().err
+
+    # Second start over the same symlink stays silent too.
+    Vault(link)
+    assert "tightened" not in capsys.readouterr().err
+
+
+def test_vault_dir_as_a_symlink_to_a_loose_directory_tightens_the_target_once(tmp_path, capsys):
+    real = tmp_path / "real"
+    real.mkdir()
+    os.chmod(real, 0o700)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    Vault(link)
+    capsys.readouterr()
+    os.chmod(real, 0o777)
+
+    Vault(link)
+    err = capsys.readouterr().err
+    assert "tightened" in err
+    assert _mode(real) == 0o700
+
+    Vault(link)
+    assert "tightened" not in capsys.readouterr().err
+
+
+def test_vault_key_as_a_fifo_is_refused_without_hanging(tmp_path):
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    os.chmod(vault_dir, 0o700)
+    os.mkfifo(vault_dir / "key")
+
+    with pytest.raises(PiiVaultError):
+        Vault(vault_dir)
+
+
+def test_vault_database_as_a_fifo_is_refused(tmp_path):
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    os.chmod(vault_dir, 0o700)
+    os.mkfifo(vault_dir / "vault.sqlite")
+
+    with pytest.raises(PiiVaultError):
+        Vault(vault_dir)
+
+
 def test_vault_owned_by_another_user_raises(tmp_path, monkeypatch):
     vault_dir = tmp_path / "vault"
     Vault(vault_dir)
@@ -401,6 +457,7 @@ def test_detokenize_doubles_quotes_inside_an_odata_string_literal(tmp_path):
         "O'Brien": token,
         "O%27Brien": token,
         "O&#x27;Brien": token,
+        "O&#39;Brien": token,
     }
 
 
@@ -416,12 +473,23 @@ def test_retokenize_hides_the_raw_plaintext_sf_echoes_back(tmp_path):
 def test_retokenize_hides_encoded_echoes_of_the_plaintext(tmp_path):
     # SF may echo the request URL back in an error body encoded differently
     # than we sent it: a different quote() `safe`, quote_plus's '+' for
-    # spaces, or HTML entities. Each form must still come back as the token.
+    # spaces, or HTML entities (with or without quotes escaped, numeric or
+    # hex, lowercase percent-hex). Each form must still come back as the
+    # token. (A value SF itself double-encodes is out of scope.)
     raw = "a/b c&d's"
     vault, token = _seed(tmp_path, raw, tier=3)
     _, subs = detokenize(f"lastName eq '{token}'", vault)
 
-    for encoded in (quote(raw, safe=""), quote(raw), quote_plus(raw), html.escape(raw)):
+    variants = (
+        quote(raw, safe=""),
+        quote(raw),
+        quote_plus(raw),
+        html.escape(raw),
+        html.escape(raw, quote=False),
+        html.escape(raw).replace("&#x27;", "&#39;"),
+        re.sub(r"%[0-9A-F]{2}", lambda m: m[0].lower(), quote(raw, safe="")),
+    )
+    for encoded in variants:
         assert encoded != raw  # otherwise this variant tests nothing
         body = f"Invalid filter: lastName eq {encoded}"
         out = retokenize(body, subs)

@@ -115,7 +115,7 @@ docker pull "$image"
 
 Confirm that both architectures are present and exercise the documented MCP
 configuration against the pulled image. Update the user guide with the
-verified tag only after this succeeds.
+verified digest only after this succeeds.
 Never rebuild and overwrite an already published version tag; use a new
 version for corrections. If publication fails, inspect Docker Hub before any
 recovery action to determine whether the tag was already pushed.
