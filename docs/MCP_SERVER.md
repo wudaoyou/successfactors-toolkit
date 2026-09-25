@@ -64,10 +64,10 @@ plaintext stays in a local vault under `PII_VAULT_DIR`.
   `successfactors_toolkit/services/pii_filter.py`. Relabeled custom fields go
   in `PII_EXTRA_FIELDS`.
 - To restore plaintext in a report the model wrote, run it locally:
-  `successfactors-pii-reveal report.md -o ~/private/report.md`.
-  Without `-o`, it writes `report.revealed.md` next to the input, which is
-  still inside the AI's workspace and thus still readable by the model —
-  always pass `-o` to a path the AI can't read (or `-o -` for stdout).
+  `successfactors-pii-reveal report.md`. With no `-o`, it prints to stdout,
+  so redirect it to a path the AI can't read, e.g.
+  `successfactors-pii-reveal report.md > ~/private/report.md`. Pass
+  `-o FILE` to write a file directly instead.
   `PII_VAULT_DIR` must resolve to the same vault the server used to write the
   tokens; its default is relative to the current working directory, so run
   the command from the same directory as the server, or set `PII_VAULT_DIR`

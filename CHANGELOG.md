@@ -7,6 +7,26 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 ### Changed
 
 - README split into topic pages under `docs/`.
+- `successfactors-pii-reveal` writes to stdout unless `-o FILE` is given (it
+  used to write `<name>.revealed<ext>` next to the input).
+
+### Security
+
+- Released `docker-compose.mcp.yml` and the user guide now reference the
+  release's own tag (a repository check enforces this); the image digest is
+  added after publishing.
+- Plugin registration is rolled back in full when a plugin fails, so a
+  plugin that removed or replaced a core tool and then raised no longer
+  leaves the core tool missing or replaced.
+- `successfactors-pii-reveal` refuses a symlinked or non-regular output
+  file.
+- The PII vault refuses a key, database or vault directory it doesn't own,
+  refuses a key or database that isn't a regular file, and tightens loose
+  permissions on a vault directory it does own.
+- Retokenizing an error body also catches percent-encoded and HTML-escaped
+  echoes of PII plaintext, not just the raw and doubled-quote forms.
+- Nested `$expand` `__next` pagination links are dropped from tokenized
+  records, since they can carry key values.
 
 ## [0.3.0] - 2026-09-24
 

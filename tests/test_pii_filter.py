@@ -1,10 +1,13 @@
 """pii_filter: vault, tokenization of OData JSON and CE XML, request
 detokenization and reveal. No network; every vault lives in tmp_path."""
 
+import html
 import json
+import os
 import re
 import sqlite3
 import stat
+from urllib.parse import quote, quote_plus
 
 import pytest
 from lxml import etree
@@ -72,6 +75,122 @@ def test_vault_on_a_path_that_is_a_file_raises_vault_error(tmp_path):
     (tmp_path / "vault").write_text("not a directory")
     with pytest.raises(PiiVaultError):
         Vault(tmp_path / "vault")
+
+
+def test_vault_tightens_loose_permissions_on_an_existing_vault(tmp_path, capsys):
+    vault_dir = tmp_path / "vault"
+    Vault(vault_dir)
+    os.chmod(vault_dir, 0o777)
+    os.chmod(vault_dir / "key", 0o644)
+    os.chmod(vault_dir / "vault.sqlite", 0o644)
+
+    Vault(vault_dir)
+
+    assert _mode(vault_dir) == 0o700
+    assert _mode(vault_dir / "key") == 0o600
+    assert _mode(vault_dir / "vault.sqlite") == 0o600
+    err = capsys.readouterr().err
+    assert str(vault_dir) in err and str(vault_dir / "key") in err
+    assert "vault.sqlite" in err
+    # No secret contents (the key bytes or any plaintext) in the warning.
+    assert (vault_dir / "key").read_bytes().hex() not in err
+
+
+def test_vault_refuses_a_symlinked_key(tmp_path):
+    vault_dir = tmp_path / "vault"
+    Vault(vault_dir)
+    real_key = (vault_dir / "key").read_bytes()
+    (vault_dir / "key").unlink()
+    decoy = tmp_path / "decoy-key"
+    decoy.write_bytes(real_key)
+    (vault_dir / "key").symlink_to(decoy)
+
+    with pytest.raises(PiiVaultError):
+        Vault(vault_dir)
+
+
+def test_vault_refuses_a_symlinked_database(tmp_path):
+    vault_dir = tmp_path / "vault"
+    Vault(vault_dir)
+    (vault_dir / "vault.sqlite").unlink()
+    decoy = tmp_path / "decoy.sqlite"
+    decoy.touch()
+    (vault_dir / "vault.sqlite").symlink_to(decoy)
+
+    with pytest.raises(PiiVaultError):
+        Vault(vault_dir)
+
+
+def test_vault_dir_as_a_symlink_to_a_tight_directory_we_own_is_silent(tmp_path, capsys):
+    real = tmp_path / "real"
+    real.mkdir()
+    os.chmod(real, 0o700)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+
+    Vault(link)
+
+    assert _mode(real) == 0o700
+    assert "tightened" not in capsys.readouterr().err
+
+    # Second start over the same symlink stays silent too.
+    Vault(link)
+    assert "tightened" not in capsys.readouterr().err
+
+
+def test_vault_dir_as_a_symlink_to_a_loose_directory_tightens_the_target_once(tmp_path, capsys):
+    real = tmp_path / "real"
+    real.mkdir()
+    os.chmod(real, 0o700)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    Vault(link)
+    capsys.readouterr()
+    os.chmod(real, 0o777)
+
+    Vault(link)
+    err = capsys.readouterr().err
+    assert "tightened" in err
+    assert _mode(real) == 0o700
+
+    Vault(link)
+    assert "tightened" not in capsys.readouterr().err
+
+
+def test_vault_key_as_a_fifo_is_refused_without_hanging(tmp_path):
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    os.chmod(vault_dir, 0o700)
+    os.mkfifo(vault_dir / "key")
+
+    with pytest.raises(PiiVaultError):
+        Vault(vault_dir)
+
+
+def test_vault_database_as_a_fifo_is_refused(tmp_path):
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    os.chmod(vault_dir, 0o700)
+    os.mkfifo(vault_dir / "vault.sqlite")
+
+    with pytest.raises(PiiVaultError):
+        Vault(vault_dir)
+
+
+def test_vault_owned_by_another_user_raises(tmp_path, monkeypatch):
+    vault_dir = tmp_path / "vault"
+    Vault(vault_dir)
+    real_euid = os.geteuid()
+    monkeypatch.setattr(os, "geteuid", lambda: real_euid + 1)
+
+    with pytest.raises(PiiVaultError):
+        Vault(vault_dir)
+
+
+def test_vault_a_fresh_vault_still_works_after_the_ownership_checks(tmp_path):
+    vault = Vault(tmp_path / "vault")
+    vault.save({"aaaaaaaaaaaaaaaa": "value"})
+    assert vault.load(["aaaaaaaaaaaaaaaa"]) == {"aaaaaaaaaaaaaaaa": "value"}
 
 
 def test_settings_default_to_tier_one(monkeypatch):
@@ -330,9 +449,16 @@ def test_detokenize_doubles_quotes_inside_an_odata_string_literal(tmp_path):
     vault, token = _seed(tmp_path, "O'Brien", tier=3)
     text, subs = detokenize(f"lastName eq '{token}'", vault)
     assert text == "lastName eq 'O''Brien'"
-    # Both the doubled-quote literal form and the raw plaintext are recorded,
-    # since SF may echo either one back in an error body.
-    assert subs == {"O''Brien": token, "O'Brien": token}
+    # The doubled-quote literal form, the raw plaintext, and its percent- and
+    # HTML-encoded variants are all recorded, since SF may echo any of them
+    # back in an error body.
+    assert subs == {
+        "O''Brien": token,
+        "O'Brien": token,
+        "O%27Brien": token,
+        "O&#x27;Brien": token,
+        "O&#39;Brien": token,
+    }
 
 
 def test_retokenize_hides_the_raw_plaintext_sf_echoes_back(tmp_path):
@@ -342,6 +468,33 @@ def test_retokenize_hides_the_raw_plaintext_sf_echoes_back(tmp_path):
     _, subs = detokenize(f"lastName eq '{token}'", vault)
     body = "Invalid filter: lastName eq O'Brien"
     assert retokenize(body, subs) == f"Invalid filter: lastName eq {token}"
+
+
+def test_retokenize_hides_encoded_echoes_of_the_plaintext(tmp_path):
+    # SF may echo the request URL back in an error body encoded differently
+    # than we sent it: a different quote() `safe`, quote_plus's '+' for
+    # spaces, or HTML entities (with or without quotes escaped, numeric or
+    # hex, lowercase percent-hex). Each form must still come back as the
+    # token. (A value SF itself double-encodes is out of scope.)
+    raw = "a/b c&d's"
+    vault, token = _seed(tmp_path, raw, tier=3)
+    _, subs = detokenize(f"lastName eq '{token}'", vault)
+
+    variants = (
+        quote(raw, safe=""),
+        quote(raw),
+        quote_plus(raw),
+        html.escape(raw),
+        html.escape(raw, quote=False),
+        html.escape(raw).replace("&#x27;", "&#39;"),
+        re.sub(r"%[0-9A-F]{2}", lambda m: m[0].lower(), quote(raw, safe="")),
+    )
+    for encoded in variants:
+        assert encoded != raw  # otherwise this variant tests nothing
+        body = f"Invalid filter: lastName eq {encoded}"
+        out = retokenize(body, subs)
+        assert out == f"Invalid filter: lastName eq {token}"
+        assert raw not in out and encoded not in out
 
 
 def test_detokenize_percent_encoded_token_yields_encoded_plaintext(tmp_path):
@@ -411,3 +564,22 @@ def test_uris_are_dropped_so_key_predicates_do_not_leak(tmp_path):
     assert out["__metadata"] == {"type": "SFOData.EmpWorkPermit"}
     assert out["userNav"] == {"__deferred": {}}
     assert record["__metadata"]["uri"] == uri, "input must not be mutated"
+
+
+def test_expanded_collections_next_link_is_dropped(tmp_path):
+    # An $expand-ed nav property paginates on its own and can carry a
+    # "__next" URL embedding key values (PII) — unlike top-level paging,
+    # nothing upstream of tokenize_records strips this one.
+    record = {
+        "__metadata": {"type": "SFOData.User"},
+        "userId": "u1",
+        "permissionRoleNav": {
+            "results": [
+                {"__metadata": {"type": "SFOData.PermissionRole"}, "id": "1"},
+            ],
+            "__next": "https://api/odata/v2/User('u1')/permissionRoleNav?$skip=1",
+        },
+    }
+    [out], _ = _filter(tmp_path).tokenize_records([record])
+    assert "__next" not in out["permissionRoleNav"]
+    assert out["permissionRoleNav"]["results"][0]["id"] == "1"

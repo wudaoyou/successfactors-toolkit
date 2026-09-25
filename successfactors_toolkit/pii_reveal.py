@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("file", type=Path)
     parser.add_argument(
-        "-o", "--output", help="Output path, or - for stdout. Default: <name>.revealed<ext>."
+        "-o", "--output", help="Output file path, or - for stdout. Default: stdout."
     )
     args = parser.parse_args(argv)
 
@@ -43,17 +44,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    if args.output == "-":
+    if not args.output or args.output == "-":
         sys.stdout.write(text)
         target = "stdout"
     else:
-        output = (
-            Path(args.output)
-            if args.output
-            else args.file.with_name(f"{args.file.stem}.revealed{args.file.suffix}")
-        )
+        output = Path(args.output)
         try:
-            descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            # O_NOFOLLOW refuses a symlink at `output` (e.g. planted at a predictable
+            # path to redirect our write at the vault key); O_NONBLOCK keeps a FIFO
+            # there from hanging the open instead of blocking for a reader.
+            descriptor = os.open(
+                output, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
+            )
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                os.close(descriptor)
+                print(f"error: {output} is not a regular file", file=sys.stderr)
+                return 2
+            os.ftruncate(descriptor, 0)
             os.fchmod(descriptor, 0o600)  # an existing file keeps its old mode otherwise
             with os.fdopen(descriptor, "w", encoding="utf-8") as out:
                 out.write(text)
