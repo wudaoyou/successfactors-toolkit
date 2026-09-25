@@ -11,6 +11,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from successfactors_toolkit import mcp_server, plugin_api
+from successfactors_toolkit.services.tenant_store import TenantStore
 
 EXPECTED = {
     "get_settings",
@@ -163,6 +164,19 @@ def test_status_with_values_the_sdk_serializes_is_kept(monkeypatch):
     assert mcp_server.list_tenants()["plugins"] == {
         "example": {"loaded": True, "expires": when, "path": Path("/x")}
     }
+
+
+def test_pii_request_resolves_the_named_tenant(monkeypatch, tmp_path):
+    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
+    monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
+    store = TenantStore(str(tmp_path / "tenants"))
+    store.set_production("example-a", True)
+    store.set_production("example-b", False)
+    assert plugin_api.pii_request("X", None)[0].tier == 3
+    assert plugin_api.pii_request("X", None, company_id="example-b")[0].tier == 1
+    with pytest.raises(plugin_api.PiiVaultError) as caught:
+        plugin_api.pii_request("X", None, company_id="example-c")
+    assert plugin_api.pii_error(caught.value)["error"] == "tenant_environment_unset"
 
 
 def test_list_tenants_reports_no_plugins_by_default():

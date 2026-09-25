@@ -522,8 +522,8 @@ file may contain only part of the requested data. Ask the AI to explain
 any incomplete result before using it in a report.</p>
 <h3 id="revealing-pii-in-a-saved-report">Revealing PII in a saved
 report</h3>
-<p>Fields in tiers 1 through <code>PII_FILTER_TIER</code> are tokenized
-before the AI ever sees them, so a report it writes under
+<p>Fields in tiers 1 through <code>PII_FILTER_TIER</code> (all three
+tiers for a production tenant) are tokenized before the AI ever sees them, so a report it writes under
 <code>sf-toolkit/data/mcp</code> contains tokens, not plaintext. To
 restore plaintext, run the reveal command from <code>~/sf-toolkit</code>
 (where <code>compose.yaml</code> lives) against the file inside the
@@ -570,6 +570,12 @@ destination folder in your AI application.</td>
 Docker.” Check <code>sf-toolkit/data/mcp</code>.</td>
 </tr>
 <tr class="even">
+<td>Results say <code>tenant_environment_unset</code></td>
+<td>The environment has not been declared as production or test, so
+queries are refused. Ask IT to create <code>tenant.json</code> for that
+company ID (setup step B).</td>
+</tr>
+<tr class="odd">
 <td>Results say <code>pii_vault_unavailable</code></td>
 <td>Ask IT to check the PII vault volume. If no report has been revealed
 from it yet, IT can remove it with <code>docker volume rm
@@ -653,7 +659,7 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
 <code>501:20</code>.</p>
 <pre class="yaml"><code>services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.2
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.3
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
@@ -708,7 +714,8 @@ ID consistently in folder names, filenames, and configuration.</p>
 │   └── tenants/
 │       └── demo/
 │           ├── sf_private_key_demo.pem
-│           └── sf_saml_signing_demo.crt
+│           ├── sf_saml_signing_demo.crt
+│           └── tenant.json
 └── data/
     └── mcp/                      # Created on the first export</code></pre>
 <p>Place your matching PEM private key and X.509 certificate in this
@@ -722,6 +729,17 @@ SuccessFactors</a>. Use <code>scripts/generate-keypair.sh</code>, then
 register the certificate in SF. Placing files manually does not run the
 REST upload endpoint’s key-pair and expiry validation; verify that the
 files match and the certificate is valid.</p>
+<p>Declare whether the environment is production. The container mounts
+<code>tenants</code> read-only, so create the file on the host, with
+<code>true</code> for production or <code>false</code> for a test
+environment:</p>
+<pre class="sh"><code>printf &#39;{&quot;production&quot;: true}\n&#39; &gt; &quot;$HOME/sf-toolkit/credentials/tenants/demo/tenant.json&quot;</code></pre>
+<p>A production environment always gets the strictest PII tokenization
+(tier 3, names included), whatever <code>PII_FILTER_TIER</code> says. A
+test environment uses <code>PII_FILTER_TIER</code>. Without this file,
+<code>odata_query</code> and <code>ce_query</code> refuse the environment
+with <code>tenant_environment_unset</code>. The value must be
+<code>true</code> or <code>false</code> without quotes.</p>
 <p>Create <code>~/sf-toolkit/credentials/sf.env</code> with your
 connection settings:</p>
 <pre class="dotenv"><code>SF_HOST=your-api-host.sapsf.com
@@ -733,7 +751,8 @@ SF_ODATA_VERSION=v2
 TENANT_KEYS_DIR=/credentials/tenants
 RESULTS_DIR=/data
 PII_VAULT_DIR=/vault/store
-# Optional: raise or lower PII tokenization (0 off - 3 most aggressive); default 1.
+# Optional: raise or lower PII tokenization for test environments
+# (0 off - 3 most aggressive); default 1. Production is always 3.
 # PII_FILTER_TIER=1
 # Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
 # PII_EXTRA_FIELDS={&quot;PerPersonal&quot;: {&quot;customString6&quot;: 2}}</code></pre>
@@ -923,7 +942,7 @@ data/mcp；若要改变今后的默认目录，请 IT 调整设置。</p>
 AI 解释再用于报告。</p>
 <h3 id="zh-business-还原已保存报告中的pii">还原已保存报告中的 PII</h3>
 <p>第 1 至 <code>PII_FILTER_TIER</code>
-层的字段会在 AI 看到之前完成脱敏，因此它保存到
+层（生产环境为全部三层）的字段会在 AI 看到之前完成脱敏，因此它保存到
 <code>sf-toolkit/data/mcp</code>
 下的报告只包含 token，不含明文。如需还原明文，请在
 <code>~/sf-toolkit</code>（<code>compose.yaml</code>
@@ -967,6 +986,11 @@ AI 解释再用于报告。</p>
 sf-toolkit/data/mcp。</td>
 </tr>
 <tr class="even">
+<td>结果显示 <code>tenant_environment_unset</code></td>
+<td>尚未声明该环境是生产还是测试，因此查询被拒绝。请 IT 为该公司 ID 创建
+<code>tenant.json</code>（见安装步骤二）。</td>
+</tr>
+<tr class="odd">
 <td>结果显示 <code>pii_vault_unavailable</code></td>
 <td>请 IT 检查 PII 保险库卷。如果还没有从中还原过任何报告，IT 可以用
 <code>docker volume rm sf-toolkit-pii-vault</code> 删除它并重新打开 AI
@@ -1027,7 +1051,7 @@ AI 应用中验证。</p>
 文件；用获准的配置替换所有示例值，并在交付前完成小范围查询测试。</p>
 <details><summary>展开连接参数与可复制配置</summary><h3 id="zh-一准备-docker-镜像">一、配置 Docker Compose</h3><p>使用 Docker Compose 2.30.0 或更新版本。创建 <code>~/sf-toolkit</code>，将以下内容保存为其中的 <code>compose.yaml</code>。把 <code>YOUR_UID:YOUR_GID</code> 替换为 <code>id -u</code> 与 <code>id -g</code> 的输出，例如 <code>501:20</code>。</p><pre class="yaml"><code>services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.2
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.3
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
@@ -1078,7 +1102,8 @@ ID，目录名、文件名和配置中的 ID 要一致。</p>
 │   └── tenants/
 │       └── demo/
 │           ├── sf_private_key_demo.pem
-│           └── sf_saml_signing_demo.crt
+│           ├── sf_saml_signing_demo.crt
+│           └── tenant.json
 └── data/
     └── mcp/                      ← 首次导出时自动创建</code></pre>
 <p>将已有的、相互匹配的 PEM 私钥与 X.509
@@ -1089,6 +1114,15 @@ Application，技术用户应有目标 API
 SuccessFactors</strong>，使用 <code>scripts/generate-keypair.sh</code>
 生成，再完成 SF 端证书注册。直接摆放文件不会执行 REST
 上传接口的配对和过期校验，需要自行确保正确。</p>
+<p>声明该环境是否为生产环境。容器以只读方式挂载 <code>tenants</code>，
+因此请在主机上创建该文件：生产环境写 <code>true</code>，测试环境写
+<code>false</code>：</p>
+<pre class="sh"><code>printf '{"production": true}\n' &gt; "$HOME/sf-toolkit/credentials/tenants/demo/tenant.json"</code></pre>
+<p>生产环境始终使用最严格的 PII 脱敏（第 3 层，包括姓名），不受
+<code>PII_FILTER_TIER</code> 影响；测试环境使用
+<code>PII_FILTER_TIER</code>。缺少该文件时，<code>odata_query</code> 和
+<code>ce_query</code> 会以 <code>tenant_environment_unset</code>
+拒绝查询。值必须是不带引号的 <code>true</code> 或 <code>false</code>。</p>
 <p>在 <code>~/sf-toolkit/credentials/sf.env</code> 中填写：</p>
 <pre class="dotenv"><code>SF_HOST=your-api-host.sapsf.com
 SF_CLIENT_KEY=REPLACE_WITH_OAUTH_CLIENT_API_KEY
@@ -1099,7 +1133,8 @@ SF_ODATA_VERSION=v2
 TENANT_KEYS_DIR=/credentials/tenants
 RESULTS_DIR=/data
 PII_VAULT_DIR=/vault/store
-# Optional: raise or lower PII tokenization (0 off - 3 most aggressive); default 1.
+# Optional: raise or lower PII tokenization for test environments
+# (0 off - 3 most aggressive); default 1. Production is always 3.
 # PII_FILTER_TIER=1
 # Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
 # PII_EXTRA_FIELDS={&quot;PerPersonal&quot;: {&quot;customString6&quot;: 2}}</code></pre>
