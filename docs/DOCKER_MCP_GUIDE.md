@@ -126,7 +126,7 @@ Start Docker Desktop or your local Docker service with Docker Compose 2.30.0 or 
 ```yaml
 services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit@sha256:316de6cbd55af818d4b0af9cd4595ff99ad8a0dc2da0b79a709a1f45d94a9173
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.1
     command: ["python", "-m", "successfactors_toolkit.mcp_server"]
     user: "YOUR_UID:YOUR_GID"
     stdin_open: true
@@ -194,7 +194,7 @@ Use this layout. Replace `demo` with your actual company ID consistently in fold
 
 Place your matching PEM private key and X.509 certificate in this folder using the names shown. Register the certificate with the corresponding SuccessFactors OAuth2 Client Application. The technical user needs access to the target APIs and data. Keep the private key on your machine; do not paste it into chat.
 
-If you need a key pair, see [Connect to SuccessFactors](../README.md#connect-to-successfactors). Use `scripts/generate-keypair.sh`, then register the certificate in SF. Placing files manually does not run the REST upload endpoint's key-pair and expiry validation; verify that the files match and the certificate is valid.
+If you need a key pair, see [Connect to SuccessFactors](CONNECT.md#connect-to-successfactors). Use `scripts/generate-keypair.sh`, then register the certificate in SF. Placing files manually does not run the REST upload endpoint's key-pair and expiry validation; verify that the files match and the certificate is valid.
 
 Create `~/sf-toolkit/credentials/sf.env` with your connection settings:
 

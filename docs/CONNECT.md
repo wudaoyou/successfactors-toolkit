@@ -1,0 +1,113 @@
+# Connect to SuccessFactors
+
+[← README](../README.md)
+
+Authentication is OAuth2 SAML Bearer Assertion, which requires an RSA key
+pair registered as an X.509 certificate in SuccessFactors. The project ships
+no credentials. You provide your tenant and can use the helper below to
+generate a key pair, then register the certificate in SuccessFactors.
+
+For Docker MCP, follow the [business user guide](DOCKER_MCP_GUIDE.md)'s `credentials/sf.env` and read-only tenant
+folder setup. The `.env` and REST registration examples below are an
+alternative setup for local Python or the REST API.
+
+## 1. Generate a key pair
+
+```sh
+./scripts/generate-keypair.sh <company_id> [technical_user_CN] [validity_days]
+# e.g.
+./scripts/generate-keypair.sh demo APIUSER 730
+```
+
+This writes `secrets/keypair_<company_id>/private_key.pem` (mode 600) and
+`secrets/keypair_<company_id>/certificate.crt`, both gitignored. Upload
+`certificate.crt` to **SF Admin Center → Manage OAuth2 Client Applications →
+Register a Client Application**, using an X.509 certificate.
+
+Already have a PKCS#12 key pair? Convert it first:
+
+```sh
+openssl pkcs12 -in your_keypair.p12 -nocerts -nodes -out private_key.pem
+```
+
+## 2. Configure the environment
+
+```sh
+cp .env.example .env
+```
+
+At minimum set `SF_HOST`, `SF_CLIENT_KEY`,
+`SF_USER_ID` (must equal the certificate's CN), `SF_COMPANY_ID`, and
+`SF_TOKEN_URL` (`https://{SF_HOST}/oauth/token`).
+For REST calls also set `API_KEY`; tenant-management endpoints additionally
+require `ADMIN_API_KEY`.
+
+## 3. Register the key with the toolkit
+
+Either point `SF_PRIVATE_KEY_PATH` at the PEM file directly, or register it
+through the tenant management API so the toolkit stores and validates it for
+you — see [Tenant management](#tenant-management) below.
+
+## Environment variables
+
+See `.env.example` for a filled-in starting point and
+`successfactors_toolkit/config.py` for the authoritative field list.
+
+| Variable | Description |
+|---|---|
+| `API_KEY` | Required for any `/api/*` call. Sent as `X-API-Key`. Empty = all `/api/*` routes return 503. |
+| `ADMIN_API_KEY` | Required for any `/api/tenants/*` call. Sent as `X-Admin-Key`. Empty = those routes return 503. |
+| `CORS_ORIGINS` | JSON list of allowed browser origins. Default `[]` (closed). |
+| `SF_HOST` | SuccessFactors host, e.g. `example.invalid`. |
+| `SF_ALLOWED_HOSTS` | JSON list of extra hosts a per-request `connection.host`/`token_url` override may target. `SF_HOST` and hosts under SAP's `*.successfactors.{com,eu,cn}` / `*.sapsf.{com,eu,cn}` domains are always allowed; anything else is rejected with `400`. |
+| `SF_CLIENT_KEY` | OAuth2 client API key from SF Admin Center. |
+| `SF_USER_ID` | Technical user; must equal the certificate's CN. |
+| `SF_COMPANY_ID` | Default tenant/company ID. |
+| `SF_TOKEN_URL` | `https://{SF_HOST}/oauth/token`. |
+| `SF_ODATA_VERSION` | OData REST version, default `v2`. |
+| `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `120` (long-running queries can take minutes per SAP KBA 2735876). |
+| `TENANT_KEYS_DIR` | Where per-tenant key+cert pairs are stored (see below). Default `./tenants`. |
+| `RESULTS_DIR` | Payload output root. Program default: `./results`; MCP adds `/mcp/`. The Docker MCP guide sets `/data` and mounts a host `data` folder there. |
+| `PII_FILTER_TIER` | MCP PII tokenization level: `0` off, `1` (default) stand-alone sensitive PII such as national IDs and bank accounts, `2` adds birth dates, home contact data and protected characteristics, `3` adds names and other identifying data. |
+| `PII_EXTRA_FIELDS` | JSON map of tenant-specific fields to tokenize, e.g. `{"PerPersonal": {"customString6": 2}}`. |
+| `PII_VAULT_DIR` | Where the token key and vault live. Default `./pii_vault`. Must persist and must not be inside `RESULTS_DIR`. |
+
+### Private key resolution order
+
+For each request, the toolkit resolves the RSA private key in this order:
+
+1. Per-request `connection.private_key_path` — must resolve to a path inside `TENANT_KEYS_DIR`, or the request is rejected with `400`.
+2. `{TENANT_KEYS_DIR}/{company_id}/sf_private_key_{company_id}.pem` — populated via the tenant management API.
+3. `SF_PRIVATE_KEY_PEM_<COMPANY_ID>` env var (base64-encoded PEM, per company — for CI/CD).
+4. `SF_PRIVATE_KEY_PEM` env var (base64-encoded PEM, single-tenant fallback).
+5. `SF_PRIVATE_KEY_PATH`, a path template with a `{company_id}` placeholder.
+
+## Tenant management
+
+Per-tenant private keys and certificates are stored on disk under
+`{TENANT_KEYS_DIR}/{company_id}/`, one key+cert pair per company. All
+`/api/tenants/*` routes — including the read-only list and get — require the
+`X-Admin-Key` header in addition to `X-API-Key`.
+
+```bash
+# Register (or replace with ?force=true)
+curl -X POST http://127.0.0.1:8000/api/tenants/demo/keypair \
+  -H "X-API-Key: $API_KEY" -H "X-Admin-Key: $ADMIN_API_KEY" \
+  -F "private_key=@secrets/keypair_demo/private_key.pem" \
+  -F "certificate=@secrets/keypair_demo/certificate.crt"
+
+# List / inspect
+curl http://127.0.0.1:8000/api/tenants -H "X-API-Key: $API_KEY" -H "X-Admin-Key: $ADMIN_API_KEY"
+curl http://127.0.0.1:8000/api/tenants/demo -H "X-API-Key: $API_KEY" -H "X-Admin-Key: $ADMIN_API_KEY"
+
+# Delete
+curl -X DELETE http://127.0.0.1:8000/api/tenants/demo \
+  -H "X-API-Key: $API_KEY" -H "X-Admin-Key: $ADMIN_API_KEY"
+```
+
+The keypair endpoint validates the key and certificate cryptographically
+(matching public key, not expired) before writing anything, returns `409` if
+the tenant already exists (bypass with `?force=true`), and returns
+certificate metadata including a `days_until_expiry` warning once a cert has
+under 90 days left. Installing or deleting a tenant's key invalidates any
+cached SFAPI session or OData token for that `company_id`.

@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import os
 import re
 import secrets
 import sqlite3
+import stat
+import sys
 from collections.abc import Iterable
 from contextlib import closing
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, quote_plus
 
 from lxml import etree
 
@@ -40,11 +43,40 @@ class PiiUnknownTokenError(Exception):
         self.tokens = tokens
 
 
+def _secure(path: Path, mode: int, *, regular_file: bool) -> None:
+    """Before reusing an existing vault path: refuse one we don't own outright,
+    and tighten one we own but that has stray group/other bits.
+
+    For the key and vault.sqlite (regular_file=True), checked with lstat and
+    refused outright unless it's a plain regular file — a symlink, FIFO, dir
+    or device is judged (and refused) on its own terms, never a target's.
+    For the vault directory (regular_file=False), checked with stat, so a
+    directory reached through a symlink is judged — and, if loose, tightened
+    — on the real directory, not the (always world-permissive) link. Never
+    touches anything above `path` itself."""
+    st = path.lstat() if regular_file else path.stat()
+    if regular_file and not stat.S_ISREG(st.st_mode):
+        raise PiiVaultError(f"PII vault path {path} is not a regular file; refusing to use it")
+    if st.st_uid != os.geteuid():
+        raise PiiVaultError(f"PII vault path {path} is owned by another user")
+    if stat.S_IMODE(st.st_mode) & 0o077:
+        os.chmod(path, mode)
+        print(f"pii vault: tightened permissions on {path}", file=sys.stderr)
+
+
 def _load_or_create_key(path: Path) -> bytes:
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        key = path.read_bytes()
+        _secure(path, 0o600, regular_file=True)
+        # O_NOFOLLOW + an fstat check close the gap between that check and
+        # this read: nothing can swap `path` for a symlink or FIFO in between.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            raise PiiVaultError(f"PII vault path {path} is not a regular file; refusing to use it")
+        with os.fdopen(fd, "rb") as handle:
+            key = handle.read()
     else:
         key = secrets.token_bytes(_KEY_BYTES)
         with os.fdopen(descriptor, "wb") as output:
@@ -61,9 +93,13 @@ class Vault:
         self._db_path = directory / "vault.sqlite"
         try:
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            _secure(directory, 0o700, regular_file=False)
             self._key = _load_or_create_key(directory / "key")
-            # Create the file owner-only before sqlite opens it under the umask.
-            os.close(os.open(self._db_path, os.O_WRONLY | os.O_CREAT, 0o600))
+            try:
+                # Create the file owner-only before sqlite opens it under the umask.
+                os.close(os.open(self._db_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            except FileExistsError:
+                _secure(self._db_path, 0o600, regular_file=True)
             self._run(
                 lambda db: db.execute(
                     "CREATE TABLE IF NOT EXISTS token (hex TEXT PRIMARY KEY, value TEXT NOT NULL)"
@@ -279,6 +315,12 @@ class PiiFilter:
             entity = _entity_of(node)
             out = {}
             for key, value in node.items():
+                if key == "__next":
+                    # Top-level response paging is consumed by the paging
+                    # client before a record ever reaches here; a "__next"
+                    # key this deep is an $expand-ed collection's own paging
+                    # link, and it can embed key values (PII) in its URL.
+                    continue
                 if key in ("__metadata", "__deferred") and isinstance(value, dict):
                     # SF puts the record's key predicate in these URIs, and a
                     # key can be PII (EmpWorkPermit documentNumber). Joins use
@@ -380,6 +422,24 @@ def _substitute(text: str, vault: Vault, *, request: bool, encode: bool = False)
                 value = quote(value, safe="")
             substitutions[value] = match.group(0)
             substitutions[raw] = match.group(0)
+            # A server that echoes the request URL back in an error body may
+            # encode it differently than we did on the way out (a different
+            # quote() `safe`, quote_plus's '+' for spaces, HTML entities with
+            # or without quotes escaped, numeric vs. hex entity, or lowercase
+            # percent-hex) — cover those too, or retokenize won't find the
+            # exact substring. Not covered: a value double-encoded by SF
+            # itself (e.g. percent-encoded twice) — rare enough to skip.
+            for variant in (
+                quote(raw, safe=""),
+                quote(raw),
+                quote_plus(raw),
+                html.escape(raw),
+                html.escape(raw, quote=False),
+                html.escape(raw).replace("&#x27;", "&#39;"),
+                re.sub(r"%[0-9A-F]{2}", lambda m: m[0].lower(), quote(raw, safe="")),
+            ):
+                if variant != raw:
+                    substitutions[variant] = match.group(0)
         replaced += 1
         return value
 
