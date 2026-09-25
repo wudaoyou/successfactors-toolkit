@@ -52,22 +52,29 @@ before anything is written. The plaintext stays in a local vault under
 `PII_VAULT_DIR`.
 
 How far tokenization goes depends on whether the tenant is production, which
-you declare per tenant in `{TENANT_KEYS_DIR}/{company_id}/tenant.json` (see
-[Production or test](CONNECT.md#production-or-test)):
+you declare per tenant in `{TENANT_KEYS_DIR}/{company_id}/{company_id}.json`
+(see [Production or test](CONNECT.md#production-or-test)):
 
-| `tenant.json` | Tier |
+| `{company_id}.json` | Tier |
 |---|---|
-| `{"production": true}` | 3, always. `PII_FILTER_TIER` cannot lower it. |
-| `{"production": false}` | `PII_FILTER_TIER` (`0`–`3`, default `1`; `0` = off). |
-| missing, or anything else | The call is refused. |
+| `{"production": true}` | 3, always. Nothing can lower it. |
+| `{"production": false}` | The file's `pii_filter_tier`, else `PII_FILTER_TIER` (`0`–`3`, default `1`; `0` = off). |
+| missing, or no boolean `production` | The call is refused: `tenant_environment_unset`. |
+| `production` set, another key invalid | The call is refused: `tenant_config_invalid`. |
 
-A refused call returns `{"error": "tenant_environment_unset", "company_id":
-..., "detail": ...}` before anything is sent to SuccessFactors; `detail` says
-where to put the file. An empty `company_id` means `SF_COMPANY_ID`, whose
-flag is read the same way. `list_tenants` reports `production` and the
-effective `pii_filter_tier` for each tenant and the default, and warns about
-tenants without a flag. `odata_metadata` and `compare_metadata` return schema
-only and do not check it.
+A refused call returns `{"error": "tenant_environment_unset" or
+"tenant_config_invalid", "company_id": ..., "detail": ...}` before anything
+is sent to SuccessFactors; `detail` says where to put the file, or which
+field is wrong. An empty `company_id` means `SF_COMPANY_ID`, whose file is
+read the same way. `list_tenants` reports the effective `host`,
+`technical_user`, `production` and `pii_filter_tier` for each tenant and the
+default, adds `config_error` for an invalid file, and warns about tenants
+without a flag or with an invalid file. `odata_metadata` and
+`compare_metadata` return schema only and do not check the flag.
+
+The same file can also set the tenant's `client_key`, `user_id`, `host` with
+`token_url`, `odata_version` and `pii_extra_fields`, so one MCP server serves
+several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
 
 - The same value always gets the same token, so the model can still compare,
   group, count and join. It can also pass a token back in `$filter`; the

@@ -28,6 +28,7 @@ from successfactors_toolkit.models.common import SFAPIConnectionConfig
 from successfactors_toolkit.services import saml_bearer
 from successfactors_toolkit.services.connection_policy import check_host
 from successfactors_toolkit.services.credentials import load_key_pem
+from successfactors_toolkit.services.tenant_store import TenantStore
 
 _SOAP_ENVELOPE = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -73,14 +74,16 @@ class SFAPIClient:
         s = self._settings
         c = conn or SFAPIConnectionConfig()
         company_id = _eff(c.company_id, s.sf_company_id)
+        # Per-request override, then the tenant's {company_id}.json, then SF_*.
+        t = TenantStore(s.tenant_keys_dir).connection(company_id)
         return {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in _endpoint()'s URL.
-            "host": check_host(_eff(c.host, s.sf_host), s),
-            "client_key": _eff(c.client_key, s.sf_client_key),
-            "user_id": _eff(c.user_id, s.sf_user_id),
+            "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
+            "client_key": _eff(c.client_key, t.get("client_key", s.sf_client_key)),
+            "user_id": _eff(c.user_id, t.get("user_id", s.sf_user_id)),
             "company_id": company_id,
-            "token_url": _eff(c.token_url, s.sf_token_url),
+            "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
         }
 

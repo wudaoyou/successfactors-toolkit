@@ -51,7 +51,8 @@ class Settings(BaseSettings):
     # Values of mapped fields reach the model as [PII-T<tier>-<hex>] tokens;
     # the plaintext stays in the vault. See services/pii_filter.py.
     # The tier for test tenants: 0 = off; N = tokenize every field whose
-    # tier <= N. Production tenants are always 3 ({tenant}/tenant.json).
+    # tier <= N. Production tenants are always 3. A tenant's
+    # {tenant}/{tenant}.json can override both of these (tenant_store.TenantConfig).
     pii_filter_tier: int = Field(default=1, ge=0, le=3)
     # Tenant-specific additions, e.g. {"PerPersonal": {"customString6": 2}}.
     pii_extra_fields: dict[str, dict[str, Annotated[int, Field(ge=1, le=3)]]] = {}

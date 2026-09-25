@@ -98,7 +98,8 @@ docker compose run --rm -T mcp \
 | No matching records | Confirm the environment, employee identifier, effective date, and permitted data scope. |
 | CSV or custom-folder save unavailable | Ask IT to enable approved local file tools and access to the destination folder in your AI application. |
 | The AI reports a file but you cannot find it | Ask: “Give me the file path on my computer, not the path inside Docker.” Check `sf-toolkit/data/mcp`. |
-| Results say `tenant_environment_unset` | The environment has not been declared as production or test, so queries are refused. Ask IT to create `tenant.json` for that company ID (setup step B). |
+| Results say `tenant_environment_unset` | The environment has not been declared as production or test, so queries are refused. Ask IT to create `<company ID>.json` for that company ID (setup step B). |
+| Results say `tenant_config_invalid` | The environment's settings file has a wrong or misspelled entry, so queries are refused. Ask IT to fix the field named in the message (setup step B). |
 | Results say `pii_vault_unavailable` | Ask IT to check the PII vault volume. If no report has been revealed from it yet, IT can remove it with `docker volume rm sf-toolkit-pii-vault` and reopen the AI application; Docker recreates it with the right permissions. Don't remove a vault that has been used — its tokens can't be revealed afterwards. If the detail says the vault is owned by another user, the vault is a host folder mounted into the container, which Docker Desktop reports as root-owned; use the named volume from the setup section instead. |
 
 ## Three-minute walkthrough
@@ -127,7 +128,7 @@ Start Docker Desktop or your local Docker service with Docker Compose 2.30.0 or 
 ```yaml
 services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.3
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.4.0
     command: ["python", "-m", "successfactors_toolkit.mcp_server"]
     user: "YOUR_UID:YOUR_GID"
     stdin_open: true
@@ -189,7 +190,7 @@ Use this layout. Replace `demo` with your actual company ID consistently in fold
 │       └── demo/
 │           ├── sf_private_key_demo.pem
 │           ├── sf_saml_signing_demo.crt
-│           └── tenant.json
+│           └── demo.json
 └── data/
     └── mcp/                      # Created on the first export
 ```
@@ -203,14 +204,38 @@ Declare whether the environment is production. The container mounts
 production or `false` for a test environment:
 
 ```sh
-printf '{"production": true}\n' > "$HOME/sf-toolkit/credentials/tenants/demo/tenant.json"
+printf '{"production": true}\n' > "$HOME/sf-toolkit/credentials/tenants/demo/demo.json"
 ```
 
 A production environment always gets the strictest PII tokenization (tier 3,
 names included), whatever `PII_FILTER_TIER` says. A test environment uses
 `PII_FILTER_TIER`. Without this file, `odata_query` and `ce_query` refuse the
 environment with `tenant_environment_unset`. The value must be `true` or
-`false` without quotes.
+`false` without quotes. Version 0.3.3 called this file `tenant.json`; rename
+an existing one to `demo.json`, since the old name is no longer read.
+
+The same file can also hold settings that differ per environment:
+`client_key`, `user_id`, `host` with `token_url`, `odata_version`,
+`pii_filter_tier` (test environments only) and `pii_extra_fields`. Each one
+replaces the matching `sf.env` value for that company ID only. A misspelled
+or wrong entry makes the queries refuse the environment with
+`tenant_config_invalid`, naming the field. See
+[Per-tenant settings](CONNECT.md#per-tenant-settings) for the full list.
+
+One MCP server can serve several environments this way. For a second
+environment `demo2` that uses its own OAuth client and tier 2, add a folder
+next to `demo` with its key, certificate and settings file; no second
+compose service is needed:
+
+```sh
+mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo2"
+# Add sf_private_key_demo2.pem and sf_saml_signing_demo2.crt, then:
+printf '{"production": false, "client_key": "DEMO2_OAUTH_CLIENT_API_KEY", "pii_filter_tier": 2}\n' \
+  > "$HOME/sf-toolkit/credentials/tenants/demo2/demo2.json"
+```
+
+The AI then passes `company_id="demo2"` to reach it; `list_tenants` shows
+both environments with their effective settings.
 
 Create `~/sf-toolkit/credentials/sf.env` with your connection settings:
 

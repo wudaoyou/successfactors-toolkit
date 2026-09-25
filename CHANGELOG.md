@@ -4,6 +4,35 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-25
+
+### Changed (breaking)
+
+- The tenant flag file is now `{TENANT_KEYS_DIR}/{company_id}/{company_id}.json`
+  (e.g. `tenants/demo/demo.json`). `tenant.json` is no longer read: rename it.
+  Until then, `tenant_environment_unset`'s `detail` says to rename it.
+
+### Added
+
+- Per-tenant settings in `{company_id}.json`, so one server serves several
+  tenants. Connection: `host` with `token_url`, `client_key`, `user_id`,
+  `odata_version`, each falling back to its `SF_*` value. A per-request
+  override still wins. `host` and `token_url` pass the same allowlist as
+  request overrides. PII: `pii_filter_tier` for test tenants (else
+  `PII_FILTER_TIER`) and `pii_extra_fields`, merged on top of
+  `PII_EXTRA_FIELDS` with the file winning per field.
+- `tenant_config_invalid` `{"error", "company_id", "detail"}`: `odata_query`
+  and `ce_query` refuse a tenant whose file declares `production` but has an
+  unknown key or an invalid value, including `pii_filter_tier` below 3 on a
+  production tenant. A `host` without `token_url`, or a host outside the
+  allowlist, fails every call for that tenant instead of falling back to the
+  environment.
+- `list_tenants` reports each tenant's effective `host`, `technical_user`,
+  `odata_version` and `pii_filter_tier`, plus `config_error` and a warning
+  for an invalid file.
+- `PUT /api/tenants/{company_id}/environment` keeps the file's other keys and
+  its file mode.
+
 ## [0.3.3] - 2026-09-25
 
 ### Changed (breaking)

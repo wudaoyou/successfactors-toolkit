@@ -1,6 +1,6 @@
 services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.3
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.4.0
     command: ["python", "-m", "successfactors_toolkit.mcp_server"]
     user: "YOUR_UID:YOUR_GID"
     stdin_open: true

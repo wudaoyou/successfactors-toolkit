@@ -361,7 +361,7 @@ def test_unset_tenant_is_refused_before_any_request(monkeypatch, tmp_path, defau
     ):
         assert result["error"] == "tenant_environment_unset"
         assert result["company_id"] == cid
-        assert f"{cid}/tenant.json" in result["detail"]
+        assert f"{cid}/{cid}.json" in result["detail"]
         assert f"/api/tenants/{cid}/environment" in result["detail"]
     assert odata.sent == [] and sfapi.calls == 0
     assert not (tmp_path / "results").exists() and not (tmp_path / "vault").exists()
