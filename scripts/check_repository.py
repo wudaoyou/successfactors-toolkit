@@ -27,11 +27,35 @@ PRIVATE_DIRS = {
 PRIVATE_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules"}
 PRIVATE_SUFFIXES = {".pem", ".key", ".crt", ".p12", ".pfx", ".zip", ".log"}
 
+# Docker Hub release tags are immutable, so a released tag never points at a
+# previous image; a stray tagless digest pin (from before a release) would.
+IMAGE_REF = re.compile(r"docker\.io/wudaoyou/successfactors-toolkit\S*")
+IMAGE_PIN_FILES = (
+    "docker-compose.mcp.yml",
+    "docs/DOCKER_MCP_GUIDE.md",
+    "docs/DOCKER_MCP_GUIDE.html",
+)
+
 
 def main():
     errors = []
-    if not SEMVER.fullmatch((ROOT / "VERSION").read_text().strip()):
+    version = (ROOT / "VERSION").read_text().strip()
+    if not SEMVER.fullmatch(version):
         errors.append("VERSION must contain a valid SemVer identifier.")
+    expected = re.compile(
+        rf"^docker\.io/wudaoyou/successfactors-toolkit:v{re.escape(version)}(@sha256:[0-9a-f]{{64}})?$"
+    )
+    for rel in IMAGE_PIN_FILES:
+        path = ROOT / rel
+        if not path.exists():
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            for ref in IMAGE_REF.findall(line):
+                if not expected.fullmatch(ref):
+                    errors.append(
+                        f"{rel}:{lineno}: image reference must be tagged v{version} "
+                        f"(docker.io/wudaoyou/successfactors-toolkit:v{version}[@sha256:...]), got: {ref}"
+                    )
     names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
     for name in filter(None, names):
         path = Path(name)

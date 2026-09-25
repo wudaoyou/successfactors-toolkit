@@ -70,9 +70,16 @@ def set_status(name: str, fn: Callable[[], dict[str, Any]]) -> None:
 
 def _load_plugins(mcp) -> None:
     for ep in entry_points(group=GROUP):
+        before = {tool.name for tool in mcp._tool_manager.list_tools()}
         try:
             ep.load()(mcp)
         except Exception as exc:  # a broken plugin must not take the core tools down
+            # Registration is atomic: a plugin that raises after adding tools
+            # or a status fn must not leave either behind half-registered.
+            after = {tool.name for tool in mcp._tool_manager.list_tools()}
+            for name in after - before:
+                mcp.remove_tool(name)
+            _status_fns.pop(ep.name, None)
             # Type only: an exception message can carry paths or config values.
             print(
                 f"successfactors-mcp: plugin {ep.name!r} not loaded ({type(exc).__name__})",

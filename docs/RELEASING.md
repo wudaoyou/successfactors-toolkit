@@ -18,9 +18,14 @@
 
 ## Procedure
 
-1. Open a preparation PR against `develop` that updates `VERSION` and moves
+1. Open a preparation PR against `develop` that updates `VERSION`, moves
    the relevant `CHANGELOG.md` entries from `Unreleased` to a new dated
-   section.
+   section, and sets every `docker.io/wudaoyou/successfactors-toolkit` image
+   reference (`docker-compose.mcp.yml`, `docs/DOCKER_MCP_GUIDE.md`,
+   `docs/DOCKER_MCP_GUIDE.html`) to `:v<new version>` with no digest — the
+   digest isn't known until the image for this tag is published, and since
+   release tags are immutable (see below) the tag alone already points at
+   the right image once it exists.
 2. After that PR merges, open a release PR from `develop` to `main`.
 3. After its checks and review pass, merge it with a merge commit.
 4. A maintainer then tags the approved commit on `main`:
@@ -40,7 +45,10 @@
    provenance, then creates a GitHub Release only after those steps succeed.
    Versions with a hyphen (e.g. `-rc.1`) are marked prerelease.
 6. After a release or hotfix, merge `main` back into `develop` before
-   starting the next development cycle.
+   starting the next development cycle. As part of that sync, add the
+   `@sha256:...` digest from the release's `image-reference.txt` asset to
+   the same three image references so `develop` pins the exact published
+   image.
 
 ## Docker Hub publication
 

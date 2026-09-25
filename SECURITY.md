@@ -2,13 +2,9 @@
 
 ## Supported Versions
 
-Only the latest `0.1.x` release receives security fixes while the project is
-pre-1.0.
-
-| Version | Supported |
-| ------- | --------- |
-| 0.1.x   | Yes       |
-| < 0.1   | No        |
+Only the latest release receives security fixes. While the project is
+pre-1.0, that's the latest `0.x` minor version; older minors and any
+pre-release before it are not patched — upgrade to get a fix.
 
 ## Reporting a Vulnerability
 

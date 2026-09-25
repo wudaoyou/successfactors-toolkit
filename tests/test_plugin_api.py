@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from successfactors_toolkit import mcp_server, plugin_api
 
@@ -83,6 +84,25 @@ def test_a_failing_plugin_is_skipped_and_reported(monkeypatch, capsys):
     assert plugin_api._statuses() == {"broken": {"loaded": False, "error": "ImportError"}}
     err = capsys.readouterr().err
     assert "broken" in err and "ImportError" in err and "secret" not in err
+
+
+def test_a_plugin_that_registers_then_raises_leaves_no_tool_behind(monkeypatch):
+    def register(mcp):
+        @mcp.tool()
+        def partial_tool() -> dict:
+            """Registered right before the plugin blows up."""
+            return {"ok": True}
+
+        plugin_api.set_status("partial", lambda: {"configured": True})
+        raise RuntimeError("boom")
+
+    server = _load(monkeypatch, _EntryPoint("partial", register))
+
+    assert _tool_names(server) == set()
+    with pytest.raises(ToolError, match="Unknown tool"):
+        asyncio.run(server.call_tool("partial_tool", {}))
+    assert "partial" not in plugin_api._status_fns
+    assert plugin_api._statuses() == {"partial": {"loaded": False, "error": "RuntimeError"}}
 
 
 def test_status_callable_error_does_not_break_list_tenants(monkeypatch):
