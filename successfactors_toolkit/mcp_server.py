@@ -41,10 +41,11 @@ from successfactors_toolkit.services.odata_client import ODataClient, split_path
 from successfactors_toolkit.services.pii_filter import (
     PiiUnknownTokenError,
     PiiVaultError,
+    TenantConfigInvalid,
     TenantEnvironmentUnset,
 )
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
-from successfactors_toolkit.services.tenant_store import TenantStore
+from successfactors_toolkit.services.tenant_store import TenantConfigError, TenantStore
 
 # Below this size a metadata summary is small enough to hand the model directly
 # instead of making it open the file — the usual case for a single entity.
@@ -181,6 +182,12 @@ def _pii_error(exc: Exception) -> dict[str, Any]:
             "error": "tenant_environment_unset",
             "company_id": exc.company_id,
             "detail": str(exc),
+        }
+    if isinstance(exc, TenantConfigInvalid):
+        return {
+            "error": "tenant_config_invalid",
+            "company_id": exc.company_id,
+            "detail": exc.detail,
         }
     if isinstance(exc, PiiUnknownTokenError):
         return {
@@ -536,46 +543,62 @@ def list_tenants() -> dict[str, Any]:
     instance configured in the server's own .env, reported here as "default".
     "plugins" reports each installed plugin and whether it loaded.
     "production" is the tenant's declared environment; odata_query and
-    ce_query refuse a tenant where it is null.
+    ce_query refuse a tenant where it is null or "config_error" is set.
     """
     settings = get_settings()
     store = TenantStore(settings.tenant_keys_dir)
     tenants = [
         {
             "company_id": t.company_id,
-            "host": settings.sf_host,
-            "odata_version": settings.sf_odata_version,
-            "technical_user": settings.sf_user_id,
+            **_tenant_settings(settings, store, t.company_id),
             "cert_expires": t.certificate.not_after.isoformat(),
             "cert_days_left": t.certificate.days_until_expiry,
-            "production": t.production,
-            "pii_filter_tier": pii_filter.tier_for(settings, t.production),
         }
         for t in store.list_tenants()
     ]
-    default_production = store.production(settings.sf_company_id)
+    default = {
+        "company_id": settings.sf_company_id,
+        **_tenant_settings(settings, store, settings.sf_company_id),
+    }
     out: dict[str, Any] = {
         "tenants": tenants,
-        "default": {
-            "company_id": settings.sf_company_id,
-            "host": settings.sf_host,
-            "odata_version": settings.sf_odata_version,
-            "production": default_production,
-            "pii_filter_tier": pii_filter.tier_for(settings, default_production),
-        },
+        "default": default,
         "keys_dir": settings.tenant_keys_dir,
         "plugins": _plugin_statuses(),
     }
-    unset = {t["company_id"] for t in tenants if t["production"] is None}
-    if settings.sf_company_id and default_production is None:
-        unset.add(settings.sf_company_id)
+    listed = [*tenants, default] if settings.sf_company_id else tenants
+    unset = {t["company_id"] for t in listed if t["production"] is None}
+    errors = {t["company_id"]: t["config_error"] for t in listed if "config_error" in t}
+    warnings = [f"Invalid {cid}/{cid}.json: {error}" for cid, error in sorted(errors.items())]
     if unset:
-        out["warnings"] = [
+        warnings.insert(
+            0,
             f"No production/test environment declared for {', '.join(sorted(unset))}: "
             "odata_query and ce_query refuse them until the admin creates "
-            "<company_id>/tenant.json under keys_dir."
-        ]
+            "<company_id>/<company_id>.json under keys_dir.",
+        )
+    if warnings:
+        out["warnings"] = warnings
     return out
+
+
+def _tenant_settings(settings, store: TenantStore, company_id: str) -> dict[str, Any]:
+    """A tenant's effective connection and PII settings ({company_id}.json, else SF_*)."""
+    out: dict[str, Any] = {"production": store.production(company_id), "pii_filter_tier": None}
+    try:
+        conn = store.connection(company_id)
+    except TenantConfigError as exc:
+        conn, out["config_error"] = {}, exc.detail
+    try:  # a file whose connection is invalid fails here too, with the full detail
+        out["pii_filter_tier"] = pii_filter.tier_for(settings, store.config(company_id))
+    except TenantConfigError as exc:
+        out["config_error"] = exc.detail
+    return {
+        "host": conn.get("host", settings.sf_host),
+        "odata_version": conn.get("odata_version", settings.sf_odata_version),
+        "technical_user": conn.get("user_id", settings.sf_user_id),
+        **out,
+    }
 
 
 _NAV_INLINE_CAP = 50

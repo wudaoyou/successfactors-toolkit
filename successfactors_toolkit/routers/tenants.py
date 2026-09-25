@@ -89,7 +89,7 @@ class TenantInfoDTO(BaseModel):
     certificate: CertMetadataDTO
     private_key: KeyMetadataDTO
     production: Optional[bool] = Field(
-        description="From tenant.json; null = unset, so the MCP data tools refuse the tenant.",
+        description="From <company_id>.json; null = unset, so the MCP data tools refuse the tenant.",
     )
 
 

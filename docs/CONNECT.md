@@ -51,7 +51,9 @@ you — see [Tenant management](#tenant-management) below.
 ## Environment variables
 
 See `.env.example` for a filled-in starting point and
-`successfactors_toolkit/config.py` for the authoritative field list.
+`successfactors_toolkit/config.py` for the authoritative field list. A
+tenant's `{company_id}.json` can override the connection and PII values per
+tenant; see [Per-tenant settings](#per-tenant-settings).
 
 | Variable | Description |
 |---|---|
@@ -115,20 +117,25 @@ cached SFAPI session or OData token for that `company_id`.
 ### Production or test
 
 Every tenant the MCP `odata_query` and `ce_query` tools read must say whether
-it is production, in `{TENANT_KEYS_DIR}/{company_id}/tenant.json`:
+it is production, in `{TENANT_KEYS_DIR}/{company_id}/{company_id}.json`
+(for example `tenants/demo/demo.json`):
 
 ```json
 {"production": true}
 ```
 
-`true` makes the tenant's PII tier 3, which `PII_FILTER_TIER` cannot lower;
-`false` makes it `PII_FILTER_TIER` (default 1). The value must be a JSON
-boolean. Without the file, or with any other content, those tools refuse the
-tenant with `tenant_environment_unset` before anything is sent to
-SuccessFactors. The host name is never used to guess. Replacing a key with
-`?force=true` keeps the file; deleting the tenant removes it. For the default
-tenant keyed from `SF_PRIVATE_KEY_PEM`, create the `{SF_COMPANY_ID}` folder
-holding only `tenant.json`; it is not listed as a registered tenant.
+`true` makes the tenant's PII tier 3, which nothing can lower; `false` makes
+it the file's `pii_filter_tier`, else `PII_FILTER_TIER` (default 1). The value
+must be a JSON boolean. Without the file, or without a boolean `production`,
+those tools refuse the tenant with `tenant_environment_unset` before anything
+is sent to SuccessFactors. The host name is never used to guess. Replacing a
+key with `?force=true` keeps the file; deleting the tenant removes it. For
+the default tenant keyed from `SF_PRIVATE_KEY_PEM`, create the
+`{SF_COMPANY_ID}` folder holding only `{SF_COMPANY_ID}.json`; it is not listed
+as a registered tenant.
+
+Version 0.3.3 named this file `tenant.json`. That name is no longer read:
+rename it to `{company_id}.json`. Until you do, the refusal's `detail` says so.
 
 For a registered tenant, set or change it through the API (`404` for an
 unknown tenant). The list and get responses carry `production` too (`null` =
@@ -140,4 +147,75 @@ curl -X PUT http://127.0.0.1:8000/api/tenants/demo/environment \
   -H "Content-Type: application/json" -d '{"production": false}'
 ```
 
-The REST data routes do not tokenize and do not check the flag.
+The `PUT` changes only `production`; the file's other keys and its file mode
+are kept. The REST data routes do not tokenize and do not check the flag.
+
+### Per-tenant settings
+
+The same file can hold the rest of a tenant's settings, so one server serves
+several tenants that differ in OAuth client, technical user, host or PII tier.
+Only `production` is required; every other key falls back to the environment:
+
+| Key | Falls back to | Notes |
+|---|---|---|
+| `production` | — | Required, `true` or `false`. |
+| `pii_filter_tier` | `PII_FILTER_TIER` | `0`–`3`, test tenants only. With `"production": true` it must be `3` or absent. |
+| `pii_extra_fields` | `PII_EXTRA_FIELDS` | Merged on top of the environment value, per entity and field; the file wins on the same field. |
+| `host` | `SF_HOST` | Set together with `token_url`. |
+| `token_url` | `SF_TOKEN_URL` | Set together with `host`. |
+| `client_key` | `SF_CLIENT_KEY` | |
+| `user_id` | `SF_USER_ID` | |
+| `odata_version` | `SF_ODATA_VERSION` | `v2` or `v4`. |
+
+```json
+{
+  "production": false,
+  "pii_filter_tier": 2,
+  "pii_extra_fields": {"PerPersonal": {"customString6": 2}},
+  "host": "api4preview.sapsf.com",
+  "token_url": "https://api4preview.sapsf.com/oauth/token",
+  "client_key": "<API key of this tenant's OAuth client>",
+  "user_id": "APIUSER",
+  "odata_version": "v2"
+}
+```
+
+- Precedence: a per-request connection override on the REST API, then the
+  file, then the environment. The MCP tools and the REST data routes all pick
+  the file up for the `company_id` they call; an empty `company_id` reads
+  `SF_COMPANY_ID`'s file.
+- The file is read on every call, so edits take effect without a restart.
+  Edit it by hand; the API only sets `production`.
+- `host` and `token_url` pass the same allowlist as request overrides
+  (`SF_HOST`, `SF_ALLOWED_HOSTS` or a SAP datacenter host).
+- An unknown key (a typo such as `pii_tier`) or a wrong value makes the file
+  invalid. `odata_query` and `ce_query` then refuse the tenant with
+  `{"error": "tenant_config_invalid", "company_id": ..., "detail": ...}`;
+  `detail` names the field. `list_tenants` shows the tenant with
+  `config_error` and a warning.
+- Calls that do not tokenize (`odata_metadata`, `compare_metadata`, the REST
+  data routes) still use the connection keys of a file that is otherwise
+  invalid or has no `production`. They fail only when a connection key itself
+  is invalid, such as a `host` without `token_url` or a host outside the
+  allowlist, instead of falling back to another tenant's environment values.
+- The private key stays in `sf_private_key_<company_id>.pem`; the file holds
+  no secrets.
+
+Example: two tenants with their own OAuth clients and tiers, one server:
+
+```text
+tenants/
+├── demo/
+│   ├── sf_private_key_demo.pem
+│   ├── sf_saml_signing_demo.crt
+│   └── demo.json          {"production": false, "client_key": "<demo client key>"}
+└── demo2/
+    ├── sf_private_key_demo2.pem
+    ├── sf_saml_signing_demo2.crt
+    └── demo2.json         {"production": false, "client_key": "<demo2 client key>", "pii_filter_tier": 2}
+```
+
+With `SF_COMPANY_ID=demo` and the shared `SF_HOST`, `SF_TOKEN_URL` and
+`SF_USER_ID` in the environment, `company_id=""` or `"demo"` uses demo's
+client key at the default tier, and `company_id="demo2"` uses demo2's client
+key at tier 2.

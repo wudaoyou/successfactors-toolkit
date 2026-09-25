@@ -34,6 +34,7 @@ from successfactors_toolkit.models.common import ODataConnectionConfig
 from successfactors_toolkit.services import saml_bearer
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError, check_host
 from successfactors_toolkit.services.credentials import load_key_pem
+from successfactors_toolkit.services.tenant_store import TenantStore
 
 _MUTATING = {"POST", "PATCH", "PUT", "DELETE"}
 # Caller-supplied headers may tune the request, but not these two: httpx sends a
@@ -169,21 +170,22 @@ class ODataClient:
     def _resolve(self, conn: ODataConnectionConfig | None) -> dict[str, Any]:
         # OData shares OAuth2 client + tenant key with SFAPI — both use the
         # same /oauth/token endpoint with the same SAML assertion. Per-request
-        # overrides via ODataConnectionConfig take precedence; otherwise we
-        # fall back to the SF_* settings (NOT SF_ODATA_* — those don't exist
-        # anymore, only SF_ODATA_VERSION is OData-specific).
+        # overrides via ODataConnectionConfig take precedence, then the
+        # tenant's {company_id}.json, then the SF_* settings (NOT SF_ODATA_* —
+        # those don't exist anymore, only SF_ODATA_VERSION is OData-specific).
         s = self._settings
         c = conn or ODataConnectionConfig()
         company_id = _eff(c.company_id, s.sf_company_id)
+        t = TenantStore(s.tenant_keys_dir).connection(company_id)
         return {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in the request base_url.
-            "host": check_host(_eff(c.host, s.sf_host), s),
-            "version": _eff(c.odata_version, s.sf_odata_version),
-            "client_key": _eff(c.client_key, s.sf_client_key),
-            "user_id": _eff(c.user_id, s.sf_user_id),
+            "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
+            "version": _eff(c.odata_version, t.get("odata_version", s.sf_odata_version)),
+            "client_key": _eff(c.client_key, t.get("client_key", s.sf_client_key)),
+            "user_id": _eff(c.user_id, t.get("user_id", s.sf_user_id)),
             "company_id": company_id,
-            "token_url": _eff(c.token_url, s.sf_token_url),
+            "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
             "csrf_protected": c.csrf_protected,
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
         }

@@ -115,7 +115,7 @@ def test_production_flag_round_trip(tmp_path):
     assert store.production("example-a") is True
     store.set_production("example-a", False)
     assert store.production("example-a") is False
-    flag = store.tenant_dir("example-a") / "tenant.json"
+    flag = store.tenant_dir("example-a") / "example-a.json"
     assert json.loads(flag.read_text()) == {"production": False}
     assert stat.S_IMODE(flag.stat().st_mode) == 0o644
 
@@ -126,13 +126,15 @@ def test_production_flag_round_trip(tmp_path):
 def test_production_flag_unset_forms_read_as_none(tmp_path, content):
     store = TenantStore(str(tmp_path / "tenants"))
     store.tenant_dir("example-a").mkdir(parents=True)
-    (store.tenant_dir("example-a") / "tenant.json").write_text(content)
+    (store.tenant_dir("example-a") / "example-a.json").write_text(content)
     assert store.production("example-a") is None
 
 
 def test_production_flag_ignores_ids_that_are_not_a_path_segment(tmp_path):
     store = TenantStore(str(tmp_path / "tenants"))
-    (tmp_path / "tenant.json").write_text('{"production": true}')
+    for flag in (tmp_path / ".json", tmp_path / "tenants" / ".json"):
+        flag.parent.mkdir(exist_ok=True)
+        flag.write_text('{"production": true}')
     assert store.production("../") is None and store.production("") is None
     with pytest.raises(InvalidCompanyId):
         store.set_production("../x", True)
@@ -215,3 +217,64 @@ def test_environment_route_rejects_unknown_tenant_bad_body_and_missing_key(monke
         assert client.put(url, headers=api_only, json={"production": True}).status_code == 401
         assert client.put(url, headers=admin, json={"production": "yes"}).status_code == 422
     assert not (tmp_path / "tenants" / "example-a").exists()
+
+
+def test_environment_route_keeps_other_keys_and_the_file_mode(monkeypatch, tmp_path, keypair):
+    admin = _admin_headers(monkeypatch)
+    store = TenantStore(str(tmp_path / "tenants"))
+    store.install("example-a", *keypair)
+    flag = store.tenant_dir("example-a") / "example-a.json"
+    flag.write_text('{"production": false, "client_key": "key-a", "pii_filter_tier": 3}')
+    flag.chmod(0o600)
+    with TestClient(app) as client:
+        response = client.put(
+            "/api/tenants/example-a/environment", headers=admin, json={"production": True}
+        )
+    assert response.status_code == 200 and response.json()["production"] is True
+    assert json.loads(flag.read_text()) == {
+        "production": True,
+        "client_key": "key-a",
+        "pii_filter_tier": 3,
+    }
+    assert stat.S_IMODE(flag.stat().st_mode) == 0o600
+
+
+def test_mcp_list_tenants_reports_effective_settings_and_config_errors(
+    monkeypatch, tmp_path, keypair
+):
+    monkeypatch.setenv("SF_USER_ID", "ENVUSER")
+    get_settings.cache_clear()
+    store = TenantStore(str(tmp_path / "tenants"))
+    for company_id in ("example-a", "example-b", "example-c"):
+        store.install(company_id, *keypair)
+    (store.tenant_dir("example-a") / "example-a.json").write_text(
+        json.dumps(
+            {
+                "production": False,
+                "pii_filter_tier": 2,
+                "host": "api4preview.sapsf.com",
+                "token_url": "https://api4preview.sapsf.com/oauth/token",
+                "user_id": "FILEUSER",
+            }
+        )
+    )
+    store.set_production("example-b", True)
+    (store.tenant_dir("example-c") / "example-c.json").write_text(
+        '{"production": false, "host": "api4preview.sapsf.com"}'
+    )
+    result = mcp_server.list_tenants()
+    a, b, c = result["tenants"]
+    assert (a["host"], a["technical_user"], a["production"], a["pii_filter_tier"]) == (
+        "api4preview.sapsf.com",
+        "FILEUSER",
+        False,
+        2,
+    )
+    assert (b["host"], b["technical_user"], b["pii_filter_tier"]) == (
+        "api.example.invalid",
+        "ENVUSER",
+        3,
+    )
+    assert "config_error" not in a and "config_error" not in b
+    assert "token_url" in c["config_error"] and c["pii_filter_tier"] is None
+    assert any("example-c" in w and "token_url" in w for w in result["warnings"])
