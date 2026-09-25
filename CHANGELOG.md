@@ -4,6 +4,21 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Fixed
+
+- `odata_query` no longer adds `paging=snapshot` to a multi-page read that
+  has `$top` or `$skip`. SuccessFactors rejects the combination
+  (`COE_SNAPSHOT_BAD_REQUEST`), so such a query failed with HTTP 400.
+
+### Security
+
+- Login names are now tier 2 PII: `User.username` in OData and
+  `person.logon_user_name` in Compound Employee. Tenants often set them to
+  the work email.
+- The Docker guide explains that a `pii_vault_unavailable` "owned by another
+  user" error means the vault is a mounted host folder, and points to the
+  named volume.
+
 ## [0.3.1] - 2026-09-24
 
 ### Changed

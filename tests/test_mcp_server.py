@@ -722,6 +722,39 @@ def test_odata_query_does_not_override_paging_given_in_path(monkeypatch, tmp_pat
     assert "paging" not in odata.extract_calls[0][2]
 
 
+@pytest.mark.parametrize(
+    "path, params",
+    [
+        ("EmpJob", {"$top": "5"}),
+        ("EmpJob", {"$skip": "10"}),
+        ("EmpJob?$top=5", None),
+    ],
+)
+def test_odata_query_does_not_add_snapshot_paging_with_top_or_skip(
+    monkeypatch, tmp_path, path, params
+):
+    # SF rejects paging=snapshot together with $top or $skip
+    # (COE_SNAPSHOT_BAD_REQUEST), and that error isn't a paging rejection the
+    # retry recognises — so the query would fail outright.
+    odata = _install_keyed(
+        monkeypatch,
+        tmp_path,
+        {
+            "stopped_reason": "exhausted",
+            "total_records": 1,
+            "pages_fetched": 1,
+            "next_skiptoken": None,
+            "results": [{"userId": "1", "startDate": "d"}],
+            "last_page_size": 1,
+        },
+    )
+
+    result = asyncio.run(mcp_server.odata_query(path=path, params=params))
+
+    assert "paging_added" not in result
+    assert "paging" not in odata.extract_calls[0][2]
+
+
 def test_odata_query_does_not_add_paging_for_a_single_page_request(monkeypatch, tmp_path):
     odata = _install_keyed(
         monkeypatch,

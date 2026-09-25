@@ -57,8 +57,8 @@ plaintext stays in a local vault under `PII_VAULT_DIR`.
 - Binary content (photos, document scans) becomes `[PII-T<n>-REDACTED]`.
 - Tiers are cumulative: tier 1 covers national IDs, passports, work permits,
   bank accounts and credentials. Tier 2 adds birth dates, home address,
-  contact data on Per* entities (all emails and phones), nationality,
-  race/ethnicity, disability and veteran status. Tier 3 adds names, gender,
+  contact data on Per* entities (all emails and phones), login names,
+  nationality, race/ethnicity, disability and veteran status. Tier 3 adds names, gender,
   marital status, photos and User-entity contact fields (email, business
   phone, cell phone). The full map is in
   `successfactors_toolkit/services/pii_filter.py`. Relabeled custom fields go

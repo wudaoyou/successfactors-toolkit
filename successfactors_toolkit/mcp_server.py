@@ -689,8 +689,8 @@ async def odata_query(
     entity's key properties (reported as `orderby_added`) so $skip paging
     can't duplicate or skip rows; if keys are unknown or unsortable, or SF
     rejects it, the query runs without and a warning says so — then pass
-    $orderby yourself. Same condition also adds paging=snapshot for
-    server-side paging (reported as `paging_added`); if SF rejects it for
+    $orderby yourself. Same condition, without $top/$skip, also adds
+    paging=snapshot (reported as `paging_added`); if SF rejects it for
     that entity, the retry drops it and warns. Rows are checked for
     duplicate keys when every key field is in the records (`duplicate_records`
     + warning if found). A final page exactly $top-sized with no __next gets
@@ -740,7 +740,8 @@ async def odata_query(
                     "be determined from $metadata; paged results may contain duplicated "
                     "or skipped rows. Pass $orderby explicitly to avoid this."
                 )
-        if "paging" not in merged_view:
+        # SF rejects paging=snapshot together with $top or $skip.
+        if "paging" not in merged_view and not {"$top", "$skip"} & merged_view.keys():
             paging_added = "snapshot"
             query_params["paging"] = paging_added
 

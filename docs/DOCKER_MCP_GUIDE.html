@@ -575,7 +575,10 @@ Docker.” Check <code>sf-toolkit/data/mcp</code>.</td>
 from it yet, IT can remove it with <code>docker volume rm
 sf-toolkit-pii-vault</code> and reopen the AI application; Docker recreates
 it with the right permissions. Don't remove a vault that has been used —
-its tokens can't be revealed afterwards.</td>
+its tokens can't be revealed afterwards. If the detail says the vault is
+owned by another user, the vault is a host folder mounted into the
+container, which Docker Desktop reports as root-owned; use the named volume
+from the setup section instead.</td>
 </tr>
 </tbody>
 </table>
@@ -968,7 +971,8 @@ sf-toolkit/data/mcp。</td>
 <td>请 IT 检查 PII 保险库卷。如果还没有从中还原过任何报告，IT 可以用
 <code>docker volume rm sf-toolkit-pii-vault</code> 删除它并重新打开 AI
 应用，Docker 会以正确的权限重新创建；不要删除已经使用过的保险库——其中的
-token 之后将无法还原。</td>
+token 之后将无法还原。如果详情显示保险库属于其他用户，说明保险库是挂载进容器的主机文件夹，
+Docker Desktop 会把它显示为 root 所有；请改用安装部分中的命名卷。</td>
 </tr>
 </tbody>
 </table>
