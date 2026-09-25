@@ -665,7 +665,7 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
 <code>501:20</code>.</p>
 <pre class="yaml"><code>services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.4.0
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.4.0@sha256:88937b4917ba461aa19e9a3edc692f97153e735fb7650dbb3ce7904ddb78ae23
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
@@ -1085,7 +1085,7 @@ AI 应用中验证。</p>
 文件；用获准的配置替换所有示例值，并在交付前完成小范围查询测试。</p>
 <details><summary>展开连接参数与可复制配置</summary><h3 id="zh-一准备-docker-镜像">一、配置 Docker Compose</h3><p>使用 Docker Compose 2.30.0 或更新版本。创建 <code>~/sf-toolkit</code>，将以下内容保存为其中的 <code>compose.yaml</code>。把 <code>YOUR_UID:YOUR_GID</code> 替换为 <code>id -u</code> 与 <code>id -g</code> 的输出，例如 <code>501:20</code>。</p><pre class="yaml"><code>services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.4.0
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.4.0@sha256:88937b4917ba461aa19e9a3edc692f97153e735fb7650dbb3ce7904ddb78ae23
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
