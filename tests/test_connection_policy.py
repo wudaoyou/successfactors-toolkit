@@ -17,7 +17,7 @@ from successfactors_toolkit.services.connection_policy import (
     check_key_path,
     check_token_url,
 )
-from successfactors_toolkit.services.odata_client import ODataClient
+from successfactors_toolkit.services.odata_client import ODataClient, api_url
 
 
 @pytest.fixture
@@ -306,3 +306,43 @@ def test_odata_request_preserves_v4(settings):
     asyncio.run(client.request("GET", "User", conn=ODataConnectionConfig(odata_version="v4")))
 
     assert http.url == "https://api.example.invalid/odata/v4/User"
+
+
+def test_api_url_builds_under_a_custom_prefix():
+    assert (
+        api_url("t1.example.invalid", "/api/v1/", "Things")
+        == "https://t1.example.invalid/api/v1/Things"
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../oauth/token",
+        "%2e%2e/oauth/token",
+        "%252e%252e/x",
+        "https://evil.example/x",
+        "a\\b",
+        "..;/oauth/token",
+        "x/..;/y",
+        "%2e%2e;/oauth/token",
+        "..%3b/oauth/token",
+        "%2525252e%2525252e/x",
+    ],
+)
+def test_api_url_refuses_paths_that_leave_the_prefix(path):
+    with pytest.raises(ConnectionPolicyError):
+        api_url("t1.example.invalid", "/api/v1/", path)
+
+
+@pytest.mark.parametrize("prefix", ["/api/v1", "api/v1/"])
+def test_api_url_refuses_prefix_not_bounded_by_slashes(prefix):
+    with pytest.raises(ConnectionPolicyError):
+        api_url("t1.example.invalid", prefix, "Things")
+
+
+def test_api_url_allows_a_semicolon_that_is_not_a_dot_segment():
+    assert (
+        api_url("t1.example.invalid", "/api/v1/", "Things;v=1")
+        == "https://t1.example.invalid/api/v1/Things;v=1"
+    )

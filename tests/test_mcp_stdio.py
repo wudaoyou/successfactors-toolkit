@@ -49,5 +49,6 @@ def test_mcp_stdio_initialization_discovery_and_tenant_call(tmp_path, request_ti
                 result = await session.call_tool("list_tenants", {})
                 assert not result.is_error
                 assert result.structured_content["tenants"] == []
+                assert result.structured_content["plugins"] == {}
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=max(30, 2 * request_timeout_seconds)))
