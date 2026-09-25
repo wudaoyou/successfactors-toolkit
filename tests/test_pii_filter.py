@@ -419,6 +419,21 @@ def test_ce_uses_nearest_mapped_ancestor_segment(tmp_path):
     assert "<city>Plant City</city>" in out
 
 
+def test_login_name_is_tier_two_in_ce_and_odata(tmp_path):
+    # Tenants often set the login name to the work email.
+    xml = _ce("<logon_user_name>ann@example.com</logon_user_name>")
+    user = {**_meta("User"), "userId": "u1", "username": "ann@example.com"}
+    out1, count1 = _filter(tmp_path, tier=1).tokenize_xml(xml)
+    [rec1], _ = _filter(tmp_path, tier=1).tokenize_records([user])
+    assert count1 == 0 and "ann@example.com" in out1
+    assert rec1["username"] == "ann@example.com"
+    out2, count2 = _filter(tmp_path, tier=2).tokenize_xml(xml)
+    [rec2], _ = _filter(tmp_path, tier=2).tokenize_records([user])
+    assert count2 == 1 and "ann@example.com" not in out2
+    assert _TOKEN.fullmatch(rec2["username"]).group(1) == "2"
+    assert rec2["userId"] == "u1"
+
+
 def test_ce_empty_elements_are_left_alone(tmp_path):
     out, count = _filter(tmp_path).tokenize_xml(
         _ce("<national_id_card><national_id/></national_id_card>")

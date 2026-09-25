@@ -98,7 +98,7 @@ docker compose run --rm -T mcp \
 | No matching records | Confirm the environment, employee identifier, effective date, and permitted data scope. |
 | CSV or custom-folder save unavailable | Ask IT to enable approved local file tools and access to the destination folder in your AI application. |
 | The AI reports a file but you cannot find it | Ask: “Give me the file path on my computer, not the path inside Docker.” Check `sf-toolkit/data/mcp`. |
-| Results say `pii_vault_unavailable` | Ask IT to check the PII vault volume. If no report has been revealed from it yet, IT can remove it with `docker volume rm sf-toolkit-pii-vault` and reopen the AI application; Docker recreates it with the right permissions. Don't remove a vault that has been used — its tokens can't be revealed afterwards. |
+| Results say `pii_vault_unavailable` | Ask IT to check the PII vault volume. If no report has been revealed from it yet, IT can remove it with `docker volume rm sf-toolkit-pii-vault` and reopen the AI application; Docker recreates it with the right permissions. Don't remove a vault that has been used — its tokens can't be revealed afterwards. If the detail says the vault is owned by another user, the vault is a host folder mounted into the container, which Docker Desktop reports as root-owned; use the named volume from the setup section instead. |
 
 ## Three-minute walkthrough
 
@@ -126,7 +126,7 @@ Start Docker Desktop or your local Docker service with Docker Compose 2.30.0 or 
 ```yaml
 services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.1
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.2
     command: ["python", "-m", "successfactors_toolkit.mcp_server"]
     user: "YOUR_UID:YOUR_GID"
     stdin_open: true

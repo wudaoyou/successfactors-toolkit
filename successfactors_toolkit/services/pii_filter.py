@@ -177,6 +177,8 @@ _BUILTIN_MAP: dict[str, dict[str, int]] = {
             "zipCode",
             "ethnicity",
             "Disability",
+            # Often the work email.
+            "username",
         ),
         **_fields(
             3,
@@ -232,7 +234,15 @@ _BUILTIN_MAP: dict[str, dict[str, int]] = {
     # Compound Employee segments.
     "national_id_card": _fields(1, "national_id"),
     "personal_documents_information": _fields(1, "document_number"),
-    "person": _fields(2, "date_of_birth", "place_of_birth", "country_of_birth", "date_of_death"),
+    "person": _fields(
+        2,
+        "date_of_birth",
+        "place_of_birth",
+        "country_of_birth",
+        "date_of_death",
+        # Often the work email.
+        "logon_user_name",
+    ),
     "personal_information": {
         **_fields(2, "nationality", "second_nationality"),
         **_fields(

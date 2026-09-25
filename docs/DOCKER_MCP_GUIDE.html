@@ -575,7 +575,10 @@ Docker.” Check <code>sf-toolkit/data/mcp</code>.</td>
 from it yet, IT can remove it with <code>docker volume rm
 sf-toolkit-pii-vault</code> and reopen the AI application; Docker recreates
 it with the right permissions. Don't remove a vault that has been used —
-its tokens can't be revealed afterwards.</td>
+its tokens can't be revealed afterwards. If the detail says the vault is
+owned by another user, the vault is a host folder mounted into the
+container, which Docker Desktop reports as root-owned; use the named volume
+from the setup section instead.</td>
 </tr>
 </tbody>
 </table>
@@ -650,7 +653,7 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
 <code>501:20</code>.</p>
 <pre class="yaml"><code>services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.1
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.2
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
@@ -968,7 +971,8 @@ sf-toolkit/data/mcp。</td>
 <td>请 IT 检查 PII 保险库卷。如果还没有从中还原过任何报告，IT 可以用
 <code>docker volume rm sf-toolkit-pii-vault</code> 删除它并重新打开 AI
 应用，Docker 会以正确的权限重新创建；不要删除已经使用过的保险库——其中的
-token 之后将无法还原。</td>
+token 之后将无法还原。如果详情显示保险库属于其他用户，说明保险库是挂载进容器的主机文件夹，
+Docker Desktop 会把它显示为 root 所有；请改用安装部分中的命名卷。</td>
 </tr>
 </tbody>
 </table>
@@ -1023,7 +1027,7 @@ AI 应用中验证。</p>
 文件；用获准的配置替换所有示例值，并在交付前完成小范围查询测试。</p>
 <details><summary>展开连接参数与可复制配置</summary><h3 id="zh-一准备-docker-镜像">一、配置 Docker Compose</h3><p>使用 Docker Compose 2.30.0 或更新版本。创建 <code>~/sf-toolkit</code>，将以下内容保存为其中的 <code>compose.yaml</code>。把 <code>YOUR_UID:YOUR_GID</code> 替换为 <code>id -u</code> 与 <code>id -g</code> 的输出，例如 <code>501:20</code>。</p><pre class="yaml"><code>services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.1
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.3.2
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
