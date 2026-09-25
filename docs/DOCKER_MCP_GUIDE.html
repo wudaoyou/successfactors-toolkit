@@ -572,10 +572,16 @@ Docker.” Check <code>sf-toolkit/data/mcp</code>.</td>
 <tr class="even">
 <td>Results say <code>tenant_environment_unset</code></td>
 <td>The environment has not been declared as production or test, so
-queries are refused. Ask IT to create <code>tenant.json</code> for that
-company ID (setup step B).</td>
+queries are refused. Ask IT to create <code>&lt;company ID&gt;.json</code>
+for that company ID (setup step B).</td>
 </tr>
 <tr class="odd">
+<td>Results say <code>tenant_config_invalid</code></td>
+<td>The environment’s settings file has a wrong or misspelled entry, so
+queries are refused. Ask IT to fix the field named in the message (setup
+step B).</td>
+</tr>
+<tr class="even">
 <td>Results say <code>pii_vault_unavailable</code></td>
 <td>Ask IT to check the PII vault volume. If no report has been revealed
 from it yet, IT can remove it with <code>docker volume rm
@@ -715,7 +721,7 @@ ID consistently in folder names, filenames, and configuration.</p>
 │       └── demo/
 │           ├── sf_private_key_demo.pem
 │           ├── sf_saml_signing_demo.crt
-│           └── tenant.json
+│           └── demo.json
 └── data/
     └── mcp/                      # Created on the first export</code></pre>
 <p>Place your matching PEM private key and X.509 certificate in this
@@ -733,13 +739,36 @@ files match and the certificate is valid.</p>
 <code>tenants</code> read-only, so create the file on the host, with
 <code>true</code> for production or <code>false</code> for a test
 environment:</p>
-<pre class="sh"><code>printf &#39;{&quot;production&quot;: true}\n&#39; &gt; &quot;$HOME/sf-toolkit/credentials/tenants/demo/tenant.json&quot;</code></pre>
+<pre class="sh"><code>printf &#39;{&quot;production&quot;: true}\n&#39; &gt; &quot;$HOME/sf-toolkit/credentials/tenants/demo/demo.json&quot;</code></pre>
 <p>A production environment always gets the strictest PII tokenization
 (tier 3, names included), whatever <code>PII_FILTER_TIER</code> says. A
 test environment uses <code>PII_FILTER_TIER</code>. Without this file,
 <code>odata_query</code> and <code>ce_query</code> refuse the environment
 with <code>tenant_environment_unset</code>. The value must be
-<code>true</code> or <code>false</code> without quotes.</p>
+<code>true</code> or <code>false</code> without quotes. Version 0.3.3
+called this file <code>tenant.json</code>; rename an existing one to
+<code>demo.json</code>, since the old name is no longer read.</p>
+<p>The same file can also hold settings that differ per environment:
+<code>client_key</code>, <code>user_id</code>, <code>host</code> with
+<code>token_url</code>, <code>odata_version</code>,
+<code>pii_filter_tier</code> (test environments only) and
+<code>pii_extra_fields</code>. Each one replaces the matching
+<code>sf.env</code> value for that company ID only. A misspelled or wrong
+entry makes the queries refuse the environment with
+<code>tenant_config_invalid</code>, naming the field. See <a
+href="CONNECT.md#per-tenant-settings">Per-tenant settings</a> for the full
+list.</p>
+<p>One MCP server can serve several environments this way. For a second
+environment <code>demo2</code> that uses its own OAuth client and tier 2,
+add a folder next to <code>demo</code> with its key, certificate and
+settings file; no second compose service is needed:</p>
+<pre class="sh"><code>mkdir -p &quot;$HOME/sf-toolkit/credentials/tenants/demo2&quot;
+# Add sf_private_key_demo2.pem and sf_saml_signing_demo2.crt, then:
+printf &#39;{&quot;production&quot;: false, &quot;client_key&quot;: &quot;DEMO2_OAUTH_CLIENT_API_KEY&quot;, &quot;pii_filter_tier&quot;: 2}\n&#39; \
+  &gt; &quot;$HOME/sf-toolkit/credentials/tenants/demo2/demo2.json&quot;</code></pre>
+<p>The AI then passes <code>company_id=&quot;demo2&quot;</code> to reach it;
+<code>list_tenants</code> shows both environments with their effective
+settings.</p>
 <p>Create <code>~/sf-toolkit/credentials/sf.env</code> with your
 connection settings:</p>
 <pre class="dotenv"><code>SF_HOST=your-api-host.sapsf.com
@@ -988,9 +1017,14 @@ sf-toolkit/data/mcp。</td>
 <tr class="even">
 <td>结果显示 <code>tenant_environment_unset</code></td>
 <td>尚未声明该环境是生产还是测试，因此查询被拒绝。请 IT 为该公司 ID 创建
-<code>tenant.json</code>（见安装步骤二）。</td>
+<code>&lt;公司 ID&gt;.json</code>（见安装步骤二）。</td>
 </tr>
 <tr class="odd">
+<td>结果显示 <code>tenant_config_invalid</code></td>
+<td>该环境的设置文件中有写错或拼错的项，因此查询被拒绝。请 IT
+修正消息中指出的字段（见安装步骤二）。</td>
+</tr>
+<tr class="even">
 <td>结果显示 <code>pii_vault_unavailable</code></td>
 <td>请 IT 检查 PII 保险库卷。如果还没有从中还原过任何报告，IT 可以用
 <code>docker volume rm sf-toolkit-pii-vault</code> 删除它并重新打开 AI
@@ -1103,7 +1137,7 @@ ID，目录名、文件名和配置中的 ID 要一致。</p>
 │       └── demo/
 │           ├── sf_private_key_demo.pem
 │           ├── sf_saml_signing_demo.crt
-│           └── tenant.json
+│           └── demo.json
 └── data/
     └── mcp/                      ← 首次导出时自动创建</code></pre>
 <p>将已有的、相互匹配的 PEM 私钥与 X.509
@@ -1117,12 +1151,29 @@ SuccessFactors</strong>，使用 <code>scripts/generate-keypair.sh</code>
 <p>声明该环境是否为生产环境。容器以只读方式挂载 <code>tenants</code>，
 因此请在主机上创建该文件：生产环境写 <code>true</code>，测试环境写
 <code>false</code>：</p>
-<pre class="sh"><code>printf '{"production": true}\n' &gt; "$HOME/sf-toolkit/credentials/tenants/demo/tenant.json"</code></pre>
+<pre class="sh"><code>printf '{"production": true}\n' &gt; "$HOME/sf-toolkit/credentials/tenants/demo/demo.json"</code></pre>
 <p>生产环境始终使用最严格的 PII 脱敏（第 3 层，包括姓名），不受
 <code>PII_FILTER_TIER</code> 影响；测试环境使用
 <code>PII_FILTER_TIER</code>。缺少该文件时，<code>odata_query</code> 和
 <code>ce_query</code> 会以 <code>tenant_environment_unset</code>
-拒绝查询。值必须是不带引号的 <code>true</code> 或 <code>false</code>。</p>
+拒绝查询。值必须是不带引号的 <code>true</code> 或 <code>false</code>。0.3.3
+版本中该文件名为 <code>tenant.json</code>，旧文件名已不再读取，请将已有文件改名为
+<code>demo.json</code>。</p>
+<p>同一文件还可以写入各环境不同的设置：<code>client_key</code>、<code>user_id</code>、<code>host</code>
+与 <code>token_url</code>（须同时设置）、<code>odata_version</code>、<code>pii_filter_tier</code>（仅限测试环境）和
+<code>pii_extra_fields</code>。每一项只替换该公司 ID 对应的
+<code>sf.env</code> 值。若有拼错或取值错误的项，查询会以
+<code>tenant_config_invalid</code> 拒绝该环境，并指出出错字段。完整列表见
+<a href="CONNECT.md#per-tenant-settings">Per-tenant settings</a>。</p>
+<p>这样一个 MCP 服务即可服务多个环境。例如第二个环境 <code>demo2</code>
+使用自己的 OAuth 客户端和第 2 层脱敏，只需在 <code>demo</code>
+旁边新建一个目录，放入其私钥、证书和设置文件，无需第二个 compose 服务：</p>
+<pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo2"
+# 放入 sf_private_key_demo2.pem 和 sf_saml_signing_demo2.crt，然后：
+printf '{"production": false, "client_key": "DEMO2_OAUTH_CLIENT_API_KEY", "pii_filter_tier": 2}\n' \
+  &gt; "$HOME/sf-toolkit/credentials/tenants/demo2/demo2.json"</code></pre>
+<p>之后 AI 传入 <code>company_id="demo2"</code> 即可访问该环境；<code>list_tenants</code>
+会列出两个环境及各自生效的设置。</p>
 <p>在 <code>~/sf-toolkit/credentials/sf.env</code> 中填写：</p>
 <pre class="dotenv"><code>SF_HOST=your-api-host.sapsf.com
 SF_CLIENT_KEY=REPLACE_WITH_OAUTH_CLIENT_API_KEY

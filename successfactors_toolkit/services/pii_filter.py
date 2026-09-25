@@ -25,7 +25,11 @@ from urllib.parse import quote, quote_plus
 
 from lxml import etree
 
-from successfactors_toolkit.services.tenant_store import TenantStore
+from successfactors_toolkit.services.tenant_store import (
+    TenantConfig,
+    TenantConfigError,
+    TenantStore,
+)
 
 _KEY_BYTES = 32
 _HEX_LEN = 16
@@ -51,13 +55,28 @@ class TenantEnvironmentUnset(PiiVaultError):
     A PiiVaultError subclass: every `except PiiVaultError` site that answers
     with pii_error, plugins included, refuses the call without changes."""
 
-    def __init__(self, company_id: str):
+    def __init__(self, company_id: str, legacy_flag: bool = False):
         super().__init__(
-            f"Declare whether this tenant is production: create {company_id}/tenant.json "
+            f"Declare whether this tenant is production: create {company_id}/{company_id}.json "
             'under TENANT_KEYS_DIR containing {"production": true} or {"production": false}, '
             f"or PUT that body to /api/tenants/{company_id}/environment."
+            + (
+                f" {company_id}/tenant.json is no longer read: rename it to {company_id}.json."
+                if legacy_flag
+                else ""
+            )
         )
         self.company_id = company_id
+
+
+class TenantConfigInvalid(PiiVaultError):
+    """The tenant's {company_id}.json declares production but another value is
+    invalid. A PiiVaultError subclass, refused like TenantEnvironmentUnset."""
+
+    def __init__(self, company_id: str, detail: str):
+        super().__init__(f"Invalid {company_id}/{company_id}.json: {detail}")
+        self.company_id = company_id
+        self.detail = detail
 
 
 def _secure(path: Path, mode: int, *, regular_file: bool) -> None:
@@ -406,25 +425,35 @@ class PiiFilter:
         return etree.tostring(root, encoding="unicode"), count
 
 
-def tier_for(settings, production: bool | None) -> int | None:
-    """Production is tier 3 whatever PII_FILTER_TIER says; test is
-    PII_FILTER_TIER; unset (None) has no tier."""
-    if production is None:
+def tier_for(settings, config: TenantConfig | None) -> int | None:
+    """Production is tier 3 whatever PII_FILTER_TIER says; test is the file's
+    pii_filter_tier, else PII_FILTER_TIER; unset (None) has no tier."""
+    if config is None:
         return None
-    return 3 if production else settings.pii_filter_tier
+    if config.production:
+        return 3
+    return settings.pii_filter_tier if config.pii_filter_tier is None else config.pii_filter_tier
 
 
 def for_tenant(settings, company_id: str) -> PiiFilter | None:
     """The filter for a tenant ("" = SF_COMPANY_ID), or None for a test tenant
     at tier 0. Raises TenantEnvironmentUnset when the tenant has not declared
-    production or test."""
+    production or test, TenantConfigInvalid when its file is invalid."""
     company_id = company_id or settings.sf_company_id
-    tier = tier_for(settings, TenantStore(settings.tenant_keys_dir).production(company_id))
-    if tier is None:
-        raise TenantEnvironmentUnset(company_id)
+    store = TenantStore(settings.tenant_keys_dir)
+    try:
+        config = store.config(company_id)
+    except TenantConfigError as exc:
+        raise TenantConfigInvalid(company_id, exc.detail) from exc
+    if config is None:
+        raise TenantEnvironmentUnset(company_id, store.has_legacy_flag(company_id))
+    tier = tier_for(settings, config)
     if not tier:
         return None
-    return PiiFilter(tier, settings.pii_extra_fields, Vault(settings.pii_vault_dir))
+    extra = {entity: dict(fields) for entity, fields in settings.pii_extra_fields.items()}
+    for entity, fields in config.pii_extra_fields.items():
+        extra.setdefault(entity, {}).update(fields)
+    return PiiFilter(tier, extra, Vault(settings.pii_vault_dir))
 
 
 # A token as the model may write it: literal brackets or percent-encoded.

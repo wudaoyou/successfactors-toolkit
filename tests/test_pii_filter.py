@@ -405,7 +405,7 @@ def test_for_tenant_unset_raises_before_touching_the_vault(monkeypatch, tmp_path
     with pytest.raises(TenantEnvironmentUnset) as caught:
         for_tenant(settings, "example-a")
     assert caught.value.company_id == "example-a"
-    assert "example-a/tenant.json" in str(caught.value)
+    assert "example-a/example-a.json" in str(caught.value)
     assert not (tmp_path / "vault").exists()
 
 
