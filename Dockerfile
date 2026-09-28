@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+# MCP Registry ownership check: must equal "name" in server.json.
+LABEL io.modelcontextprotocol.server.name="io.github.wudaoyou/successfactors-toolkit"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 WORKDIR /app

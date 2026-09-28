@@ -4,6 +4,14 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-28
+
+### Added
+
+- `server.json` and the Docker image label
+  `io.modelcontextprotocol.server.name` for listing the MCP server in the
+  MCP Registry as `io.github.wudaoyou/successfactors-toolkit`.
+
 ## [0.4.0] - 2026-09-25
 
 ### Changed (breaking)
