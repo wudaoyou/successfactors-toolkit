@@ -303,9 +303,35 @@ def test_odata_request_preserves_v4(settings):
     resolved = client._resolve(ODataConnectionConfig(odata_version="v4"))
     client._tokens[client._token_key(resolved)] = ("tok", float("inf"))
 
-    asyncio.run(client.request("GET", "User", conn=ODataConnectionConfig(odata_version="v4")))
+    asyncio.run(
+        client.request(
+            "GET",
+            "talent/cdp/Learning.svc/v1/Items",
+            conn=ODataConnectionConfig(odata_version="v4"),
+        )
+    )
 
-    assert http.url == "https://api.example.invalid/odata/v4/User"
+    assert http.url == "https://api.example.invalid/odatav4/talent/cdp/Learning.svc/v1/Items"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "User",
+        "$metadata",
+        "talent/cdp/Learning.svc/v1/../../../../oauth/token",
+        "Learning.svc/%2e%2e/%2e%2e/oauth/token",
+        "https://evil.invalid/x.svc/v1/Items",
+    ],
+)
+def test_odata_v4_request_needs_a_service_root_inside_odatav4(settings, path):
+    http = _RecordingHTTPClient()
+    client = ODataClient(settings, http)
+
+    with pytest.raises(ConnectionPolicyError):
+        asyncio.run(client.request("GET", path, conn=ODataConnectionConfig(odata_version="v4")))
+
+    assert http.url == ""
 
 
 def test_api_url_builds_under_a_custom_prefix():

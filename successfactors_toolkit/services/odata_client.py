@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -46,6 +47,12 @@ _TOKEN_EXPIRY_SLACK_SECONDS = 60
 _MAX_RETRIES = 3
 _MAX_RETRY_AFTER_SECONDS = 300.0
 _ODATA_VERSIONS = {"v2", "v4"}
+# Full metadata puts "@odata.type" on every record, which the MCP PII filter
+# needs to apply its entity-specific rules; MaxVersion keeps the server on
+# 4.0 annotation names ("@odata.type", not 4.01's bare "@type").
+_V4_JSON_HEADERS = {"Accept": "application/json;odata.metadata=full", "OData-MaxVersion": "4.0"}
+# Paging options a v4 @odata.nextLink may carry; only these are taken from it.
+_V4_PAGING = ("$skiptoken", "$skip", "$top")
 
 
 def _eff(override: str | None, default: str) -> str:
@@ -88,18 +95,19 @@ def split_path_query(path: str) -> tuple[str, dict[str, str]]:
 _MAX_FILTER_ENCODED_LEN = 1800
 
 
-def _in_clause(column: str, values: list[str]) -> str:
+def _in_clause(column: str, values: list[str], v4: bool = False) -> str:
     """Build ``column in 'v1','v2',...`` — confirmed working on EmpJob,
     BenefitEnrollment and nav paths without the parenthesised `in (...)` form
-    the dev guide's grammar suggests (that form 400s). OData literal escaping
+    the dev guide's grammar suggests (that form 400s on v2). v4 uses the
+    standard OData 4.01 ``column in ('v1','v2')``. OData literal escaping
     doubles an embedded single quote.
     """
-    escaped = (v.replace("'", "''") for v in values)
-    return f"{column} in " + ",".join(f"'{v}'" for v in escaped)
+    escaped = ",".join(f"'{v}'" for v in (v.replace("'", "''") for v in values))
+    return f"{column} in ({escaped})" if v4 else f"{column} in {escaped}"
 
 
-def _combined_filter(base_filter: str, column: str, values: list[str]) -> str:
-    in_clause = _in_clause(column, values)
+def _combined_filter(base_filter: str, column: str, values: list[str], v4: bool = False) -> str:
+    in_clause = _in_clause(column, values, v4)
     return f"({base_filter}) and ({in_clause})" if base_filter else in_clause
 
 
@@ -152,10 +160,33 @@ def api_url(host: str, prefix: str, path: str) -> str:
     return str(url)
 
 
+def v4_service_root(path: str) -> tuple[str, str]:
+    """Split an OData v4 path (no query) at its service root: SF serves each
+    v4 API as its own service, ``<module path>/<Name>.svc/v1``, so
+    "talent/cdp/Learning.svc/v1/Items('1')" -> ("talent/cdp/Learning.svc/v1",
+    "Items('1')"). A version segment (v1, v2, ...) after ``.svc`` belongs to the
+    root. Raises ConnectionPolicyError for a path without a ``.svc`` segment."""
+    segments = path.lstrip("/").split("/")
+    for index, segment in enumerate(segments):
+        if segment.endswith(".svc"):
+            end = index + 1
+            if end < len(segments) and re.fullmatch(r"v\d+", segments[end]):
+                end += 1
+            return "/".join(segments[:end]), "/".join(segments[end:])
+    raise ConnectionPolicyError(
+        "OData v4 paths start at the API's service root, e.g. "
+        "'talent/cdp/Learning.svc/v1/<EntitySet>' (sent to /odatav4/<path>)."
+    )
+
+
 def _odata_url(host: str, version: str, path: str) -> str:
-    """Build an OData URL without letting caller input escape its API root."""
+    """Build an OData URL without letting caller input escape its API root.
+    v2 lives under /odata/v2/; v4 services under /odatav4/<service root>/."""
     if version not in _ODATA_VERSIONS:
         raise ConnectionPolicyError("OData version must be 'v2' or 'v4'.")
+    if version == "v4":
+        v4_service_root(path)
+        return api_url(host, "/odatav4/", path)
     return api_url(host, f"/odata/{version}/", path)
 
 
@@ -253,8 +284,13 @@ class ODataClient:
         # dropped when `params` is also merged in below (see split_path_query).
         path, path_params = split_path_query(path)
         r = self._resolve(conn)
-        base_url = f"https://{r['host']}/odata/{r['version']}"
+        v4 = r["version"] == "v4"
         url = _odata_url(r["host"], r["version"], path)
+        base_url = (
+            _odata_url(r["host"], "v4", v4_service_root(path)[0])
+            if v4
+            else f"https://{r['host']}/odata/{r['version']}"
+        )
         m = method.upper()
 
         # $metadata is served as EDMX XML only (§5.5.2.2): asking for JSON gets
@@ -262,17 +298,23 @@ class ODataClient:
         # entity name. Everything else defaults to $format=JSON, since per
         # §5.5.2.6 the server otherwise returns Atom XML.
         # The document may be asked for whole ('$metadata') or scoped to a
-        # single entity set ('EmpJob/$metadata'); both are EDMX.
+        # single entity set ('EmpJob/$metadata'); both are EDMX. v4 is JSON by
+        # default and gets its format from Accept (_V4_JSON_HEADERS) instead:
+        # $format=json would override it with minimal metadata.
         is_metadata = path.rstrip("/").endswith("$metadata")
         # Explicit `params` win over whatever the path already asked for.
         effective_params: dict[str, Any] = {**path_params, **(params or {})}
-        if not is_metadata and "$format" not in effective_params:
+        if not is_metadata and not v4 and "$format" not in effective_params:
             effective_params["$format"] = "JSON"
+        if is_metadata:
+            format_headers = {"Accept": "application/xml"}
+        else:
+            format_headers = _V4_JSON_HEADERS if v4 else {"Accept": "application/json"}
 
         async def _do(token: str) -> httpx.Response:
             auth_header = f"Bearer {token}"
             headers: dict[str, str] = {
-                "Accept": "application/xml" if is_metadata else "application/json",
+                **format_headers,
                 "Content-Type": "application/json",
                 **{
                     k: v
@@ -337,22 +379,30 @@ class ODataClient:
         params: dict[str, Any] | None = None,
         max_pages: int = 100,
     ) -> dict[str, Any]:
-        """Auto-follow `__next` links and aggregate `d.results` across pages.
+        """Auto-follow next links and aggregate records across pages: v2's
+        `d.results` + `d.__next`, v4's `value` + `@odata.nextLink`.
 
         Designed for bulk extraction of entity sets (especially EmpJob,
         which supports cursor pagination per §5.5.3.2.1). Pass
         ``paging=cursor`` or ``paging=snapshot`` in params for server-side
-        pagination; otherwise client-side `$skip`+`$top` is used and the
+        pagination (v2); otherwise client-side `$skip`+`$top` is used and the
         ``__next`` link follows the same offset semantics.
+
+        v4: only the link's paging options ($skiptoken, $skip, $top) are
+        taken from `@odata.nextLink`; the request keeps this call's host,
+        path and other options, so a link can never redirect it.
 
         Returns:
             {
               "pages_fetched": int,
               "total_records": int,
-              "results": list[dict],            # flattened d.results
+              "results": list[dict],            # flattened records
               "next_skiptoken": str | None,     # set if max_pages was hit
                                                 # mid-stream — pass back in
-                                                # params to resume.
+                                                # params to resume. None
+                                                # for a v4 $skip-form link:
+                                                # resume with $skip = records
+                                                # fetched so far instead.
               "last_status_code": int,
               "last_headers": dict,
               "last_page_size": int,            # records on the final page
@@ -363,8 +413,12 @@ class ODataClient:
                                                 # 'http_error'|'parse_error'
             }
         """
+        v4 = self._resolve(conn)["version"] == "v4"
+        # Path options join the params here so a v4 link's paging options can
+        # replace them; request() would merge them the same way.
+        path, path_params = split_path_query(path)
         all_results: list[dict[str, Any]] = []
-        current_params = dict(params or {})
+        current_params = {**path_params, **(params or {})}
         last_status = 0
         last_headers: dict[str, str] = {}
         pages = 0
@@ -387,27 +441,48 @@ class ODataClient:
                 stopped = "parse_error"
                 break
 
-            d = body.get("d", body)  # tolerant: some endpoints don't wrap in 'd'
-            results = d.get("results", []) if isinstance(d, dict) else []
+            if v4:
+                d = body if isinstance(body, dict) else {}
+                results = d.get("value", [])
+                next_link = d.get("@odata.nextLink")
+            else:
+                d = body.get("d", body)  # tolerant: some endpoints don't wrap in 'd'
+                results = d.get("results", []) if isinstance(d, dict) else []
+                next_link = d.get("__next") if isinstance(d, dict) else None
+            if not isinstance(results, list):
+                results = []
             all_results.extend(results)
             last_page_size = len(results)
             pages += 1
 
-            next_link = d.get("__next") if isinstance(d, dict) else None
             if not next_link:
                 stopped = "exhausted"
                 break
 
-            skip = _extract_skiptoken(next_link)
-            if not skip:
-                stopped = "exhausted"  # __next without skiptoken → server says we're done
-                break
+            if v4:
+                link = dict(parse_qsl(urlsplit(next_link).query, keep_blank_values=True))
+                paging = {k: link[k] for k in _V4_PAGING if k in link}
+                skip = paging.get("$skiptoken")
+                if not ("$skiptoken" in paging or "$skip" in paging):
+                    stopped = "exhausted"  # nothing we can follow without trusting its URL
+                    break
+            else:
+                skip = _extract_skiptoken(next_link)
+                if not skip:
+                    stopped = "exhausted"  # __next without skiptoken → server says we're done
+                    break
+                paging = {"$skiptoken": skip}
 
             if pages >= max_pages:
                 next_skiptoken = skip
                 stopped = "max_pages"
                 break
-            current_params["$skiptoken"] = skip
+            if v4:
+                # The link's position replaces ours: a stale $skip next to a
+                # $skiptoken (or vice versa) would skip twice.
+                current_params.pop("$skip", None)
+                current_params.pop("$skiptoken", None)
+            current_params.update(paging)
 
         return {
             "pages_fetched": pages,
@@ -456,6 +531,7 @@ class ODataClient:
         seen: set[str] = set()
         deduped = [v for v in values if not (v in seen or seen.add(v))]
 
+        v4 = self._resolve(conn)["version"] == "v4"
         base_params = dict(params or {})
         base_filter = base_params.pop("$filter", "")
 
@@ -466,7 +542,7 @@ class ODataClient:
             over_count = len(candidate) > chunk_size
             over_length = (
                 current
-                and _encoded_len(_combined_filter(base_filter, column, candidate))
+                and _encoded_len(_combined_filter(base_filter, column, candidate, v4))
                 > _MAX_FILTER_ENCODED_LEN
             )
             if current and (over_count or over_length):
@@ -482,7 +558,10 @@ class ODataClient:
         total_pages = 0
 
         for index, chunk in enumerate(chunks):
-            chunk_params = {**base_params, "$filter": _combined_filter(base_filter, column, chunk)}
+            chunk_params = {
+                **base_params,
+                "$filter": _combined_filter(base_filter, column, chunk, v4),
+            }
             result = await self.extract_all(
                 path=path,
                 conn=conn,

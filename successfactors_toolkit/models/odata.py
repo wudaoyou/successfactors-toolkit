@@ -8,7 +8,8 @@ from successfactors_toolkit.models.common import ODataConnectionConfig
 # and all FO* entities are effective-dated. Without asOfDate/fromDate/toDate
 # the API silently returns only the time slice valid today (§6.5.2.1).
 _PATH_DESC = (
-    "OData entity path, e.g. 'EmpJob' or 'User?$top=10'. "
+    "OData entity path, e.g. 'EmpJob' or 'User?$top=10'; for OData v4 it starts "
+    "at the service root, e.g. 'talent/cdp/Learning.svc/v1/Items'. "
     "NOTE: effective-dated entities (EmpJob, Position, FO*, MDF) without "
     "asOfDate/fromDate/toDate return ONLY today's effective record. "
     "Pass fromDate=1900-01-01&toDate=9999-12-31 for full history."
@@ -27,7 +28,8 @@ class ODataRequest(BaseModel):
 
 
 class ODataExtractRequest(BaseModel):
-    """Bulk-extract an entity set, auto-following __next links until exhausted."""
+    """Bulk-extract an entity set, auto-following next links (v2 `__next`,
+    v4 `@odata.nextLink`) until exhausted."""
 
     connection: ODataConnectionConfig | None = None
     path: str = Field(..., description=_PATH_DESC)
@@ -35,7 +37,7 @@ class ODataExtractRequest(BaseModel):
         default=None,
         description=(
             "Pass paging=cursor for entities that support it (EmpJob, User, "
-            "MDF Generic Objects, most FO* — see Dev Guide §5.5.3.2.1). "
+            "MDF Generic Objects, most FO* — see Dev Guide §5.5.3.2.1; v2 only). "
             "Otherwise client-side $skip+$top pagination is used."
         ),
     )
@@ -49,7 +51,8 @@ class ODataExtractResponse(BaseModel):
     next_skiptoken: str | None = Field(
         default=None,
         description="If non-null, max_pages was hit before exhaustion; pass "
-        "back in params['$skiptoken'] to resume.",
+        "back in params['$skiptoken'] to resume. Null with stopped_reason "
+        "max_pages means a v4 $skip-form next link: resume with $skip.",
     )
     last_status_code: int
     last_headers: dict[str, str]

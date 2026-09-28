@@ -5,7 +5,7 @@ comparison, OData query, and Compound Employee query — to an MCP host such as
 Claude Desktop or Claude Code.
 
 Everything hard is reused from ``successfactors_toolkit.services``: OAuth2 SAML
-Bearer, per-tenant keys, ``queryMore`` paging, ``__next`` following. This module
+Bearer, per-tenant keys, ``queryMore`` paging, next-link following. This module
 only maps tool arguments onto those clients and keeps payloads out of the
 model's context — results are written under ``{RESULTS_DIR}/mcp/`` and the tool
 returns a path plus counts. That matters twice over: a single Compound Employee
@@ -37,7 +37,11 @@ from successfactors_toolkit.models.sfapi import CEQueryFilter
 from successfactors_toolkit.services import pii_filter
 from successfactors_toolkit.services.ce_query_builder import COMMON_SEGMENTS, build_query_string
 from successfactors_toolkit.services.ce_response import parse_page
-from successfactors_toolkit.services.odata_client import ODataClient, split_path_query
+from successfactors_toolkit.services.odata_client import (
+    ODataClient,
+    split_path_query,
+    v4_service_root,
+)
 from successfactors_toolkit.services.pii_filter import (
     PiiUnknownTokenError,
     PiiVaultError,
@@ -74,8 +78,8 @@ mcp = MCPServer(
     # Claude Code truncates server instructions (and tool descriptions) at
     # 2048 chars — keep both under that; tests enforce it.
     instructions=(
-        "SAP SuccessFactors: OData v2 (any entity set) and the EC Compound "
-        "Employee SOAP API. Call list_tenants first for company_id. "
+        "SAP SuccessFactors: OData v2 (any entity set) or v4 services, and the "
+        "EC Compound Employee SOAP API. Call list_tenants first for company_id. "
         "compare_metadata diffs two instances. Large results go to a "
         "file (container path; under Docker, the host dir bound to "
         "RESULTS_DIR) — read it for the records.\n\n"
@@ -234,19 +238,25 @@ def _pii_mark(out: dict[str, Any], pii: pii_filter.PiiFilter | None, count: int)
 
 
 def _pii_tokenize_json_records(text: str, pii: pii_filter.PiiFilter) -> str | None:
-    """`text`'s OData v2 records ({"d": {"results": [...]}}, {"d": {...}} for
-    a single entity, or a bare list), tokenized -- or None if it doesn't parse
-    as JSON in one of those shapes and so can't be safely returned. Raises
+    """`text`'s OData records, tokenized -- v2 ({"d": {"results": [...]}},
+    {"d": {...}} for a single entity, or a bare list) or v4 ({"value": [...]},
+    or the entity object itself) -- or None if it doesn't parse as JSON in one
+    of those shapes and so can't be safely returned. An object without "d" is
+    read as v4, so untyped records in it get the fail-safe rules. Raises
     PiiVaultError if the vault itself is unavailable."""
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         return None
+    v4 = isinstance(parsed, dict) and "d" not in parsed
     data = parsed.get("d", parsed) if isinstance(parsed, dict) else parsed
-    records = data.get("results", [data]) if isinstance(data, dict) else data
+    if v4 and isinstance(data.get("value"), list):
+        records = data["value"]
+    else:
+        records = data.get("results", [data]) if isinstance(data, dict) else data
     if not isinstance(records, list):
         return None
-    records, _ = pii.tokenize_records(records)
+    records, _ = pii.tokenize_records(records, v4=v4)
     return json.dumps(records, ensure_ascii=False, default=str)
 
 
@@ -309,7 +319,9 @@ def _parse_edmx_keys(xml: str) -> dict[str, list[str]]:
     key property is annotated ``sap:sortable="false"`` — SF answers 400 to an
     ``$orderby`` naming one of those, so it's not usable for auto-ordering even
     though the key itself is known. Missing sap:sortable is treated as sortable
-    (SAP's own default).
+    (SAP's own default). v4 CSDL has no sap: attributes (its SortRestrictions
+    annotations sit on the entity set, not read here), so v4 keys always
+    count as sortable; odata_query retries without an $orderby SF rejects.
     """
     root = _edmx_root(xml)
     out: dict[str, list[str]] = {}
@@ -339,6 +351,9 @@ def _parse_edmx_navs(xml: str) -> _NavMap:
     Relationship -> the matching Association's End for ToRole; if an
     Association can't be matched (unexpected EDMX shape), `target` falls
     back to the raw ToRole so the caller still gets something useful.
+    v4 CSDL names the target in Type ("NS.Target" or "Collection(NS.Target)")
+    and has no sap:filterable (its FilterRestrictions annotations sit on the
+    entity set, not read here), so v4 navigations report filterable "true".
     """
     root = _edmx_root(xml)
     # Association name -> {Role: target EntityType local name}
@@ -358,6 +373,8 @@ def _parse_edmx_navs(xml: str) -> _NavMap:
             to_role = nav.get("ToRole", "")
             assoc_name = relationship.rsplit(".", 1)[-1] if relationship else ""
             target = associations.get(assoc_name, {}).get(to_role) or to_role
+            if nav.get("Type"):  # v4: "NS.Target" or "Collection(NS.Target)"
+                target = nav.get("Type").removeprefix("Collection(").rstrip(")").rsplit(".", 1)[-1]
             navs.append(
                 {
                     "name": nav.get("Name", ""),
@@ -373,12 +390,42 @@ def _parse_edmx_navs(xml: str) -> _NavMap:
 _FieldMap = dict[str, dict[str, dict[str, str]]]
 
 
+def _v4(company_id: str) -> bool:
+    """Whether the tenant speaks OData v4 ({company_id}.json, else SF_ODATA_VERSION)."""
+    settings = get_settings()
+    try:
+        conn = TenantStore(settings.tenant_keys_dir).connection(
+            company_id or settings.sf_company_id
+        )
+    except TenantConfigError:
+        conn = {}  # the request itself reports the invalid file
+    return conn.get("odata_version", settings.sf_odata_version) == "v4"
+
+
+def _v4_entity_type(xml: str, entity: str) -> str:
+    """The EntityType behind a v4 entity path's entity set, e.g.
+    "talent/cdp/Learning.svc/v1/Items" -> "Item" via <EntitySet Name="Items"
+    EntityType="NS.Item">; the set name itself if no EntitySet matches; ""
+    for a bare service root (the whole service)."""
+    name = v4_service_root(entity)[1].split("/", 1)[0].split("(", 1)[0]
+    if not name:
+        return ""
+    for entity_set in _edmx_root(xml).iter("{*}EntitySet"):
+        if entity_set.get("Name") == name:
+            return entity_set.get("EntityType", "").rsplit(".", 1)[-1] or name
+    return name
+
+
 async def _fetch_metadata_xml(company_id: str, entity: str) -> tuple[str, dict[str, Any] | None]:
     """Fetch one instance's raw $metadata (EDMX). entity="" fetches the whole
     service. Returns (xml, error); shared by every metadata consumer below so
-    the request shape (path, company override) stays in one place."""
+    the request shape (path, company override) stays in one place. v4 serves
+    $metadata per service only, so there `entity` (a service root, optionally
+    followed by an entity set) fetches its service root's document."""
     odata, _ = _clients()
     path = f"{entity}/$metadata" if entity else "$metadata"
+    if entity and _v4(company_id):
+        path = f"{v4_service_root(entity)[0]}/$metadata"
     r = await odata.request(
         method="GET", path=path, conn=ODataConnectionConfig(company_id=company_id or None)
     )
@@ -399,7 +446,14 @@ async def _field_map(company_id: str, entity: str) -> tuple[_FieldMap, dict[str,
     if error is not None:
         return {}, error
     try:
-        return _parse_edmx(xml), None
+        fields = _parse_edmx(xml)
+        if entity and _v4(company_id):
+            # The service document holds every entity type; narrow it to the
+            # entity set's type, as v2's entity-scoped $metadata does.
+            type_ = _v4_entity_type(xml, entity)
+            if type_:
+                fields = {k: v for k, v in fields.items() if k == type_}
+        return fields, None
     except etree.XMLSyntaxError as exc:
         return {}, {
             "error": "parse_error",
@@ -433,7 +487,8 @@ async def _entity_key_properties(company_id: str, entity: str) -> list[str] | No
     try:
         xml, error = await _fetch_metadata_xml(company_id, entity)
         if error is None:
-            keys = _parse_edmx_keys(xml).get(entity)
+            type_ = _v4_entity_type(xml, entity) if _v4(company_id) else entity
+            keys = _parse_edmx_keys(xml).get(type_)
     except Exception:
         keys = None
     _key_cache[cache_key] = keys
@@ -443,30 +498,35 @@ async def _entity_key_properties(company_id: str, entity: str) -> list[str] | No
 # Navigation properties only appear in the *full* service $metadata (entity-
 # scoped $metadata omits NavigationProperty entirely), and on a real tenant
 # that document can run to ~11 MB — so it's fetched at most once per
-# company_id per process. Only the parsed nav map is cached, never the raw
-# XML, per the same rationale as _key_cache.
-_nav_cache: dict[str, tuple[_NavMap, dict[str, Any] | None]] = {}
+# company_id (v4: per company_id and service root) per process. Only the
+# parsed nav map is cached, never the raw XML, per the same rationale as
+# _key_cache.
+_nav_cache: dict[tuple[str, str], tuple[_NavMap, dict[str, Any] | None]] = {}
 
 
-async def _nav_properties(company_id: str) -> tuple[_NavMap, dict[str, Any] | None]:
+async def _nav_properties(
+    company_id: str, entity: str = ""
+) -> tuple[_NavMap, dict[str, Any] | None]:
     """Best-effort {EntityType: [nav, ...]} for the whole service, for
     odata_metadata to enrich its per-entity output with. Never raises: a
     failure (or an unreachable/oversized full $metadata) is returned as a
     warning dict and cached as such, so it can't break odata_metadata's
-    existing field output and isn't retried on every call.
+    existing field output and isn't retried on every call. entity="" is the
+    v2 service; a v4 entity path selects its service's document.
     """
-    if company_id in _nav_cache:
-        return _nav_cache[company_id]
+    cache_key = (company_id, v4_service_root(entity)[0] if entity else "")
+    if cache_key in _nav_cache:
+        return _nav_cache[cache_key]
     navs: _NavMap = {}
     error: dict[str, Any] | None = None
     try:
-        xml, error = await _fetch_metadata_xml(company_id, "")
+        xml, error = await _fetch_metadata_xml(company_id, entity)
         if error is None:
             navs = _parse_edmx_navs(xml)
     except Exception as exc:
         error = {"error": "nav_parse_error", "company_id": company_id, "detail": str(exc)}
     result = (navs, error)
-    _nav_cache[company_id] = result
+    _nav_cache[cache_key] = result
     return result
 
 
@@ -621,6 +681,10 @@ async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, An
     filters into other entities via $filter (see the server's "Scope with
     EmpJob first" guidance and odata_query's docstring) instead of pulling
     whole entity sets and joining locally.
+
+    On a v4 tenant, entity is a service path: its root for the whole service
+    ("talent/cdp/Learning.svc/v1"), or root plus entity set for one
+    (".../Learning.svc/v1/Items"); both read that service's $metadata.
     """
     fields, error = await _field_map(company_id, entity)
     if error is not None:
@@ -630,12 +694,15 @@ async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, An
     navigation: list[dict[str, str]] = []
     nav_warning: str | None = None
     if entity:
-        nav_map, nav_error = await _nav_properties(company_id)
+        v4 = _v4(company_id)
+        nav_map, nav_error = await _nav_properties(company_id, entity if v4 else "")
         if nav_error is not None:
             nav_warning = (
                 f"navigation properties unavailable: {nav_error.get('error', 'unknown error')}"
             )
-        navigation = nav_map.get(entity, [])
+        # v4 fields are keyed by the entity set's EntityType (see _field_map).
+        name = (next(iter(fields)) if len(fields) == 1 else "") if v4 else entity
+        navigation = nav_map.get(name, [])
 
     file_doc = json.dumps(
         {"fields": fields, "navigation": navigation}, indent=2, sort_keys=True, ensure_ascii=False
@@ -667,9 +734,10 @@ async def compare_metadata(company_a: str, company_b: str, entity: str = "") -> 
     """Compare the OData configuration of two instances and return the drift.
 
     entity="EmpJob" compares one entity set; entity="" compares the whole
-    service. The comparison runs here, not in the conversation: one instance's
-    EmpJob metadata alone is ~40 KB, so diffing two of them in context is both
-    expensive and easy to get wrong.
+    service (v4: a service path, as in odata_metadata). The comparison runs
+    here, not in the conversation: one instance's EmpJob metadata alone is
+    ~40 KB, so diffing two of them in context is both expensive and easy to
+    get wrong.
 
     Returns in_sync plus, per entity, the fields missing on either side and the
     fields whose attributes differ, each as [value_in_a, value_in_b]. The `sap:`
@@ -725,10 +793,11 @@ async def odata_query(
     max_pages: int = 10,
     preview: Annotated[int, Field(ge=0, le=20, description="Inline records; maximum 20.")] = 0,
 ) -> dict[str, Any]:
-    """Run an OData v2 query, following __next until exhausted or max_pages.
+    """Run an OData query, following next links until exhausted or max_pages.
 
     path is the entity set and may carry query options, e.g. "FOCompany" or
-    "EmpJob?$select=userId,jobCode" — those are parsed out of path and merged
+    "EmpJob?$select=userId,jobCode" (v4 tenant: service root first,
+    "talent/cdp/Learning.svc/v1/Items") — those are parsed out of path and merged
     into the request; pass options either way, but prefer `params` (params win
     on conflicts). Always $select only the fields you need. Effective-dated
     entities (EmpJob, Position, FO*, MDF) return ONLY today's time slice unless
@@ -742,10 +811,10 @@ async def odata_query(
     can't duplicate or skip rows; if keys are unknown or unsortable, or SF
     rejects it, the query runs without and a warning says so — then pass
     $orderby yourself. Same condition, without $top/$skip, also adds
-    paging=snapshot (reported as `paging_added`); if SF rejects it for
+    paging=snapshot on v2 (reported as `paging_added`); if SF rejects it for
     that entity, the retry drops it and warns. Rows are checked for
     duplicate keys when every key field is in the records (`duplicate_records`
-    + warning if found). A final page exactly $top-sized with no __next gets
+    + warning if found). A final page exactly $top-sized with no next link gets
     a truncation warning (some MDF entities stop early); resume with $skip
     and an explicit $orderby.
 
@@ -767,6 +836,7 @@ async def odata_query(
     _, path_params = split_path_query(path)
     merged_view = {**path_params, **query_params}  # what will actually be sent, for peeking
     warnings: list[str] = []
+    v4 = _v4(company_id)
     orderby_added: str | None = None
     paging_added: str | None = None
     keys: list[str] | None = None
@@ -792,8 +862,10 @@ async def odata_query(
                     "be determined from $metadata; paged results may contain duplicated "
                     "or skipped rows. Pass $orderby explicitly to avoid this."
                 )
-        # SF rejects paging=snapshot together with $top or $skip.
-        if "paging" not in merged_view and not {"$top", "$skip"} & merged_view.keys():
+        # SF rejects paging=snapshot together with $top or $skip. It is a v2
+        # option: SF documents no such v4 query option, and v4 pages by
+        # @odata.nextLink anyway.
+        if not v4 and "paging" not in merged_view and not {"$top", "$skip"} & merged_view.keys():
             paging_added = "snapshot"
             query_params["paging"] = paging_added
 
@@ -886,7 +958,7 @@ async def odata_query(
             top_n = None
         if top_n and r["last_page_size"] == top_n:
             warnings.append(
-                f"The last page returned exactly $top={top_n} rows with no __next link "
+                f"The last page returned exactly $top={top_n} rows with no next link "
                 "(reported 'exhausted'). Some MDF/custom entities silently stop paging "
                 "before all data is returned — if the row count looks short, resume "
                 "manually with $skip (and an explicit $orderby) past this point."
@@ -895,7 +967,7 @@ async def odata_query(
     pii_count = 0
     if pii is not None:
         try:
-            results, pii_count = pii.tokenize_records(results)
+            results, pii_count = pii.tokenize_records(results, v4=v4)
         except PiiVaultError as exc:
             return _pii_error(exc)
 
