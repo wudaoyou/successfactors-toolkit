@@ -82,8 +82,8 @@ several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
 - Binary content (photos, document scans) becomes `[PII-T<n>-REDACTED]`.
 - Entity-specific fields are found by the record's type: `__metadata.type`
   (v2) or `@odata.type` (v4, requested with full metadata). A v4 record
-  without `@odata.type` (e.g. after a caller-supplied `$format=json`) could
-  be any entity, so every entity's fields are tokenized in it, each at its
+  without `@odata.type` (e.g. after a caller-supplied `$format=json`), or
+  with a type the PII map doesn't know, could be any entity, so every entity's fields are tokenized in it, each at its
   most sensitive tier. URIs that can embed key values (`__metadata` URIs,
   `__deferred`, nested `__next`, v4 `@odata.id`/`...Link`/`@odata.context`
   annotations) are dropped.

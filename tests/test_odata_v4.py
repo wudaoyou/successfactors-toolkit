@@ -215,9 +215,17 @@ def test_untyped_v4_records_get_every_entitys_rules(tmp_path):
 
 
 def test_typed_v4_records_keep_entity_scoping(tmp_path):
-    record = {"@odata.type": "#SFOData.FOLocation", "city": "Plant City"}
+    record = {"@odata.type": "#SFOData.PerEmail", "city": "Plant City"}
     [out], count = _filter(tmp_path, tier=2).tokenize_records([record], v4=True)
     assert count == 0 and out["city"] == "Plant City"
+
+
+def test_unknown_v4_types_get_every_entitys_rules(tmp_path):
+    # v4 services may use their own type names; one the map doesn't know is
+    # treated like an untyped record, never as "*"-only.
+    record = {"@odata.type": "#com.sap.sf.ec.WorkPermit", "documentNumber": "A1234567"}
+    [out], count = _filter(tmp_path, tier=1).tokenize_records([record], v4=True)
+    assert count == 1 and _TOKEN.fullmatch(out["documentNumber"])
 
 
 @pytest.mark.parametrize(

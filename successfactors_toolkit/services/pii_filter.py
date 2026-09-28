@@ -374,7 +374,7 @@ class PiiFilter:
     def tokenize_records(self, records: Any, v4: bool = False) -> tuple[Any, int]:
         """OData JSON (a list of records, nested $expand included) with
         mapped values tokenized. Returns a new structure and the count.
-        v4=True for OData v4 records: one without @odata.type gets every
+        v4=True for OData v4 records: one without a known @odata.type gets every
         entity's rules (see _tier) instead of only the "*" ones."""
         pending: dict[str, str] = {}
         count = 0
@@ -386,6 +386,8 @@ class PiiFilter:
             if not isinstance(node, dict):
                 return node
             entity = _entity_of(node, v4)
+            if v4 and entity not in self._map:
+                entity = None  # a v4 type the map doesn't know: same fail-safe as untyped
             out = {}
             for key, value in node.items():
                 if key == "__next" or _V4_LINK_KEY.fullmatch(key):

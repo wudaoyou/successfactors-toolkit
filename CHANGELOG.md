@@ -14,7 +14,7 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   with navigation targets from `Type`. `paging=snapshot` is not added on v4.
 - PII tokenization for v4 records: the entity comes from `@odata.type`
   (JSON is requested with `odata.metadata=full`), and a v4 record without
-  one gets every entity's fields tokenized, each at its most sensitive tier.
+  one, or with a type the PII map doesn't know, gets every entity's fields tokenized, each at its most sensitive tier.
   v4 link annotations (`@odata.id`, `@odata.editLink`, `...@odata.nextLink`,
   `...@odata.navigationLink`, media links, `@odata.context`) are dropped
   like v2 `__metadata` URIs.
