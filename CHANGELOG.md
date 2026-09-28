@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-28
+
 ### Added
 
 - `server.json` and the Docker image label
