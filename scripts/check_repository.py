@@ -1,5 +1,6 @@
 """Validate bootstrap hygiene and version syntax; no dependencies or live access."""
 
+import json
 import re
 import subprocess
 import sys
@@ -29,11 +30,12 @@ PRIVATE_SUFFIXES = {".pem", ".key", ".crt", ".p12", ".pfx", ".zip", ".log"}
 
 # Docker Hub release tags are immutable, so a released tag never points at a
 # previous image; a stray tagless digest pin (from before a release) would.
-IMAGE_REF = re.compile(r"docker\.io/wudaoyou/successfactors-toolkit\S*")
+IMAGE_REF = re.compile(r"docker\.io/wudaoyou/successfactors-toolkit[^\s\"]*")
 IMAGE_PIN_FILES = (
     "docker-compose.mcp.yml",
     "docs/DOCKER_MCP_GUIDE.md",
     "docs/DOCKER_MCP_GUIDE.html",
+    "server.json",
 )
 
 
@@ -56,6 +58,12 @@ def main():
                         f"{rel}:{lineno}: image reference must be tagged v{version} "
                         f"(docker.io/wudaoyou/successfactors-toolkit:v{version}[@sha256:...]), got: {ref}"
                     )
+    server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    if server["version"] != version:
+        errors.append(f"server.json version must be {version}, got: {server['version']}")
+    label = f'LABEL io.modelcontextprotocol.server.name="{server["name"]}"'
+    if label not in (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines():
+        errors.append(f"Dockerfile must contain: {label}")
     names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
     for name in filter(None, names):
         path = Path(name)
