@@ -20,12 +20,13 @@
 
 1. Open a preparation PR against `develop` that updates `VERSION`, moves
    the relevant `CHANGELOG.md` entries from `Unreleased` to a new dated
-   section, and sets every `docker.io/wudaoyou/successfactors-toolkit` image
-   reference (`docker-compose.mcp.yml`, `docs/DOCKER_MCP_GUIDE.md`,
-   `docs/DOCKER_MCP_GUIDE.html`) to `:v<new version>` with no digest — the
-   digest isn't known until the image for this tag is published, and since
-   release tags are immutable (see below) the tag alone already points at
-   the right image once it exists.
+   section, sets `version` in `server.json`, and sets every
+   `docker.io/wudaoyou/successfactors-toolkit` image reference
+   (`docker-compose.mcp.yml`, `docs/DOCKER_MCP_GUIDE.md`,
+   `docs/DOCKER_MCP_GUIDE.html`, `server.json`) to `:v<new version>` with no
+   digest — the digest isn't known until the image for this tag is
+   published, and since release tags are immutable (see below) the tag alone
+   already points at the right image once it exists.
 2. After that PR merges, open a release PR from `develop` to `main`.
 3. After its checks and review pass, merge it with a merge commit.
 4. A maintainer then tags the approved commit on `main`:
@@ -47,8 +48,10 @@
 6. After a release or hotfix, merge `main` back into `develop` before
    starting the next development cycle. As part of that sync, add the
    `@sha256:...` digest from the release's `image-reference.txt` asset to
-   the same three image references so `develop` pins the exact published
-   image.
+   the image references in `docker-compose.mcp.yml` and both Docker guides
+   so `develop` pins the exact published image. `server.json` keeps the
+   plain tag.
+7. Publish the release to the MCP Registry (see below).
 
 ## Docker Hub publication
 
@@ -119,3 +122,25 @@ verified digest only after this succeeds.
 Never rebuild and overwrite an already published version tag; use a new
 version for corrections. If publication fails, inspect Docker Hub before any
 recovery action to determine whether the tag was already pushed.
+
+## MCP Registry publication
+
+`server.json` lists the server in the
+[MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.wudaoyou/successfactors-toolkit`. The registry verifies image
+ownership through the Dockerfile label `io.modelcontextprotocol.server.name`,
+which must equal `name` in `server.json`; `scripts/check_repository.py`
+enforces that and keeps `server.json` in step with `VERSION`.
+
+After the Docker Hub image for a release is published and verified, a
+maintainer publishes from a checkout of the release tag with
+[`mcp-publisher`](https://github.com/modelcontextprotocol/registry):
+
+```sh
+git switch --detach vX.Y.Z
+mcp-publisher login github   # interactive; signs in as the wudaoyou account
+mcp-publisher publish
+```
+
+Publishing is manual; CI does not run it. A published registry version is
+immutable, so fix a mistake with a new release.
