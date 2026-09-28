@@ -13,7 +13,7 @@ import pytest
 
 from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import Settings, get_settings
-from successfactors_toolkit.services.odata_client import ODataClient
+from successfactors_toolkit.services.odata_client import ODataClient, v4_service_root
 from successfactors_toolkit.services.pii_filter import PiiFilter, Vault
 from successfactors_toolkit.services.tenant_store import TenantStore
 
@@ -384,3 +384,37 @@ def test_odata_query_on_v4_tokenizes_full_metadata_records(v4_tenant, monkeypatc
     saved = Path(result["file"]).read_text(encoding="utf-8")
     assert _SSN not in saved and "A1234567" not in saved
     assert result["pii_tokenized"] == 2
+
+
+@pytest.mark.parametrize(
+    ("path", "root", "rest"),
+    [
+        (
+            "talent/calibration/CalSession.svc/v1/CalibrationSession",
+            "talent/calibration/CalSession.svc/v1",
+            "CalibrationSession",
+        ),
+        ("onboarding/AdditionalServices.svc/v1/", "onboarding/AdditionalServices.svc/v1", ""),
+        (
+            "talent/continuousfeedback/v1/feedback('1')",
+            "talent/continuousfeedback/v1",
+            "feedback('1')",
+        ),
+        ("talent/continuousfeedback/v1/$metadata", "talent/continuousfeedback/v1", "$metadata"),
+    ],
+)
+def test_v4_service_root_with_or_without_svc(path, root, rest):
+    # Service roots as SF publishes them on the API Hub (2026-09-28).
+    assert v4_service_root(path) == (root, rest)
+
+
+def test_v4_feedback_display_names_are_tokenized(tmp_path):
+    record = {
+        "@odata.type": "#continuousfeedback.feedback",
+        "senderDisplayName": "Jane Doe",
+        "subjectDisplayName": "John Roe",
+        "topic": "Q3 demo",
+    }
+    [out], count = _filter(tmp_path, tier=3).tokenize_records([record], v4=True)
+    assert count == 2 and out["topic"] == "Q3 demo"
+    assert _TOKEN.fullmatch(out["senderDisplayName"]).group(1) == "3"

@@ -75,10 +75,15 @@ SuccessFactors' ~8 KB limit, returning `HTTP 414`. If you see `414`, lower
 With `odata_version` `v4` (`SF_ODATA_VERSION`, the tenant file, or a
 per-request `connection`), requests go to `https://{host}/odatav4/{path}`.
 SuccessFactors serves each v4 API as its own service, so `path` starts at
-the service root, e.g. `talent/cdp/Learning.svc/v1/Items?$top=5`; a path
-without a `.svc` segment is rejected with `400`. `$metadata` exists per
-service only (`talent/cdp/Learning.svc/v1/$metadata`). Employee Central
-entities (`EmpJob`, `PerPerson`, ...) are v2 only.
+the service root, e.g.
+`talent/calibration/CalSession.svc/v1/CalibrationSession?$top=5`. The root
+ends at the `.svc` segment and its version, or, for services without one
+(`talent/continuousfeedback/v1`), at the first version segment; a path with
+neither is rejected with `400`. `$metadata` exists per service only
+(`talent/calibration/CalSession.svc/v1/$metadata`). The service roots are on
+each API's SAP Business Accelerator Hub page. Employee Central entities
+(`EmpJob`, `PerPerson`, ...) and Onboarding data are v2 only: the v4
+Onboarding and Succession services offer actions, not entity sets.
 
 - JSON is requested with `Accept: application/json;odata.metadata=full`
   instead of `$format`, so every record carries `@odata.type`.

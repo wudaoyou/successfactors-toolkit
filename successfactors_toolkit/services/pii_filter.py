@@ -308,6 +308,12 @@ _BUILTIN_MAP: dict[str, dict[str, int]] = {
         **_fields(3, "name"),
     },
     "dependent_information": _fields(3, "first_name", "last_name"),
+    # OData v4 (entity = the @odata.type's last segment). Names from tctrain
+    # $metadata (2026-09-28): talent/continuousfeedback/v1.
+    "feedback": _fields(3, "senderDisplayName", "subjectDisplayName"),
+    "feedbackRequests": _fields(
+        3, "requesterDisplayName", "recipientDisplayName", "subjectDisplayName"
+    ),
 }
 # Binary content: redacted, never stored — the model has no use for it and
 # the original stays in SuccessFactors.

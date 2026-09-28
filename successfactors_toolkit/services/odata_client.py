@@ -165,17 +165,23 @@ def v4_service_root(path: str) -> tuple[str, str]:
     v4 API as its own service, ``<module path>/<Name>.svc/v1``, so
     "talent/cdp/Learning.svc/v1/Items('1')" -> ("talent/cdp/Learning.svc/v1",
     "Items('1')"). A version segment (v1, v2, ...) after ``.svc`` belongs to the
-    root. Raises ConnectionPolicyError for a path without a ``.svc`` segment."""
+    root. Some services have no ``.svc`` ("talent/continuousfeedback/v1"); their
+    root ends at the first version segment after the module path. Raises
+    ConnectionPolicyError for a path with neither."""
     segments = path.lstrip("/").split("/")
-    for index, segment in enumerate(segments):
-        if segment.endswith(".svc"):
-            end = index + 1
-            if end < len(segments) and re.fullmatch(r"v\d+", segments[end]):
-                end += 1
-            return "/".join(segments[:end]), "/".join(segments[end:])
+    svc = next((i for i, seg in enumerate(segments) if seg.endswith(".svc")), None)
+    if svc is not None:
+        end = svc + 1
+        if end < len(segments) and re.fullmatch(r"v\d+", segments[end]):
+            end += 1
+        return "/".join(segments[:end]), "/".join(segments[end:])
+    for index, segment in enumerate(segments[1:], start=1):
+        if re.fullmatch(r"v\d+", segment):
+            return "/".join(segments[: index + 1]), "/".join(segments[index + 1 :])
     raise ConnectionPolicyError(
         "OData v4 paths start at the API's service root, e.g. "
-        "'talent/cdp/Learning.svc/v1/<EntitySet>' (sent to /odatav4/<path>)."
+        "'talent/calibration/CalSession.svc/v1/<EntitySet>' or "
+        "'talent/continuousfeedback/v1/<EntitySet>' (sent to /odatav4/<path>)."
     )
 
 
