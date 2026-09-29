@@ -228,6 +228,50 @@ def test_odata_metadata_navigation_failure_does_not_break_field_output(monkeypat
     assert "navigation_warning" in result
 
 
+class _DataServingOData:
+    """Answers every request with employee records, as SF does for a data
+    query, and records the paths it was asked for."""
+
+    def __init__(self):
+        self.paths: list[str] = []
+
+    async def request(self, method, path, conn=None, params=None, body=None, extra_headers=None):
+        self.paths.append(path)
+        return {"status_code": 200, "headers": {}, "body": '{"d": {"results": [{"n": "Jane"}]}}'}
+
+
+@pytest.mark.parametrize(
+    "entity",
+    ["EmpJob?$format=json&x=", "EmpJob#", "EmpJob('1')", "../v4/x", "EmpJob%3F", "Emp Job"],
+)
+def test_metadata_tools_refuse_an_entity_that_is_not_a_plain_name(monkeypatch, tmp_path, entity):
+    # Metadata output is not PII-tokenized: an entity that turns the $metadata
+    # request into a data query must never reach SF, let alone come back.
+    odata = _DataServingOData()
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    single = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity=entity))
+    compared = asyncio.run(mcp_server.compare_metadata("example-a", "example-a", entity=entity))
+
+    assert single["error"] == "invalid_entity"
+    assert compared["a"]["error"] == "invalid_entity"
+    assert odata.paths == []
+    assert "Jane" not in json.dumps([single, compared])
+
+
+def test_metadata_parse_error_does_not_echo_the_body(monkeypatch, tmp_path):
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (_DataServingOData(), _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="EmpJob"))
+
+    assert result["error"] == "parse_error"
+    assert "Jane" not in json.dumps(result)
+
+
 def test_parse_edmx_navs_resolves_target_via_association_and_falls_back_to_role():
     xml = """<?xml version="1.0" encoding="utf-8"?>
 <edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx" Version="1.0">

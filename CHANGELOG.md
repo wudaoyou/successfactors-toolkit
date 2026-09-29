@@ -4,6 +4,15 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-29
+
+### Security
+
+- `odata_metadata` and `compare_metadata` reject an `entity` that is not an
+  entity set name or v4 service path, so the request can only reach a
+  `$metadata` document; a response that fails to parse as EDMX is no longer
+  echoed back. Metadata output is not PII-tokenized.
+
 ## [0.5.0] - 2026-09-28
 
 ### Added
