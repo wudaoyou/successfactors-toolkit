@@ -43,14 +43,14 @@ def test_vault_creates_owner_only_key_and_database(tmp_path):
 
 
 def test_vault_digest_is_stable_across_reopen_and_depends_on_the_key(tmp_path):
-    first = Vault(tmp_path / "a").digest("123-45-6789")
+    first = Vault(tmp_path / "a", "example-a").digest("123-45-6789")
     assert re.fullmatch(r"[0-9a-f]{16}", first)
-    assert Vault(tmp_path / "a").digest("123-45-6789") == first
-    assert Vault(tmp_path / "b").digest("123-45-6789") != first
+    assert Vault(tmp_path / "a", "example-a").digest("123-45-6789") == first
+    assert Vault(tmp_path / "b", "example-a").digest("123-45-6789") != first
 
 
 def test_vault_save_and_load_round_trip_and_first_write_wins(tmp_path):
-    vault = Vault(tmp_path / "vault")
+    vault = Vault(tmp_path / "vault", "example-a")
     vault.save({"aaaaaaaaaaaaaaaa": "one"})
     vault.save({"aaaaaaaaaaaaaaaa": "other", "bbbbbbbbbbbbbbbb": "two"})
     assert vault.load(["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc"]) == {
@@ -60,7 +60,7 @@ def test_vault_save_and_load_round_trip_and_first_write_wins(tmp_path):
 
 
 def test_vault_load_handles_more_hexes_than_one_sqlite_statement_allows(tmp_path):
-    vault = Vault(tmp_path / "vault")
+    vault = Vault(tmp_path / "vault", "example-a")
     pairs = {f"{i:016x}": str(i) for i in range(2500)}
     vault.save(pairs)
     assert vault.load(pairs) == pairs
@@ -190,7 +190,7 @@ def test_vault_owned_by_another_user_raises(tmp_path, monkeypatch):
 
 
 def test_vault_a_fresh_vault_still_works_after_the_ownership_checks(tmp_path):
-    vault = Vault(tmp_path / "vault")
+    vault = Vault(tmp_path / "vault", "example-a")
     vault.save({"aaaaaaaaaaaaaaaa": "value"})
     assert vault.load(["aaaaaaaaaaaaaaaa"]) == {"aaaaaaaaaaaaaaaa": "value"}
 
@@ -236,7 +236,7 @@ def test_settings_reject_vault_inside_results_dir_even_at_tier_zero(monkeypatch,
 
 
 def _filter(tmp_path, tier=1, extra=None):
-    return PiiFilter(tier, extra or {}, Vault(tmp_path / "vault"))
+    return PiiFilter(tier, extra or {}, Vault(tmp_path / "vault", "example-a"))
 
 
 def _meta(entity):
@@ -485,7 +485,7 @@ def test_ce_doctype_is_rejected(tmp_path):
 
 
 def _seed(tmp_path, value, tier=1):
-    vault = Vault(tmp_path / "vault")
+    vault = Vault(tmp_path / "vault", "example-a")
     hex_ = vault.digest(value)
     vault.save({hex_: value})
     return vault, f"[PII-T{tier}-{hex_}]"
@@ -558,7 +558,7 @@ def test_detokenize_percent_encoded_token_yields_encoded_plaintext(tmp_path):
 
 
 def test_detokenize_unknown_token_raises_with_the_token(tmp_path):
-    vault = Vault(tmp_path / "vault")
+    vault = Vault(tmp_path / "vault", "example-a")
     with pytest.raises(PiiUnknownTokenError) as caught:
         detokenize("x eq '[PII-T1-0123456789abcdef]'", vault)
     assert caught.value.tokens == ["[PII-T1-0123456789abcdef]"]
@@ -636,3 +636,291 @@ def test_expanded_collections_next_link_is_dropped(tmp_path):
     [out], _ = _filter(tmp_path).tokenize_records([record])
     assert "__next" not in out["permissionRoleNav"]
     assert out["permissionRoleNav"]["results"][0]["id"] == "1"
+
+
+# --- tokens are bound to the tenant that issued them ---------------------
+
+
+def _two_tenants(monkeypatch, tmp_path):
+    """One shared vault directory: example-a is production (tier 3), example-b test (tier 1)."""
+    settings = _tenant_settings(monkeypatch, tmp_path, True)
+    TenantStore(settings.tenant_keys_dir).set_production("example-b", False)
+    return for_tenant(settings, "example-a"), for_tenant(settings, "example-b")
+
+
+def test_a_token_only_resolves_on_the_tenant_that_issued_it(monkeypatch, tmp_path):
+    prod, test = _two_tenants(monkeypatch, tmp_path)
+    record = {**_meta("PerPersonal"), "gender": "F", "nationalId": "123-45-6789"}
+    [out], count = prod.tokenize_records([record])
+    assert count == 2
+    for field, plain in (("gender", "F"), ("nationalId", "123-45-6789")):
+        token = out[field]
+        text, _ = detokenize(f"{field} eq '{token}'", prod.vault)
+        assert text == f"{field} eq '{plain}'"
+        with pytest.raises(PiiUnknownTokenError):
+            detokenize(f"{field} eq '{token}'", test.vault)
+
+
+def test_the_same_value_gets_a_different_token_per_tenant(monkeypatch, tmp_path):
+    prod, test = _two_tenants(monkeypatch, tmp_path)
+    record = {**_meta("PerNationalId"), "nationalId": "123-45-6789"}
+    [a1], _ = prod.tokenize_records([record])
+    [a2], _ = prod.tokenize_records([record])
+    [b], _ = test.tokenize_records([record])
+    assert a1["nationalId"] == a2["nationalId"] != b["nationalId"]
+    # Both stay resolvable, each on its own tenant.
+    assert detokenize(a1["nationalId"], prod.vault)[0] == "123-45-6789"
+    assert detokenize(b["nationalId"], test.vault)[0] == "123-45-6789"
+
+
+def test_for_tenant_binds_the_default_tenant_when_company_id_is_empty(monkeypatch, tmp_path):
+    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
+    settings = _tenant_settings(monkeypatch, tmp_path, True)
+    record = {**_meta("PerNationalId"), "nationalId": "123-45-6789"}
+    [implicit], _ = for_tenant(settings, "").tokenize_records([record])
+    [explicit], _ = for_tenant(settings, "example-a").tokenize_records([record])
+    assert implicit["nationalId"] == explicit["nationalId"]
+
+
+def test_a_vault_without_a_tenant_cannot_issue_tokens(tmp_path):
+    vault = Vault(tmp_path / "vault")
+    with pytest.raises(PiiVaultError):
+        vault.digest("x")
+    with pytest.raises(PiiVaultError):
+        vault.save({"aaaaaaaaaaaaaaaa": "x"})
+
+
+def _old_schema_vault(tmp_path, value):
+    """A vault as written before tokens were tenant-bound: (hex, value) rows only."""
+    directory = tmp_path / "vault"
+    Vault(directory)
+    hex_ = "0123456789abcdef"
+    with sqlite3.connect(directory / "vault.sqlite") as db:
+        db.execute("DROP TABLE token")
+        db.execute("CREATE TABLE token (hex TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        db.execute("INSERT INTO token (hex, value) VALUES (?, ?)", (hex_, value))
+    return directory, f"[PII-T1-{hex_}]"
+
+
+def test_an_old_schema_vault_migrates_and_its_rows_are_reveal_only(tmp_path):
+    directory, legacy = _old_schema_vault(tmp_path, "123-45-6789")
+    tenant_vault = Vault(directory, "example-a")
+    with sqlite3.connect(directory / "vault.sqlite") as db:
+        assert "tenant" in [row[1] for row in db.execute("PRAGMA table_info(token)")]
+    with pytest.raises(PiiUnknownTokenError):
+        detokenize(f"nationalId eq '{legacy}'", tenant_vault)
+    assert reveal(legacy, Vault(directory)) == ("123-45-6789", 1, [])
+    # New rows work alongside the legacy one, and re-opening is idempotent.
+    [out], _ = PiiFilter(1, {}, tenant_vault).tokenize_records(
+        [{**_meta("PerNationalId"), "nationalId": "999-99-9999"}]
+    )
+    assert detokenize(out["nationalId"], Vault(directory, "example-a"))[0] == "999-99-9999"
+
+
+# --- unknown entities and CE segments fail closed ------------------------
+
+
+def _closed(pii, records, **kwargs):
+    return pii.tokenize_records(records, fail_closed=True, **kwargs)
+
+
+def test_unknown_typed_entity_has_every_string_tokenized_at_tier_one(tmp_path):
+    record = {
+        **_meta("cust_Foo"),
+        "externalCode": "E1",
+        "cust_ssn": "123-45-6789",
+        "amount": 42,
+        "flag": True,
+        "note": None,
+        "blank": "",
+        "firstName": "Ann",
+    }
+    [out], count = _closed(_filter(tmp_path, tier=1), [record])
+    assert count == 3
+    assert out["amount"] == 42 and out["flag"] is True
+    assert out["note"] is None and out["blank"] == ""
+    for field in ("externalCode", "cust_ssn", "firstName"):
+        assert _TOKEN.fullmatch(out[field]).group(1) == "1"
+    assert out["__metadata"] == {"type": "SFOData.cust_Foo"}
+
+
+def test_unknown_entity_still_applies_star_rules_to_non_strings(tmp_path):
+    [out], _ = _closed(_filter(tmp_path, tier=1), [{**_meta("cust_Foo"), "nationalId": 123456789}])
+    assert _TOKEN.fullmatch(out["nationalId"]).group(1) == "1"
+
+
+def test_known_entity_with_an_empty_map_keeps_its_codes(tmp_path):
+    record = {**_meta("EmpJob"), "userId": "u1", "jobCode": "J1", "nationalId": "123-45-6789"}
+    [out], count = _closed(_filter(tmp_path, tier=3), [record])
+    assert count == 1
+    assert out["userId"] == "u1" and out["jobCode"] == "J1"
+    assert _TOKEN.fullmatch(out["nationalId"])
+
+
+def test_an_empty_extra_entry_marks_an_entity_as_reviewed(tmp_path):
+    record = {**_meta("cust_Foo"), "externalCode": "E1"}
+    [plain], count = _closed(_filter(tmp_path, extra={"cust_Foo": {}}), [record])
+    assert count == 0 and plain["externalCode"] == "E1"
+    [masked], _ = _closed(_filter(tmp_path, extra={"cust_Foo": {"other": 1}}), [record])
+    assert masked["externalCode"] == "E1", "listed for other fields: known, so plaintext"
+
+
+def test_for_tenant_keeps_empty_extra_entries(monkeypatch, tmp_path):
+    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"cust_Foo": {}}')
+    settings = _tenant_settings(monkeypatch, tmp_path, False)
+    pii = for_tenant(settings, "example-a")
+    [out], count = _closed(pii, [{**_meta("cust_Foo"), "externalCode": "E1"}])
+    assert count == 0 and out["externalCode"] == "E1"
+
+
+def test_for_tenant_keeps_an_empty_entry_from_the_tenant_file(monkeypatch, tmp_path):
+    settings = _tenant_settings(monkeypatch, tmp_path, False)
+    tenant_file = tmp_path / "tenants" / "example-a" / "example-a.json"
+    tenant_file.parent.mkdir(parents=True, exist_ok=True)
+    tenant_file.write_text(json.dumps({"production": False, "pii_extra_fields": {"cust_Bar": {}}}))
+    [out], count = _closed(
+        for_tenant(settings, "example-a"), [{**_meta("cust_Bar"), "externalCode": "E1"}]
+    )
+    assert count == 0 and out["externalCode"] == "E1"
+
+
+def test_untyped_top_level_record_uses_the_entity_argument(tmp_path):
+    pii = _filter(tmp_path)
+    unknown, count = _closed(pii, [{"code": "C1"}, {"code": "C2"}], entity="cust_Foo")
+    assert count == 2 and all(_TOKEN.fullmatch(record["code"]) for record in unknown)
+    known, count = _closed(pii, [{"jobCode": "J1"}], entity="EmpJob")
+    assert count == 0 and known == [{"jobCode": "J1"}]
+    nothing, count = _closed(pii, [{"code": "C1"}])
+    assert count == 1 and _TOKEN.fullmatch(nothing[0]["code"])
+
+
+def test_the_entity_argument_does_not_reach_nested_untyped_records(tmp_path):
+    record = {"code": "C1", "child": {"code": "C2"}, "rows": [{"code": "C3"}]}
+    [out], _ = _closed(_filter(tmp_path), [record], entity="EmpJob")
+    assert out["code"] == "C1"
+    assert _TOKEN.fullmatch(out["child"]["code"]) and _TOKEN.fullmatch(out["rows"][0]["code"])
+
+
+def test_a_typed_record_ignores_the_entity_argument(tmp_path):
+    [out], count = _closed(
+        _filter(tmp_path), [{**_meta("cust_Foo"), "code": "C1"}], entity="EmpJob"
+    )
+    assert count == 1 and _TOKEN.fullmatch(out["code"])
+
+
+def test_without_fail_closed_unknown_entities_behave_as_before(tmp_path):
+    record = {**_meta("cust_Foo"), "externalCode": "E1", "nationalId": "A1"}
+    [out], count = _filter(tmp_path).tokenize_records([record], entity="cust_Foo")
+    assert count == 1 and out["externalCode"] == "E1" and _TOKEN.fullmatch(out["nationalId"])
+
+
+def test_v4_unknown_type_is_tokenized_at_tier_one_instead_of_the_any_rule(tmp_path):
+    record = {"@odata.type": "#SFOData.Mystery", "title": "Boss", "city": "Home Town"}
+    [out], count = _closed(_filter(tmp_path, tier=1), [record], v4=True)
+    assert count == 2
+    assert _TOKEN.fullmatch(out["title"]) and _TOKEN.fullmatch(out["city"])
+    assert out["@odata.type"] == "#SFOData.Mystery"
+
+
+def test_unknown_property_bag_value_is_tokenized_once(tmp_path):
+    pii = _filter(tmp_path)
+    record = {**_meta("cust_Foo"), "Name": "nationalId", "Value": "123-45-6789"}
+    [out], count = _closed(pii, [record])
+    assert count == 2
+    assert detokenize(out["Value"], pii.vault)[0] == "123-45-6789"
+
+
+def test_structural_keys_are_never_tokenized(tmp_path):
+    record = {
+        **_meta("cust_Foo"),
+        "__count": "5",
+        "__custom": "x",
+        "name@odata.type": "#String",
+        "name": "Ann",
+    }
+    [out], count = _closed(_filter(tmp_path), [record])
+    assert count == 1
+    assert out["__count"] == "5" and out["__custom"] == "x" and out["name@odata.type"] == "#String"
+
+
+def test_metadata_keeps_only_its_type_and_deferred_is_emptied(tmp_path):
+    record = {
+        "__metadata": {"type": "SFOData.cust_Foo", "uri": "u", "id": "i", "etag": "e"},
+        "nav": {"__deferred": {"uri": "u", "other": "x"}},
+    }
+    for pii in (_filter(tmp_path), _filter(tmp_path, tier=3)):
+        for closed in (False, True):
+            [out], _ = pii.tokenize_records([record], fail_closed=closed)
+            assert out["__metadata"] == {"type": "SFOData.cust_Foo"}
+            assert out["nav"] == {"__deferred": {}}
+
+
+def _ce_in_employee(inner):
+    return (
+        '<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<SOAP-ENV:Body><queryResponse><result><numResults>1</numResults>"
+        "<hasMore>false</hasMore><querySessionId>abc</querySessionId>"
+        f"<CompoundEmployee><person><person_id_external>p1</person_id_external>{inner}"
+        "</person></CompoundEmployee></result></queryResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>"
+    )
+
+
+def test_ce_unknown_segments_are_tokenized_and_known_ones_are_not(tmp_path):
+    xml = _ce_in_employee(
+        "<direct_deposit><bank_name>Some Bank</bank_name></direct_deposit>"
+        "<person_relation><relationship_type>Spouse</relationship_type></person_relation>"
+        "<job_relation><relationship_type>Manager</relationship_type></job_relation>"
+        "<employment_information><job_information><job_code>J1</job_code>"
+        "<city>Plant City</city></job_information></employment_information>"
+    )
+    out, count = _filter(tmp_path, tier=1).tokenize_xml(xml)
+    assert count == 3
+    for plain in ("Some Bank", "Spouse", "Manager"):
+        assert plain not in out
+    assert "<job_code>J1</job_code>" in out and "<city>Plant City</city>" in out
+    assert "<person_id_external>p1</person_id_external>" in out
+    # SOAP envelope and paging elements sit outside CompoundEmployee.
+    for kept in ("numResults>1<", "hasMore>false<", "querySessionId>abc<"):
+        assert kept in out
+
+
+def test_ce_leaf_outside_a_compound_employee_element_gets_star_rules_only(tmp_path):
+    xml = "<Envelope><Body><Fault><faultstring>bad request</faultstring></Fault></Body></Envelope>"
+    out, count = _filter(tmp_path).tokenize_xml(xml)
+    assert count == 0 and "bad request" in out
+
+
+def test_ce_date_of_birth_in_a_dependent_is_tier_two(tmp_path):
+    xml = _ce_in_employee(
+        "<dependent_information><date_of_birth>2010-01-01</date_of_birth></dependent_information>"
+    )
+    assert "2010-01-01" in _filter(tmp_path, tier=1).tokenize_xml(xml)[0]
+    assert "2010-01-01" not in _filter(tmp_path, tier=2).tokenize_xml(xml)[0]
+
+
+def test_ce_uses_the_immediate_parent_as_the_segment(tmp_path):
+    # A leaf whose parent is unknown is not judged by a mapped grandparent.
+    xml = _ce_in_employee(
+        "<job_information><mystery><city>Somewhere</city></mystery></job_information>"
+    )
+    out, count = _filter(tmp_path).tokenize_xml(xml)
+    assert count == 1 and "Somewhere" not in out
+
+
+def test_protects_truth_table(tmp_path):
+    pii = _filter(tmp_path, tier=2, extra={"cust_Foo": {}})
+    assert pii.protects("PerNationalId", "nationalId") is True
+    assert pii.protects("PerPerson", "dateOfBirth") is True
+    assert pii.protects("PerPerson", "personIdExternal") is False
+    assert pii.protects("PerPersonal", "gender") is False, "tier 3 at a tier 2 filter"
+    assert pii.protects("EmpJob", "jobCode") is False
+    assert pii.protects("EmpJob", "nationalId") is True, "star rule"
+    assert pii.protects("cust_Foo", "anything") is False
+    assert pii.protects("cust_Unknown", "anything") is True
+    assert pii.protects("", "anything") is True
+    assert pii.protects(None, "phoneNumber") is True, "protected in some entity"
+    assert pii.protects(None, "jobCode") is False
+    assert pii.protects(None, "gender") is False
+    assert _filter(tmp_path, tier=3).protects(None, "gender") is True
+    assert pii.protects("PerPerson", "DATEOFBIRTH") is True, "case-insensitive"
+    assert pii.protects(None, "phonenumber") is True

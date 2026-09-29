@@ -76,17 +76,48 @@ The same file can also set the tenant's `client_key`, `user_id`, `host` with
 `token_url`, `odata_version` and `pii_extra_fields`, so one MCP server serves
 several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
 
-- The same value always gets the same token, so the model can still compare,
-  group, count and join. It can also pass a token back in `$filter`; the
-  server resolves it before calling SuccessFactors.
+- Within a tenant the same value always gets the same token, so the model can
+  still compare, group, count and join. Tokens are bound to the tenant that
+  issued them: the same value gets a different token on another tenant, and a
+  token only resolves in queries to the tenant whose results it came from
+  (otherwise `pii_unknown_token`). Tokens from earlier versions no longer
+  resolve in queries; re-run the query. `successfactors-pii-reveal` reveals
+  old and new tokens from the same vault.
+- Where tokenization is on (a production tenant, or a test tenant at tier 1
+  or above), the model can pass a token back only as `field eq|ne '<token>'`,
+  `field eq|ne null` or `field in '<token>',...` in `$filter`; the server
+  resolves it before calling SuccessFactors. `odata_query` refuses anything
+  else with `pii_query_refused`, before sending: any other `$filter` use of a
+  tokenized field, any `$orderby`, `$apply` or `$compute` reference to one,
+  and any `$search`, including inside nested `$expand` options. Navigation
+  paths (`xxxNav/field`) are checked against every entity's tokenized fields,
+  and bare fields of an entity the map doesn't cover count as tokenized. The
+  automatic `$orderby` is skipped, with a warning, when the entity's key
+  properties are tokenized. At tier 0 none of this applies.
+- The map fails closed. Every text value in records of an entity the map
+  doesn't cover (MDF and custom objects, unlisted modules, untyped records)
+  and in Compound Employee segments it doesn't cover (e.g. `direct_deposit`,
+  `person_relation`, `job_relation`) is tokenized as tier 1, so at every
+  tier but 0. Reviewed Employee Central entities with no PII beyond the
+  map's cross-entity fields keep plaintext: `EmpJob`, `EmpEmployment`,
+  `EmpEmploymentTermination`, `EmpCompensation`, `EmpPayCompRecurring`,
+  `EmpPayCompNonRecurring`, `EmpJobRelationships`, `Position`,
+  `BenefitEnrollment`, `PaymentInformationV3`, the `FO*` foundation objects
+  and picklists, and the Compound Employee employment, job, compensation,
+  pay, deduction, global assignment, cost distribution and payment segments.
+  To keep an entity or segment you have reviewed in plaintext, list it in
+  `PII_EXTRA_FIELDS` (or the tenant file's `pii_extra_fields`) with the
+  fields that should still be tokenized, or `{}` for none, e.g.
+  `{"cust_Badge": {}}`. Custom fields on known entities (`customString*`,
+  `cust_*`, User `custom01`-`custom15`) stay plaintext unless listed there.
 - Binary content (photos, document scans) becomes `[PII-T<n>-REDACTED]`.
 - Entity-specific fields are found by the record's type: `__metadata.type`
-  (v2) or `@odata.type` (v4, requested with full metadata). A v4 record
-  without `@odata.type` (e.g. after a caller-supplied `$format=json`), or
-  with a type the PII map doesn't know, could be any entity, so every
-  entity's fields are tokenized in it, each at its most sensitive tier. URIs that can embed key values (`__metadata` URIs,
+  (v2) or `@odata.type` (v4, requested with full metadata). A top-level
+  record without a type is taken to be the queried entity set; any other
+  untyped record, or one with a type the PII map doesn't know, fails closed
+  as above. URIs that can embed key values (`__metadata` URIs,
   `__deferred`, nested `__next`, v4 `@odata.id`/`...Link`/`@odata.context`
-  annotations) are dropped.
+  annotations) are dropped; `__metadata` keeps only `type`.
 - Tiers are cumulative: tier 1 covers national IDs, passports, work permits,
   bank accounts and credentials. Tier 2 adds birth dates, home address,
   contact data on Per* entities (all emails and phones), login names,
@@ -105,8 +136,13 @@ several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
   the command from the same directory as the server, or set `PII_VAULT_DIR`
   explicitly.
 
-This keeps PII out of the model's context in the normal tool flow. It is not a
-sandbox against an agent that deliberately reads the vault or runs the reveal
+This keeps PII out of the model's context in the normal tool flow and refuses
+the query forms it can recognize as probing. It is not an access-control
+boundary: a model can still learn which records share a value and whether a
+value is empty, and, through navigation into entities the map doesn't cover or
+custom fields nobody listed, values it wasn't meant to see. Don't give a model
+access to a tenant whose PII it must not be able to infer. Nor is it a sandbox
+against an agent that deliberately reads the vault or runs the reveal
 command. With a local (non-Docker) server, deny both in Claude Code, e.g. in
 `.claude/settings.json`:
 

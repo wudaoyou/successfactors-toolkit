@@ -103,7 +103,7 @@ def test_odata_query_tier_zero_writes_plaintext_and_no_pii_keys(monkeypatch, tmp
 def test_odata_query_sends_plaintext_for_a_token_and_retokenizes_the_error_body(
     monkeypatch, tmp_path
 ):
-    vault = Vault(tmp_path / "vault")
+    vault = Vault(tmp_path / "vault", "example-a")
     token = f"[PII-T1-{vault.digest(_SSN)}]"
     vault.save({vault.digest(_SSN): _SSN})
     odata = _OData(fail=True)
@@ -228,7 +228,7 @@ def test_main_fails_fast_on_bad_pii_settings(monkeypatch):
 
 
 def _seed(tmp_path, value):
-    vault = Vault(tmp_path / "vault")
+    vault = Vault(tmp_path / "vault", "example-a")
     vault.save({vault.digest(value): value})
     return f"[PII-T1-{vault.digest(value)}]"
 
@@ -393,3 +393,155 @@ def test_each_call_uses_its_own_tenant_flag(monkeypatch, tmp_path):
     assert asyncio.run(mcp_server.ce_query())["pii_filter_tier"] == 3
     assert asyncio.run(mcp_server.ce_query(company_id="example-a"))["pii_filter_tier"] == 3
     assert asyncio.run(mcp_server.ce_query(company_id="example-b"))["pii_filter_tier"] == 1
+
+
+# --- query guard, tenant-bound tokens, fail-closed results ---------------
+
+
+def _query(path, params=None, **kwargs):
+    return asyncio.run(mcp_server.odata_query(path, params=params, max_pages=1, **kwargs))
+
+
+def _last_name_record(entity="PerPersonal", name="Smith"):
+    return {"__metadata": {"type": f"SFOData.{entity}"}, "personIdExternal": "p1", "lastName": name}
+
+
+def test_a_token_from_another_tenant_is_unknown_and_nothing_is_sent(monkeypatch, tmp_path):
+    odata = _OData([_last_name_record()])
+    _install(monkeypatch, tmp_path, odata=odata, production=True)
+    TenantStore(get_settings().tenant_keys_dir).set_production("example-b", False)
+    token = _query("PerPersonal", preview=1)["preview"][0]["lastName"]
+    assert re.fullmatch(r"\[PII-T3-[0-9a-f]{16}\]", token)
+    sent_before = len(odata.sent)
+    result = _query("PerPersonal", {"$filter": f"lastName eq '{token}'"}, company_id="example-b")
+    assert result["error"] == "pii_unknown_token" and result["tokens"] == [token]
+    assert "refresh" in result["detail"] or "re-run" in result["detail"]
+    assert len(odata.sent) == sent_before
+
+
+_PROBES = [
+    "startswith(nationalId,'1')",
+    "nationalId ge '5'",
+    "personNav/lastName ge 'M'",
+    "lastName eq 'Smith'",
+]
+
+
+def _refused(monkeypatch, tmp_path, path, params=None, production=True):
+    odata = _OData([_last_name_record()])
+    _install(monkeypatch, tmp_path, odata=odata, production=production)
+    result = _query(path, params)
+    assert result["error"] == "pii_query_refused", result
+    assert odata.sent == []
+    return result
+
+
+@pytest.mark.parametrize("probe", _PROBES)
+def test_production_tenant_refuses_a_probing_filter_in_path_or_params(monkeypatch, tmp_path, probe):
+    _refused(monkeypatch, tmp_path, f"PerPersonal?$filter={probe}")
+    _refused(monkeypatch, tmp_path, "PerPersonal", {"$filter": probe})
+
+
+@pytest.mark.parametrize(
+    "option",
+    ["$orderby=dateOfBirth", "$search=Smith", "$expand=personNav($filter=lastName ge 'M')"],
+)
+def test_production_tenant_refuses_orderby_search_and_nested_options(monkeypatch, tmp_path, option):
+    name, value = option.split("=", 1)
+    _refused(monkeypatch, tmp_path, f"PerPersonal?{option}")
+    _refused(monkeypatch, tmp_path, "PerPersonal", {name: value})
+
+
+def test_production_tenant_refuses_a_bad_second_filter_in_the_path(monkeypatch, tmp_path):
+    _refused(
+        monkeypatch,
+        tmp_path,
+        "PerPersonal?$filter=personIdExternal eq 'p1'&$filter=nationalId gt '1'",
+    )
+
+
+def test_production_tenant_allows_token_equality_and_sends_plaintext(monkeypatch, tmp_path):
+    odata = _OData()
+    _install(monkeypatch, tmp_path, odata=odata, production=True)
+    token = _seed(tmp_path, "Smith")
+    result = _query("PerPersonal", {"$filter": f"lastName eq '{token}'"})
+    assert "error" not in result
+    assert odata.sent[0][1]["$filter"] == "lastName eq 'Smith'"
+    _query(f"PerPersonal?$filter=lastName eq '{token}'")
+    _, params = split_path_query(odata.sent[1][0])
+    assert params == {"$filter": "lastName eq 'Smith'"}
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["EmpJob?$filter=company in 'A','B'", "EmpJob?$filter=jobInfoNav/company eq 'X'"],
+)
+def test_production_tenant_allows_filters_on_non_pii_fields(monkeypatch, tmp_path, query):
+    odata = _OData()
+    _install(monkeypatch, tmp_path, odata=odata, production=True)
+    assert "error" not in _query(query)
+    assert len(odata.sent) == 1
+
+
+def test_tier_zero_test_tenant_has_no_query_guard(monkeypatch, tmp_path):
+    odata = _OData()
+    _install(monkeypatch, tmp_path, odata=odata, tier="0", production=False)
+    result = _query("PerNationalId", {"$filter": "nationalId ge '5'"})
+    assert "error" not in result
+    assert odata.sent[0][1]["$filter"] == "nationalId ge '5'"
+
+
+def _stub_keys(monkeypatch, keys):
+    async def fake(company_id, entity):
+        return keys
+
+    monkeypatch.setattr(mcp_server, "_entity_key_properties", fake)
+
+
+def test_auto_orderby_is_skipped_when_a_key_is_tokenized(monkeypatch, tmp_path):
+    odata = _OData()
+    _install(monkeypatch, tmp_path, odata=odata)
+    _stub_keys(monkeypatch, ["documentNumber", "userId"])
+    result = asyncio.run(mcp_server.odata_query("EmpWorkPermit", max_pages=2))
+    assert "$orderby" not in odata.sent[0][1] and "orderby_added" not in result
+    [warning] = [w for w in result["warnings"] if "tokenized PII" in w]
+    assert "$orderby" in warning and "non-PII" in warning
+
+
+def test_auto_orderby_is_still_added_for_non_pii_keys(monkeypatch, tmp_path):
+    odata = _OData()
+    _install(monkeypatch, tmp_path, odata=odata)
+    _stub_keys(monkeypatch, ["userId", "seqNumber"])
+    result = asyncio.run(mcp_server.odata_query("EmpJob", max_pages=2))
+    assert odata.sent[0][1]["$orderby"] == "userId,seqNumber"
+    assert result["orderby_added"] == "userId,seqNumber"
+
+
+def _foo_and_job():
+    return [
+        {"__metadata": {"type": "SFOData.cust_Foo"}, "externalCode": "E1", "count": 3},
+        {"__metadata": {"type": "SFOData.EmpJob"}, "userId": "u1", "jobCode": "J1"},
+    ]
+
+
+def test_unknown_entity_records_are_tokenized_on_a_tier_one_tenant(monkeypatch, tmp_path):
+    _install(monkeypatch, tmp_path, odata=_OData(_foo_and_job()))
+    result = _query("cust_Foo", preview=2)
+    foo, job = result["preview"]
+    assert _TOKEN.fullmatch(foo["externalCode"]) and foo["count"] == 3
+    assert job["userId"] == "u1" and job["jobCode"] == "J1"
+    assert result["pii_tokenized"] == 1
+
+
+def test_untyped_records_take_the_entity_from_the_path(monkeypatch, tmp_path):
+    _install(monkeypatch, tmp_path, odata=_OData([{"externalCode": "E1"}]))
+    assert _TOKEN.fullmatch(
+        _query("cust_Foo?$select=externalCode", preview=1)["preview"][0]["externalCode"]
+    )
+
+
+def test_an_extra_fields_entry_marks_a_custom_entity_as_reviewed(monkeypatch, tmp_path):
+    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"cust_Foo": {}}')
+    _install(monkeypatch, tmp_path, odata=_OData(_foo_and_job()))
+    foo, job = _query("cust_Foo", preview=2)["preview"]
+    assert foo["externalCode"] == "E1" and job["jobCode"] == "J1"
