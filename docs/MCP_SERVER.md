@@ -8,9 +8,9 @@ SAML Bearer flow, tenant key store, and pagination logic as the REST API:
 | Tool | Arguments | Returns |
 |---|---|---|
 | `list_tenants` | — | Registered tenants (cert expiry) plus the `.env` default. |
-| `odata_metadata` | `company_id`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. When `entity` is given, its navigation properties (name, target entity, filterable) are included too — resolved from the full service `$metadata` (cached per `company_id`) since entity-scoped `$metadata` omits them. |
+| `odata_metadata` | `company_id`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. When `entity` is given, its navigation properties (name, target entity, filterable) are included too — resolved from the full service `$metadata` (cached per `company_id`) since entity-scoped `$metadata` omits them. On a v4 tenant `entity` is a service root (`talent/cdp/Learning.svc/v1`) or root plus entity set; both read that service's `$metadata`. v4 CSDL has no `sap:` attributes: navigations report `filterable` `"true"` and keys count as sortable. |
 | `compare_metadata` | `company_a`, `company_b`, `entity` | `in_sync`, a summary, and the per-entity drift, diffed server-side. |
-| `odata_query` | `path`, `company_id`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview` accepts 0-20 and values above zero inline only when at most 16 KiB. Query options may be passed in `path` (`"EmpJob?$select=..."`) or `params` — both are merged, `params` wins on conflict. When paging and no `$orderby` is given, one is added automatically from the entity's key properties (reported as `orderby_added`); `duplicate_records` and `warnings` (missing keys, suspected silent truncation) are surfaced when relevant. |
+| `odata_query` | `path`, `company_id`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview` accepts 0-20 and values above zero inline only when at most 16 KiB. Query options may be passed in `path` (`"EmpJob?$select=..."`) or `params` — both are merged, `params` wins on conflict. When paging and no `$orderby` is given, one is added automatically from the entity's key properties (reported as `orderby_added`); `duplicate_records` and `warnings` (missing keys, suspected silent truncation) are surfaced when relevant. On a v4 tenant `path` starts at the service root (`talent/cdp/Learning.svc/v1/Items`) and `paging=snapshot` is never added. |
 | `ce_query` | `company_id`, `person_id_external`, `user_id`, `last_modified_on`, `include_contingent_workers`, `select_segments`, `max_rows`, `max_pages` | Counts and one XML file path per page. |
 
 ## Payloads stay on disk
@@ -80,6 +80,13 @@ several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
   group, count and join. It can also pass a token back in `$filter`; the
   server resolves it before calling SuccessFactors.
 - Binary content (photos, document scans) becomes `[PII-T<n>-REDACTED]`.
+- Entity-specific fields are found by the record's type: `__metadata.type`
+  (v2) or `@odata.type` (v4, requested with full metadata). A v4 record
+  without `@odata.type` (e.g. after a caller-supplied `$format=json`), or
+  with a type the PII map doesn't know, could be any entity, so every
+  entity's fields are tokenized in it, each at its most sensitive tier. URIs that can embed key values (`__metadata` URIs,
+  `__deferred`, nested `__next`, v4 `@odata.id`/`...Link`/`@odata.context`
+  annotations) are dropped.
 - Tiers are cumulative: tier 1 covers national IDs, passports, work permits,
   bank accounts and credentials. Tier 2 adds birth dates, home address,
   contact data on Per* entities (all emails and phones), login names,

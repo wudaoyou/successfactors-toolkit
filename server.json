@@ -3,7 +3,7 @@
   "name": "io.github.wudaoyou/successfactors-toolkit",
   "title": "SAP SuccessFactors",
   "description": "SAP SuccessFactors OData and Compound Employee queries; PII is tokenized before reaching the model.",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "repository": {
     "url": "https://github.com/wudaoyou/successfactors-toolkit",
     "source": "github"
@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "docker.io/wudaoyou/successfactors-toolkit:v0.4.1",
+      "identifier": "docker.io/wudaoyou/successfactors-toolkit:v0.5.0",
       "transport": {
         "type": "stdio"
       }

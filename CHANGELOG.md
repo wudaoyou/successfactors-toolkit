@@ -4,6 +4,34 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-28
+
+### Added
+
+- OData v4 end to end (`odata_version` `v4`): `extract` and `odata_query`
+  read `value` and follow `@odata.nextLink`, taking only its `$skiptoken`,
+  `$skip` and `$top`, never its host or path; `extract-by-filter-in` sends
+  `col in ('a','b')`; `odata_metadata`, `compare_metadata` and the
+  auto-`$orderby` key lookup read v4 CSDL from the service's `$metadata`,
+  with navigation targets from `Type`. `paging=snapshot` is not added on v4.
+- PII tokenization for v4 records: the entity comes from `@odata.type`
+  (JSON is requested with `odata.metadata=full`), and a v4 record without
+  one, or with a type the PII map doesn't know, gets every entity's fields
+  tokenized, each at its most sensitive tier. Continuous Feedback's display
+  names (`feedback`, `feedbackRequests`) are mapped at tier 3.
+  v4 link annotations (`@odata.id`, `@odata.editLink`, `...@odata.nextLink`,
+  `...@odata.navigationLink`, media links, `@odata.context`) are dropped
+  like v2 `__metadata` URIs.
+
+### Changed
+
+- v4 requests go to `https://{host}/odatav4/{path}`, where `path` starts at
+  the API's service root (`talent/calibration/CalSession.svc/v1/...` or
+  `talent/continuousfeedback/v1/...`), instead of `/odata/v4/{path}`. A v4
+  path with neither a `.svc` nor a version segment is rejected with `400`.
+  v4 requests send `Accept: application/json;odata.metadata=full` and
+  `OData-MaxVersion: 4.0` instead of `$format=JSON`.
+
 ## [0.4.1] - 2026-09-28
 
 ### Added

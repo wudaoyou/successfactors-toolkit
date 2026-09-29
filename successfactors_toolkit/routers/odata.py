@@ -43,7 +43,7 @@ async def execute_odata(
 @router.post(
     "/extract",
     response_model=ODataExtractResponse,
-    summary="Bulk-extract an entity set, auto-following __next links",
+    summary="Bulk-extract an entity set, auto-following next links",
 )
 async def extract_odata(
     payload: ODataExtractRequest,

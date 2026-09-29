@@ -181,9 +181,10 @@ def _fields(tier: int, *names: str) -> dict[str, int]:
     return dict.fromkeys(names, tier)
 
 
-# {entity: {field: tier}}. Entity is the OData EntityType (from __metadata.type)
-# or a Compound Employee segment; "*" applies in every entity. Tiers: 1 = DHS
-# stand-alone sensitive PII, 2 = DHS in-combination + CCPA sensitive, 3 = other
+# {entity: {field: tier}}. Entity is the OData EntityType (from v2
+# __metadata.type or v4 @odata.type) or a Compound Employee segment; "*"
+# applies in every entity. Tiers: 1 = DHS stand-alone sensitive PII, 2 = DHS
+# in-combination + CCPA sensitive, 3 = other
 # directly identifying PII. OData names from tctrain $metadata (2026-09-24).
 # CE names checked against a tctrain payload (2026-09-24); names the test person
 # had no data for follow the same convention. CE payment segments reuse the OData
@@ -307,6 +308,12 @@ _BUILTIN_MAP: dict[str, dict[str, int]] = {
         **_fields(3, "name"),
     },
     "dependent_information": _fields(3, "first_name", "last_name"),
+    # OData v4 (entity = the @odata.type's last segment). Names from tctrain
+    # $metadata (2026-09-28): talent/continuousfeedback/v1.
+    "feedback": _fields(3, "senderDisplayName", "subjectDisplayName"),
+    "feedbackRequests": _fields(
+        3, "requesterDisplayName", "recipientDisplayName", "subjectDisplayName"
+    ),
 }
 # Binary content: redacted, never stored — the model has no use for it and
 # the original stays in SuccessFactors.
@@ -314,13 +321,26 @@ _BINARY_FIELDS = frozenset({"attachment", "fileContent", "photo"})
 
 
 _URI_KEYS = ("uri", "media_src", "edit_media")
+# v4 control information holding URLs, which embed key predicates (PII) like
+# v2's __metadata URIs do: "@odata.id", "empInfo@odata.nextLink",
+# "photo@odata.mediaReadLink", ... The bare 4.01 forms ("@id") too.
+_V4_LINK_KEY = re.compile(
+    r".*@(?:odata\.)?(?:context|id|editLink|readLink|navigationLink|associationLink"
+    r"|mediaReadLink|mediaEditLink|nextLink|deltaLink)"
+)
 
 
-def _entity_of(record: dict[str, Any]) -> str:
-    """ "SFOData.PerNationalId" -> "PerNationalId"; "*" without __metadata."""
-    meta = record.get("__metadata")
-    type_ = meta.get("type") if isinstance(meta, dict) else None
-    return type_.rsplit(".", 1)[-1] if isinstance(type_, str) else "*"
+def _entity_of(record: dict[str, Any], v4: bool = False) -> str | None:
+    """ "SFOData.PerNationalId" (v2 __metadata.type) or "#SFOData.PerNationalId"
+    (v4 @odata.type) -> "PerNationalId". Untyped: "*" for v2; None for v4,
+    where it means the type is unknown (see PiiFilter._tier)."""
+    type_ = record.get("@odata.type", record.get("@type"))
+    if not isinstance(type_, str):
+        meta = record.get("__metadata")
+        type_ = meta.get("type") if isinstance(meta, dict) else None
+    if isinstance(type_, str):
+        return type_.lstrip("#").rsplit(".", 1)[-1]
+    return None if v4 else "*"
 
 
 class PiiFilter:
@@ -330,12 +350,23 @@ class PiiFilter:
         self._map = {entity: dict(fields) for entity, fields in _BUILTIN_MAP.items()}
         for entity, fields in extra.items():
             self._map.setdefault(entity, {}).update(fields)
+        # Every mapped field at its most sensitive tier in any entity, for a
+        # v4 record whose type is unknown.
+        self._any: dict[str, int] = {}
+        for fields in self._map.values():
+            for field, tier in fields.items():
+                self._any[field] = min(tier, self._any.get(field, tier))
 
-    def _tier(self, entity: str, field: str) -> int | None:
-        """The field's tier if it is tokenized at this filter's level."""
-        tier = self._map.get(entity, {}).get(field)
-        if tier is None:
-            tier = self._map["*"].get(field)
+    def _tier(self, entity: str | None, field: str) -> int | None:
+        """The field's tier if it is tokenized at this filter's level.
+        entity=None (a v4 record without @odata.type) fails safe: the record
+        could be any entity, so every entity's rules apply to it."""
+        if entity is None:
+            tier = self._any.get(field)
+        else:
+            tier = self._map.get(entity, {}).get(field)
+            if tier is None:
+                tier = self._map["*"].get(field)
         return tier if tier is not None and tier <= self.tier else None
 
     def _token(self, tier: int, field: str, value: Any, pending: dict[str, str]) -> str:
@@ -346,9 +377,11 @@ class PiiFilter:
         pending[hex_] = text
         return f"[PII-T{tier}-{hex_}]"
 
-    def tokenize_records(self, records: Any) -> tuple[Any, int]:
+    def tokenize_records(self, records: Any, v4: bool = False) -> tuple[Any, int]:
         """OData JSON (a list of records, nested $expand included) with
-        mapped values tokenized. Returns a new structure and the count."""
+        mapped values tokenized. Returns a new structure and the count.
+        v4=True for OData v4 records: one without a known @odata.type gets every
+        entity's rules (see _tier) instead of only the "*" ones."""
         pending: dict[str, str] = {}
         count = 0
 
@@ -358,14 +391,17 @@ class PiiFilter:
                 return [visit(item) for item in node]
             if not isinstance(node, dict):
                 return node
-            entity = _entity_of(node)
+            entity = _entity_of(node, v4)
+            if v4 and entity not in self._map:
+                entity = None  # a v4 type the map doesn't know: same fail-safe as untyped
             out = {}
             for key, value in node.items():
-                if key == "__next":
+                if key == "__next" or _V4_LINK_KEY.fullmatch(key):
                     # Top-level response paging is consumed by the paging
                     # client before a record ever reaches here; a "__next"
                     # key this deep is an $expand-ed collection's own paging
                     # link, and it can embed key values (PII) in its URL.
+                    # v4 links (_V4_LINK_KEY) carry them the same way.
                     continue
                 if key in ("__metadata", "__deferred") and isinstance(value, dict):
                     # SF puts the record's key predicate in these URIs, and a
