@@ -1,6 +1,7 @@
 """successfactors-pii-reveal: local, stdout-by-default, never creates a vault."""
 
 import os
+import sqlite3
 import stat
 
 import pytest
@@ -13,7 +14,7 @@ from successfactors_toolkit.services.pii_filter import Vault
 def _vault(monkeypatch, tmp_path):
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
     get_settings.cache_clear()
-    vault = Vault(tmp_path / "vault")
+    vault = Vault(tmp_path / "vault", "example-a")
     hex_ = vault.digest("O'Brien")
     vault.save({hex_: "O'Brien"})
     return f"[PII-T3-{hex_}]"
@@ -115,3 +116,25 @@ def test_reveal_exits_2_on_invalid_settings(monkeypatch, tmp_path, capsys, name,
     err = capsys.readouterr().err
     assert err.count("\n") == 1  # one-line error, no traceback
     assert "error:" in err
+
+
+def test_reveal_resolves_tokens_from_every_tenant_and_from_legacy_rows(monkeypatch, tmp_path):
+    monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
+    get_settings.cache_clear()
+    tokens = []
+    for tenant, value in (("example-a", "alpha"), ("example-b", "beta")):
+        vault = Vault(tmp_path / "vault", tenant)
+        hex_ = vault.digest(value)
+        vault.save({hex_: value})
+        tokens.append(f"[PII-T1-{hex_}]")
+    legacy = "[PII-T1-0123456789abcdef]"
+    with sqlite3.connect(tmp_path / "vault" / "vault.sqlite") as db:
+        db.execute(
+            "INSERT INTO token (hex, value, tenant) VALUES (?, ?, NULL)",
+            ("0123456789abcdef", "gamma"),
+        )
+    report = tmp_path / "report.md"
+    report.write_text(" ".join([*tokens, legacy]), encoding="utf-8")
+    out = tmp_path / "out.md"
+    assert pii_reveal.main([str(report), "-o", str(out)]) == 0
+    assert out.read_text(encoding="utf-8") == "alpha beta gamma"

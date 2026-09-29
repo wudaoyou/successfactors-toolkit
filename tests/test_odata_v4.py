@@ -137,7 +137,7 @@ def test_v4_extract_by_filter_in_uses_the_parenthesised_in(monkeypatch):
 
 
 def _filter(tmp_path, tier=1):
-    return PiiFilter(tier, {}, Vault(tmp_path / "vault"))
+    return PiiFilter(tier, {}, Vault(tmp_path / "vault", "example-a"))
 
 
 def _v4_national_id(**extra):
@@ -364,7 +364,9 @@ def test_compare_metadata_on_v4_services(v4_tenant):
     assert result["differences"]["Item"]["changed"] == {"itemId": {"MaxLength": ["90", "128"]}}
 
 
-def test_odata_query_on_v4_orders_by_key_without_snapshot_paging(v4_tenant):
+def test_odata_query_on_v4_orders_by_key_without_snapshot_paging(v4_tenant, monkeypatch):
+    monkeypatch.setenv("PII_FILTER_TIER", "0")  # keys of an unknown entity are tokenized otherwise
+    get_settings.cache_clear()
     odata = v4_tenant(_V4OData([{"itemId": "1", "itemType": "A"}]))
     result = asyncio.run(mcp_server.odata_query(f"{_ROOT}/Items?$select=itemId,itemType"))
 
@@ -377,7 +379,7 @@ def test_odata_query_on_v4_orders_by_key_without_snapshot_paging(v4_tenant):
 def test_odata_query_on_v4_tokenizes_full_metadata_records(v4_tenant, monkeypatch):
     monkeypatch.setenv("PII_FILTER_TIER", "1")
     get_settings.cache_clear()
-    untyped = {"personIdExternal": "p2", "documentNumber": "A1234567"}
+    untyped = {"personIdExternal": "p2", "nationalId": "A1234567"}
     v4_tenant(_V4OData([_v4_national_id(), untyped]))
     result = asyncio.run(mcp_server.odata_query(f"{_ROOT}/PerNationalId", max_pages=1))
 

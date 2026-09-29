@@ -189,3 +189,19 @@ def test_main_module_delegates_to_package_module(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["mcp_server"])
     runpy.run_module("successfactors_toolkit.mcp_server", run_name="__main__")
     assert called == [True]
+
+
+def test_plugin_requests_keep_the_permissive_defaults(monkeypatch, tmp_path):
+    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
+    monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
+    TenantStore(str(tmp_path / "tenants")).set_production("example-b", False)
+    unknown = {"__metadata": {"type": "SFOData.cust_Foo"}, "externalCode": "E1"}
+    pii, path, params, _ = plugin_api.pii_request(
+        "PerPersonal?$filter=nationalId ge '5'",
+        {"$orderby": "dateOfBirth", "$search": "x"},
+        company_id="example-b",
+    )
+    assert path == "PerPersonal?$filter=nationalId ge '5'"
+    assert params == {"$orderby": "dateOfBirth", "$search": "x"}
+    records, count = pii.tokenize_records([unknown])
+    assert count == 0 and records == [unknown]

@@ -4,6 +4,50 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-29
+
+### Security
+
+- **Behavior change:** PII tokens are bound to the tenant that issued them:
+  the same value gets a different token on each tenant, the same token within
+  a tenant. A token resolves in queries only for the tenant whose results it
+  came from, otherwise `pii_unknown_token`. Tokens issued by earlier versions
+  no longer resolve in queries (re-run the query for current ones);
+  `successfactors-pii-reveal` still reveals old and new tokens from the same
+  `PII_VAULT_DIR`. Not configurable. Token format and vault layout are
+  unchanged; a tenant column is added to `vault.sqlite` on first open.
+- **Behavior change:** where tokenization is on (a production tenant, or a
+  test tenant at tier 1 or above), `odata_query` refuses with
+  `pii_query_refused`, before anything is sent, a `$filter` that uses a
+  tokenized field other than `field eq|ne '<token>'`, `field eq|ne null` or
+  `field in '<token>',...`; any `$orderby`, `$apply` or `$compute` reference
+  to a tokenized field; and any `$search`. The same applies inside nested
+  `$expand` options; navigation paths are checked against every entity's
+  tokenized fields, and bare fields of an entity the PII map doesn't cover
+  count as tokenized. The automatic `$orderby` is skipped, with a warning,
+  when the entity's key properties are tokenized. Test tenants at tier 0 are
+  unaffected; there is no other way to turn it off.
+- **Behavior change:** the PII map fails closed. Every text value in records
+  of an OData entity the map doesn't cover (MDF and custom objects, unlisted
+  modules, untyped records) and in Compound Employee segments it doesn't
+  cover (e.g. `direct_deposit`, `person_relation`, `job_relation`) is
+  tokenized as tier 1. Reviewed Employee Central entities with no PII beyond
+  the map's cross-entity fields keep plaintext: `EmpJob`, `EmpEmployment`,
+  `EmpEmploymentTermination`, `EmpCompensation`, `EmpPayCompRecurring`,
+  `EmpPayCompNonRecurring`, `EmpJobRelationships`, `Position`,
+  `BenefitEnrollment`, `PaymentInformationV3`, the `FO*` foundation objects
+  and picklists, and the Compound Employee employment, job, compensation,
+  pay, deduction, global assignment, cost distribution and payment segments.
+  To keep an entity or segment you have reviewed in plaintext, list it in
+  `PII_EXTRA_FIELDS` or the tenant file's `pii_extra_fields` with the fields
+  that should still be tokenized, or `{}` for none. Custom fields on known
+  entities (`customString*`, `cust_*`, User `custom01`-`custom15`) stay
+  plaintext unless listed there.
+- **Behavior change:** Compound Employee `national_id`, `date_of_birth`,
+  `first_name`, `last_name` and `middle_name` are tokenized in every segment.
+  v2 `__metadata` keeps only `type`, and `__deferred` is emptied. Not
+  configurable.
+
 ## [0.5.1] - 2026-09-29
 
 ### Security

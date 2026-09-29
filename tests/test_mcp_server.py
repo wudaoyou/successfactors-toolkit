@@ -414,6 +414,7 @@ def test_odata_query_omits_oversized_expanded_preview_but_saves_it(monkeypatch, 
     odata = _PreviewOData([record])
     monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    monkeypatch.setenv("PII_FILTER_TIER", "0")  # untyped nested records are tokenized otherwise
     get_settings.cache_clear()
 
     result = asyncio.run(mcp_server.odata_query(path="EmpJob", preview=1))
