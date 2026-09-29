@@ -25,6 +25,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated, Any
+from urllib.parse import parse_qsl
 
 import httpx
 from lxml import etree
@@ -34,7 +35,7 @@ from pydantic import Field
 from successfactors_toolkit.config import get_settings
 from successfactors_toolkit.models.common import ODataConnectionConfig, SFAPIConnectionConfig
 from successfactors_toolkit.models.sfapi import CEQueryFilter
-from successfactors_toolkit.services import pii_filter
+from successfactors_toolkit.services import pii_filter, pii_query_guard
 from successfactors_toolkit.services.ce_query_builder import COMMON_SEGMENTS, build_query_string
 from successfactors_toolkit.services.ce_response import parse_page
 from successfactors_toolkit.services.odata_client import (
@@ -173,9 +174,12 @@ def _attach_preview(out: dict[str, Any], records: list[Any], preview: int) -> No
 
 
 _PII_NOTE = (
-    "Values like [PII-T1-<hex>] are PII tokens: the same value always gives the "
-    "same token, so compare, group and count them freely, and pass them "
-    "unchanged in $filter or path — the server resolves them. "
+    "Values like [PII-T1-<hex>] are PII tokens, per tenant: the same value gives "
+    "the same token on the same tenant, so compare, group and count them freely. "
+    "In $filter a tokenized field can only be compared with eq, ne or in against "
+    "such tokens (the server resolves them); it can't be sorted, searched or "
+    "passed to functions. Records of entities the PII map doesn't cover have "
+    "every text value tokenized. "
     "[PII-T<n>-REDACTED] marks binary content that is not available."
 )
 
@@ -197,8 +201,14 @@ def _pii_error(exc: Exception) -> dict[str, Any]:
         return {
             "error": "pii_unknown_token",
             "tokens": exc.tokens,
-            "detail": "Not issued by this server's vault; use tokens exactly as returned.",
+            "detail": (
+                "Tokens only resolve on the tenant whose results they came from, and "
+                "tokens from an older server version must be refreshed by re-running "
+                "the query on this tenant."
+            ),
         }
+    if isinstance(exc, pii_query_guard.PiiQueryRefused):
+        return {"error": "pii_query_refused", "detail": str(exc)}
     return {"error": "pii_vault_unavailable", "detail": str(exc)}
 
 
@@ -237,7 +247,9 @@ def _pii_mark(out: dict[str, Any], pii: pii_filter.PiiFilter | None, count: int)
         out["pii_note"] = _PII_NOTE
 
 
-def _pii_tokenize_json_records(text: str, pii: pii_filter.PiiFilter) -> str | None:
+def _pii_tokenize_json_records(
+    text: str, pii: pii_filter.PiiFilter, *, fail_closed: bool = False
+) -> str | None:
     """`text`'s OData records, tokenized -- v2 ({"d": {"results": [...]}},
     {"d": {...}} for a single entity, or a bare list) or v4 ({"value": [...]},
     or the entity object itself) -- or None if it doesn't parse as JSON in one
@@ -256,12 +268,17 @@ def _pii_tokenize_json_records(text: str, pii: pii_filter.PiiFilter) -> str | No
         records = data.get("results", [data]) if isinstance(data, dict) else data
     if not isinstance(records, list):
         return None
-    records, _ = pii.tokenize_records(records, v4=v4)
+    records, _ = pii.tokenize_records(records, v4=v4, fail_closed=fail_closed)
     return json.dumps(records, ensure_ascii=False, default=str)
 
 
 def _pii_safe_error_body(
-    text: str, status_code: int, pii: pii_filter.PiiFilter | None, subs: dict[str, str]
+    text: str,
+    status_code: int,
+    pii: pii_filter.PiiFilter | None,
+    subs: dict[str, str],
+    *,
+    fail_closed: bool = False,
 ) -> str | None:
     """The body to hand back for a failed odata_query call. A >=400
     status is a genuine SF fault: only the plaintext the caller's own request
@@ -274,7 +291,7 @@ def _pii_safe_error_body(
         return text
     if status_code >= 400:
         return pii_filter.retokenize(text, subs)
-    return _pii_tokenize_json_records(text, pii)
+    return _pii_tokenize_json_records(text, pii, fail_closed=fail_closed)
 
 
 def _edmx_root(xml: str):
@@ -548,6 +565,24 @@ def _entity_from_path(path: str) -> str:
     "EmpJob('123')?$select=x" -> "EmpJob"."""
     base = path.split("?", 1)[0].split("(", 1)[0]
     return base.strip("/")
+
+
+def _query_entity(path: str) -> str:
+    """The entity bare property names in an odata_query path refer to: the last
+    resource segment. "" (unknown) after navigation from a key predicate."""
+    resource = path.split("?", 1)[0]
+    if ")/" in resource:
+        return ""
+    return resource.rsplit("/", 1)[-1].split("(", 1)[0].strip()
+
+
+def _query_options(path: str, params: dict[str, Any] | None) -> list[tuple[str, str]]:
+    """Every query option the request will send, duplicates included."""
+    options = parse_qsl(path.partition("?")[2], keep_blank_values=True)
+    options += [
+        (k, v if isinstance(v, str) else str(v)) for k, v in (params or {}).items() if v is not None
+    ]
+    return options
 
 
 def _looks_like_paging_rejection(body: str) -> bool:
@@ -838,8 +873,12 @@ async def odata_query(
     """
     if not 1 <= max_pages <= 10000 or not 0 <= preview <= 20:
         raise ValueError("max_pages must be 1-10000 and preview must be 0-20.")
+    raw_path, raw_params = path, params
+    entity = _query_entity(path)
     try:
         pii, path, params, pii_subs = _pii_request(path, params, company_id)
+        if pii is not None:
+            pii_query_guard.check_query(_query_options(raw_path, raw_params), entity, pii.protects)
     except (PiiVaultError, PiiUnknownTokenError) as exc:
         return _pii_error(exc)
     odata, _ = _clients()
@@ -859,7 +898,14 @@ async def odata_query(
     if paged:
         keys = await _entity_key_properties(company_id, _entity_from_path(path))
         if "$orderby" not in merged_view:
-            if keys:
+            if keys and pii is not None and any(pii.protects(entity, key) for key in keys):
+                warnings.append(
+                    "No $orderby was given and this entity's key properties hold "
+                    "tokenized PII on this tenant, so the server doesn't sort by them; "
+                    "paged results may contain duplicated or skipped rows. Pass "
+                    "$orderby on a non-PII field to avoid this."
+                )
+            elif keys:
                 orderby_added = ",".join(keys)
                 query_params["$orderby"] = orderby_added
             elif keys == []:
@@ -935,7 +981,7 @@ async def odata_query(
         detail = await odata.request("GET", path, conn=conn, params=query_params)
         try:
             error_body = _pii_safe_error_body(
-                str(detail["body"]), int(detail["status_code"]), pii, pii_subs
+                str(detail["body"]), int(detail["status_code"]), pii, pii_subs, fail_closed=True
             )
         except PiiVaultError as exc:
             return _pii_error(exc)
@@ -980,7 +1026,9 @@ async def odata_query(
     pii_count = 0
     if pii is not None:
         try:
-            results, pii_count = pii.tokenize_records(results, v4=v4)
+            results, pii_count = pii.tokenize_records(
+                results, v4=v4, entity=entity, fail_closed=True
+            )
         except PiiVaultError as exc:
             return _pii_error(exc)
 

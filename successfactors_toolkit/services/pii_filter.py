@@ -123,9 +123,17 @@ def _load_or_create_key(path: Path) -> bytes:
 
 
 class Vault:
-    """HMAC key plus a hex -> plaintext table, both owner-only on disk."""
+    """HMAC key plus a hex -> plaintext table, both owner-only on disk.
 
-    def __init__(self, directory: Path):
+    A vault opened for a tenant issues and resolves only that tenant's tokens:
+    the tenant is mixed into the digest and stored with each row. Rows written
+    before tokens were tenant-bound have no tenant and resolve only in a
+    vault opened without one, which is reveal-only (the reveal CLI).
+    Tier is deliberately not part of the binding: it is tenant-wide, and a
+    resolved value only goes back to the tenant it came from."""
+
+    def __init__(self, directory: Path, tenant: str | None = None):
+        self._tenant = tenant
         self._db_path = directory / "vault.sqlite"
         try:
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -136,13 +144,27 @@ class Vault:
                 os.close(os.open(self._db_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
             except FileExistsError:
                 _secure(self._db_path, 0o600, regular_file=True)
-            self._run(
-                lambda db: db.execute(
-                    "CREATE TABLE IF NOT EXISTS token (hex TEXT PRIMARY KEY, value TEXT NOT NULL)"
-                )
-            )
+            self._run(self._create_table)
         except OSError as exc:
             raise PiiVaultError(f"PII vault at {directory} is unavailable: {exc}") from exc
+
+    @staticmethod
+    def _create_table(db) -> None:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS token "
+            "(hex TEXT PRIMARY KEY, value TEXT NOT NULL, tenant TEXT)"
+        )
+
+        def has_tenant_column() -> bool:
+            return any(row[1] == "tenant" for row in db.execute("PRAGMA table_info(token)"))
+
+        if not has_tenant_column():
+            try:
+                db.execute("ALTER TABLE token ADD COLUMN tenant TEXT")
+            except sqlite3.OperationalError:
+                # A vault is opened per request; another opener may have added it first.
+                if not has_tenant_column():
+                    raise
 
     def _run(self, action):
         try:
@@ -151,14 +173,22 @@ class Vault:
         except sqlite3.Error as exc:
             raise PiiVaultError(f"PII vault database {self._db_path} failed: {exc}") from exc
 
+    def _issuer(self) -> str:
+        if self._tenant is None:
+            raise PiiVaultError("This PII vault handle has no tenant and cannot issue tokens")
+        return self._tenant
+
     def digest(self, value: str) -> str:
-        return hmac.new(self._key, value.encode("utf-8"), hashlib.sha256).hexdigest()[:_HEX_LEN]
+        message = f"{self._issuer()}\0{value}".encode()
+        return hmac.new(self._key, message, hashlib.sha256).hexdigest()[:_HEX_LEN]
 
     def save(self, pairs: dict[str, str]) -> None:
+        tenant = self._issuer()
         if pairs:
             self._run(
                 lambda db: db.executemany(
-                    "INSERT OR IGNORE INTO token (hex, value) VALUES (?, ?)", pairs.items()
+                    "INSERT OR IGNORE INTO token (hex, value, tenant) VALUES (?, ?, ?)",
+                    [(hex_, value, tenant) for hex_, value in pairs.items()],
                 )
             )
 
@@ -168,9 +198,13 @@ class Vault:
         for start in range(0, len(wanted), _LOOKUP_CHUNK):
             chunk = wanted[start : start + _LOOKUP_CHUNK]
             marks = ",".join("?" * len(chunk))
+            # A tenant sees only its own rows; no tenant (reveal) sees them all.
+            scope, args = (
+                ("", chunk) if self._tenant is None else (" AND tenant = ?", [*chunk, self._tenant])
+            )
             rows = self._run(
                 lambda db: db.execute(
-                    f"SELECT hex, value FROM token WHERE hex IN ({marks})", chunk
+                    f"SELECT hex, value FROM token WHERE hex IN ({marks}){scope}", args
                 ).fetchall()
             )
             found.update(rows)
@@ -180,6 +214,23 @@ class Vault:
 def _fields(tier: int, *names: str) -> dict[str, int]:
     return dict.fromkeys(names, tier)
 
+
+# Entities and CE segments reviewed as holding no PII beyond the "*" rules: known
+# to the map with no fields of their own, so fail-closed tokenization leaves
+# them alone. Anything not here, in _BUILTIN_MAP or in the extra fields is unknown.
+_REVIEWED_ENTITIES = (
+    # OData v2 (the first payment name also covers the CE payment header)
+    "EmpJob EmpEmployment EmpEmploymentTermination EmpCompensation EmpPayCompRecurring "
+    "EmpPayCompNonRecurring EmpJobRelationships Position BenefitEnrollment PaymentInformationV3 "
+    "FOCompany FOBusinessUnit FODivision FODepartment FOLocation FOLocationGroup FOCostCenter "
+    "FOJobCode FOJobFunction FOPayGrade FOPayRange FOPayComponent FOPayComponentGroup "
+    "FOPayGroup FOFrequency FOEventReason FOGeozone FOCorporateAddressDEFLT "
+    "Picklist PicklistOption PicklistLabel PickListV2 PickListValueV2 "
+    # Compound Employee
+    "CompoundEmployee employment_information job_information compensation_information "
+    "paycompensation_recurring paycompensation_non_recurring global_assignment_information "
+    "alternative_cost_distribution deduction_recurring deduction_non_recurring payment_information"
+).split()
 
 # {entity: {field: tier}}. Entity is the OData EntityType (from v2
 # __metadata.type or v4 @odata.type) or a Compound Employee segment; "*"
@@ -191,10 +242,13 @@ def _fields(tier: int, *names: str) -> dict[str, int]:
 # names (PaymentInformationV3 > PaymentInformationDetailV3), so one entry covers both.
 _BUILTIN_MAP: dict[str, dict[str, int]] = {
     "*": {
-        **_fields(1, "nationalId", "iban", "password"),
-        **_fields(2, "dateOfBirth"),
-        **_fields(3, "firstName", "lastName", "middleName"),
+        **_fields(1, "nationalId", "iban", "password", "national_id"),
+        **_fields(2, "dateOfBirth", "date_of_birth"),
+        **_fields(
+            3, "firstName", "lastName", "middleName", "first_name", "last_name", "middle_name"
+        ),
     },
+    **{entity: {} for entity in _REVIEWED_ENTITIES},
     "PerNationalId": _fields(1, "nationalId"),
     "EmpWorkPermit": _fields(1, "documentNumber", "attachment"),
     "PaymentInformationDetailV3": {
@@ -320,7 +374,10 @@ _BUILTIN_MAP: dict[str, dict[str, int]] = {
 _BINARY_FIELDS = frozenset({"attachment", "fileContent", "photo"})
 
 
-_URI_KEYS = ("uri", "media_src", "edit_media")
+# What survives of these control dicts: SF puts the record's key predicate in
+# their URIs, and a key can be PII (EmpWorkPermit documentNumber). Joins use
+# key fields, never URIs.
+_URI_KEYS = {"__metadata": ("type",), "__deferred": ()}
 # v4 control information holding URLs, which embed key predicates (PII) like
 # v2's __metadata URIs do: "@odata.id", "empInfo@odata.nextLink",
 # "photo@odata.mediaReadLink", ... The bare 4.01 forms ("@id") too.
@@ -369,6 +426,18 @@ class PiiFilter:
                 tier = self._map["*"].get(field)
         return tier if tier is not None and tier <= self.tier else None
 
+    def protects(self, entity: str | None, field: str) -> bool:
+        """Whether a query reference to `field` touches a value tokenized at
+        this filter's tier. entity=None (reached through a navigation path,
+        target unknown) is true if any entity tokenizes it; an entity the map
+        doesn't know is true (fail closed). Field names match case-insensitively,
+        in case SuccessFactors resolves them that way."""
+        if entity is not None and entity not in self._map:
+            return True
+        fields = self._any if entity is None else {**self._map["*"], **self._map[entity]}
+        tier = min((t for f, t in fields.items() if f.lower() == field.lower()), default=None)
+        return tier is not None and tier <= self.tier
+
     def _token(self, tier: int, field: str, value: Any, pending: dict[str, str]) -> str:
         if field in _BINARY_FIELDS:
             return f"[PII-T{tier}-REDACTED]"
@@ -377,23 +446,40 @@ class PiiFilter:
         pending[hex_] = text
         return f"[PII-T{tier}-{hex_}]"
 
-    def tokenize_records(self, records: Any, v4: bool = False) -> tuple[Any, int]:
+    def tokenize_records(
+        self,
+        records: Any,
+        v4: bool = False,
+        *,
+        entity: str | None = None,
+        fail_closed: bool = False,
+    ) -> tuple[Any, int]:
         """OData JSON (a list of records, nested $expand included) with
         mapped values tokenized. Returns a new structure and the count.
         v4=True for OData v4 records: one without a known @odata.type gets every
-        entity's rules (see _tier) instead of only the "*" ones."""
+        entity's rules (see _tier) instead of only the "*" ones.
+        fail_closed=True: a record whose entity (its type, or `entity` for an
+        untyped top-level record) the map doesn't know has every string value
+        tokenized at tier 1, and v4 no longer falls back to every entity's rules."""
         pending: dict[str, str] = {}
         count = 0
 
-        def visit(node: Any) -> Any:
+        def visit(node: Any, top_entity: str | None = None) -> Any:
             nonlocal count
             if isinstance(node, list):
-                return [visit(item) for item in node]
+                return [visit(item, top_entity) for item in node]
             if not isinstance(node, dict):
                 return node
-            entity = _entity_of(node, v4)
-            if v4 and entity not in self._map:
-                entity = None  # a v4 type the map doesn't know: same fail-safe as untyped
+            unknown = False
+            if fail_closed:
+                record = _entity_of(node, True) or top_entity
+                unknown = record not in self._map or record == "*"
+                if unknown:
+                    record = "*"
+            else:
+                record = _entity_of(node, v4)
+                if v4 and record not in self._map:
+                    record = None  # a v4 type the map doesn't know: same fail-safe as untyped
             out = {}
             for key, value in node.items():
                 if key == "__next" or _V4_LINK_KEY.fullmatch(key):
@@ -403,21 +489,37 @@ class PiiFilter:
                     # link, and it can embed key values (PII) in its URL.
                     # v4 links (_V4_LINK_KEY) carry them the same way.
                     continue
-                if key in ("__metadata", "__deferred") and isinstance(value, dict):
-                    # SF puts the record's key predicate in these URIs, and a
-                    # key can be PII (EmpWorkPermit documentNumber). Joins use
-                    # key fields, never URIs. Media links carry it too.
-                    value = {k: v for k, v in value.items() if k not in _URI_KEYS}
-                tier = None if isinstance(value, (dict, list)) else self._tier(entity, key)
+                if key in _URI_KEYS and isinstance(value, dict):
+                    out[key] = {k: v for k, v in value.items() if k in _URI_KEYS[key]}
+                    continue
+                if unknown and not key.startswith("__") and "@" not in key:
+                    # An entity nobody reviewed: any string may be PII.
+                    if isinstance(value, str) and value:
+                        out[key] = self._token(1, key, value, pending)
+                        count += 1
+                        continue
+                    if isinstance(value, list):
+                        items = []
+                        for item in value:
+                            if isinstance(item, str) and item:
+                                items.append(self._token(1, key, item, pending))
+                                count += 1
+                            else:
+                                items.append(visit(item))
+                        out[key] = items
+                        continue
+                tier = None if isinstance(value, (dict, list)) else self._tier(record, key)
                 if tier is None or value is None or value == "":
                     out[key] = visit(value)
                 else:
                     out[key] = self._token(tier, key, value, pending)
                     count += 1
-            # Property-bag records: {Name, Value} pairs keyed by Name.
+            # Property-bag records: {Name, Value} pairs keyed by Name. An unknown
+            # record already had every string tokenized above.
             name, value = out.get("Name"), out.get("Value")
             if (
-                isinstance(name, str)
+                not unknown
+                and isinstance(name, str)
                 and value not in (None, "")
                 and not isinstance(value, (dict, list))
             ):
@@ -427,12 +529,14 @@ class PiiFilter:
                     count += 1
             return out
 
-        result = visit(records)
+        result = visit(records, entity)
         self.vault.save(pending)
         return result, count
 
     def tokenize_xml(self, xml: str) -> tuple[str, int]:
-        """A Compound Employee page with mapped leaf values tokenized."""
+        """A Compound Employee page with mapped leaf values tokenized. A leaf is
+        judged by its immediate parent element as the segment; one inside a
+        CompoundEmployee whose segment isn't in the map is tokenized at tier 1."""
         # Same hardened settings as mcp_server._edmx_root / ce_response.parse_page.
         root = etree.fromstring(
             xml.encode("utf-8"), parser=etree.XMLParser(resolve_entities=False, no_network=True)
@@ -444,16 +548,17 @@ class PiiFilter:
         for element in root.iter():
             if not isinstance(element.tag, str) or len(element) or not element.text:
                 continue
-            segment = next(
-                (
-                    etree.QName(ancestor).localname
-                    for ancestor in element.iterancestors()
-                    if etree.QName(ancestor).localname in self._map
-                ),
-                "*",
-            )
             field = etree.QName(element).localname
-            tier = self._tier(segment, field)
+            parent = element.getparent()
+            segment = etree.QName(parent).localname if parent is not None else "*"
+            if segment in self._map:
+                tier = self._tier(segment, field)
+            elif any(
+                etree.QName(a).localname == "CompoundEmployee" for a in element.iterancestors()
+            ):
+                tier = 1  # a segment nobody reviewed: fail closed
+            else:
+                tier = self._tier("*", field)  # SOAP envelope, paging, faults
             if tier is not None:
                 element.text = self._token(tier, field, element.text, pending)
                 count += 1
@@ -489,7 +594,7 @@ def for_tenant(settings, company_id: str) -> PiiFilter | None:
     extra = {entity: dict(fields) for entity, fields in settings.pii_extra_fields.items()}
     for entity, fields in config.pii_extra_fields.items():
         extra.setdefault(entity, {}).update(fields)
-    return PiiFilter(tier, extra, Vault(settings.pii_vault_dir))
+    return PiiFilter(tier, extra, Vault(settings.pii_vault_dir, company_id))
 
 
 # A token as the model may write it: literal brackets or percent-encoded.

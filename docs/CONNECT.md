@@ -71,7 +71,7 @@ tenant; see [Per-tenant settings](#per-tenant-settings).
 | `TENANT_KEYS_DIR` | Where per-tenant key+cert pairs are stored (see below). Default `./tenants`. |
 | `RESULTS_DIR` | Payload output root. Program default: `./results`; MCP adds `/mcp/`. The Docker MCP guide sets `/data` and mounts a host `data` folder there. |
 | `PII_FILTER_TIER` | MCP PII tokenization level for **test** tenants: `0` off, `1` (default) stand-alone sensitive PII such as national IDs and bank accounts, `2` adds birth dates, home contact data and protected characteristics, `3` adds names and other identifying data. Production tenants are always tier 3 (see [Production or test](#production-or-test)). |
-| `PII_EXTRA_FIELDS` | JSON map of tenant-specific fields to tokenize, e.g. `{"PerPersonal": {"customString6": 2}}`. |
+| `PII_EXTRA_FIELDS` | JSON map of tenant-specific fields to tokenize, e.g. `{"PerPersonal": {"customString6": 2}}`; `{}` for an entity marks it reviewed, so it isn't tokenized whole (see [PII tokenization](MCP_SERVER.md#pii-tokenization)). |
 | `PII_VAULT_DIR` | Where the token key and vault live. Default `./pii_vault`. Must persist and must not be inside `RESULTS_DIR`. |
 
 ### Private key resolution order
