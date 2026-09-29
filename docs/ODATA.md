@@ -5,11 +5,12 @@
 | Endpoint | Use case |
 |---|---|
 | `POST /api/odata/execute` | One arbitrary OData call (`GET`/`POST`/`PATCH`/`PUT`/`DELETE`). |
-| `POST /api/odata/extract` | Bulk-extract an entity set, auto-following `__next` links. |
+| `POST /api/odata/extract` | Bulk-extract an entity set, auto-following next links (`__next`, v4 `@odata.nextLink`). |
 | `POST /api/odata/extract-by-filter-in` | Resolve N codes to records, auto-chunked under SF's `$filter` IN-list limit. |
 
 `$format=JSON` is auto-injected unless the path is `$metadata` (served as
-EDMX XML only) or the caller already set `$format`. All three endpoints
+EDMX XML only), the caller already set `$format`, or the tenant uses OData v4
+(see [OData v4](#odata-v4)). All three endpoints
 accept an optional `connection` override (host, OData version, credentials,
 `csrf_protected`) — see [Per-request connection override](#per-request-connection-override).
 
@@ -40,9 +41,9 @@ curl -X POST http://127.0.0.1:8000/api/odata/extract \
 ```
 
 Response includes `pages_fetched`, `total_records`, `results` (flattened
-`d.results`), `stopped_reason` (`exhausted` | `max_pages` | `http_error` |
-`parse_error`), and, if `max_pages` was hit mid-stream, `next_skiptoken` to
-resume via `params["$skiptoken"]`.
+`d.results`, or v4 `value`), `stopped_reason` (`exhausted` | `max_pages` |
+`http_error` | `parse_error`), and, if `max_pages` was hit mid-stream,
+`next_skiptoken` to resume via `params["$skiptoken"]`.
 
 **Footgun:** `extract` stops at `max_pages` and reports `stopped_reason`,
 but a truncated response can otherwise look identical to a complete one at a
@@ -68,6 +69,31 @@ URL query string, not a native `in()` (SF OData v2 doesn't accept it despite
 some docs listing it). A large `chunk_size` can push the request line past
 SuccessFactors' ~8 KB limit, returning `HTTP 414`. If you see `414`, lower
 `chunk_size`.
+
+## OData v4
+
+With `odata_version` `v4` (`SF_ODATA_VERSION`, the tenant file, or a
+per-request `connection`), requests go to `https://{host}/odatav4/{path}`.
+SuccessFactors serves each v4 API as its own service, so `path` starts at
+the service root, e.g.
+`talent/calibration/CalSession.svc/v1/CalibrationSession?$top=5`. The root
+ends at the `.svc` segment and its version, or, for services without one
+(`talent/continuousfeedback/v1`), at the first version segment; a path with
+neither is rejected with `400`. `$metadata` exists per service only
+(`talent/calibration/CalSession.svc/v1/$metadata`). The service roots are on
+each API's SAP Business Accelerator Hub page. Employee Central entities
+(`EmpJob`, `PerPerson`, ...) and Onboarding data are v2 only: the v4
+Onboarding and Succession services offer actions, not entity sets.
+
+- JSON is requested with `Accept: application/json;odata.metadata=full`
+  instead of `$format`, so every record carries `@odata.type`.
+- `extract` reads `value` and follows `@odata.nextLink`, taking only its
+  `$skiptoken`, `$skip` and `$top`: host, path and other options stay the
+  request's own. After `max_pages`, `next_skiptoken` is set for a
+  `$skiptoken` link; for a `$skip` link it is `null` — resume with
+  `$skip` = records fetched so far.
+- `extract-by-filter-in` sends `col in ('a','b')`.
+- `paging=cursor`/`snapshot` are v2 options.
 
 ## Per-request connection override
 

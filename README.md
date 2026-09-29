@@ -11,7 +11,11 @@ extraction, and integration development, exposed as a REST API and as an MCP
 | API | Protocol | Endpoint prefix |
 |-----|----------|-----------------|
 | EC SFAPI — Compound Employee | SOAP 1.1 | `/api/sfapi/ce/` |
-| OData | REST (v2) | `/api/odata/` |
+| OData | REST (v2, v4) | `/api/odata/` |
+
+OData v4 covers the SuccessFactors APIs published as v4 services (for example
+Calibration and Continuous Feedback); Employee Central and Onboarding data
+stay on v2. See [OData API](docs/ODATA.md#odata-v4).
 
 This is an independent project, not affiliated with or endorsed by SAP SE.
 SAP and SuccessFactors are trademarks of SAP SE.
@@ -57,7 +61,7 @@ CSV conversion requires local file tools in the AI application.
 | [REST API](docs/REST_API.md) | Fail-closed setup, install and run, cheat sheet, response format |
 | [Connect to SuccessFactors](docs/CONNECT.md) | Key pair generation, environment variables, private key resolution order, tenant management |
 | [EC SFAPI (SOAP)](docs/SFAPI.md) | Compound Employee single lookup, structured filter query, pagination, known footguns |
-| [OData API](docs/ODATA.md) | `execute` / `extract` / `extract-by-filter-in`, per-request connection override, known API footguns |
+| [OData API](docs/ODATA.md) | `execute` / `extract` / `extract-by-filter-in`, OData v4 services, per-request connection override, known API footguns |
 | [MCP server](docs/MCP_SERVER.md) | Tools for AI agents, payload handling, export formats, PII tokenization, plugins |
 | [Development](docs/DEVELOPMENT.md) | Local dev setup, linting, tests, release process |
 
