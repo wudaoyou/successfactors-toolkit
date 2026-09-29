@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-29
+
 ### Security
 
 - **Behavior change:** PII tokens are bound to the tenant that issued them:
