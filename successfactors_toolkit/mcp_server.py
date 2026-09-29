@@ -416,6 +416,11 @@ def _v4_entity_type(xml: str, entity: str) -> str:
     return name
 
 
+# Path segments of identifiers (dots only inside one, as in "Learning.svc"),
+# ending in $metadata: no query, fragment, escapes, key predicates or dot segments.
+_METADATA_PATH = re.compile(r"(?:[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/)*\$metadata")
+
+
 async def _fetch_metadata_xml(company_id: str, entity: str) -> tuple[str, dict[str, Any] | None]:
     """Fetch one instance's raw $metadata (EDMX). entity="" fetches the whole
     service. Returns (xml, error); shared by every metadata consumer below so
@@ -426,6 +431,15 @@ async def _fetch_metadata_xml(company_id: str, entity: str) -> tuple[str, dict[s
     path = f"{entity}/$metadata" if entity else "$metadata"
     if entity and _v4(company_id):
         path = f"{v4_service_root(entity)[0]}/$metadata"
+    # Metadata output is never PII-tokenized, so the path must not be able to
+    # reach anything but a $metadata document: an entity like "EmpJob?x=" would
+    # turn the request into a data query whose records come back untokenized.
+    if not _METADATA_PATH.fullmatch(path):
+        return "", {
+            "error": "invalid_entity",
+            "company_id": company_id,
+            "detail": f"entity {entity!r} is not an entity set name or service path.",
+        }
     r = await odata.request(
         method="GET", path=path, conn=ODataConnectionConfig(company_id=company_id or None)
     )
@@ -459,7 +473,6 @@ async def _field_map(company_id: str, entity: str) -> tuple[_FieldMap, dict[str,
             "error": "parse_error",
             "company_id": company_id,
             "detail": str(exc),
-            "body": xml[:2000],
         }
 
 
