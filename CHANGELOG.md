@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-29
+
 ### Security
 
 - `odata_metadata` and `compare_metadata` reject an `entity` that is not an
