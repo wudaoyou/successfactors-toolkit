@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-28
+
 ### Added
 
 - OData v4 end to end (`odata_version` `v4`): `extract` and `odata_query`
@@ -26,7 +28,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - v4 requests go to `https://{host}/odatav4/{path}`, where `path` starts at
   the API's service root (`talent/calibration/CalSession.svc/v1/...` or
   `talent/continuousfeedback/v1/...`), instead of `/odata/v4/{path}`. A v4
-  path with neither a `.svc` nor a version segment is rejected with `400`. v4 requests send `Accept: application/json;odata.metadata=full` and
+  path with neither a `.svc` nor a version segment is rejected with `400`.
+  v4 requests send `Accept: application/json;odata.metadata=full` and
   `OData-MaxVersion: 4.0` instead of `$format=JSON`.
 
 ## [0.4.1] - 2026-09-28
