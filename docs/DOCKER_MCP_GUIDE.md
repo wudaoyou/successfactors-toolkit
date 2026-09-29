@@ -128,7 +128,7 @@ Start Docker Desktop or your local Docker service with Docker Compose 2.30.0 or 
 ```yaml
 services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.5.2
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.5.2@sha256:88c7987a099056cd6fa652c444a400749654f762920cfdc1627dac368122e7e0
     command: ["python", "-m", "successfactors_toolkit.mcp_server"]
     user: "YOUR_UID:YOUR_GID"
     stdin_open: true
