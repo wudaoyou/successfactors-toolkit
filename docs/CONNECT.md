@@ -68,11 +68,29 @@ tenant; see [Per-tenant settings](#per-tenant-settings).
 | `SF_TOKEN_URL` | `https://{SF_HOST}/oauth/token`. |
 | `SF_ODATA_VERSION` | OData REST version, default `v2`. `v4` sends paths to `/odatav4/` and expects them to start at a service root; see [OData v4](ODATA.md#odata-v4). |
 | `REQUEST_TIMEOUT` | HTTP timeout in seconds, default `120` (long-running queries can take minutes per SAP KBA 2735876). |
+| `MAX_RESPONSE_BYTES`, `MAX_EXTRACT_BYTES`, `MAX_EXTRACT_SECONDS`, `MAX_FILTER_VALUES` | Per-call limits, see [Limits](#limits). |
 | `TENANT_KEYS_DIR` | Where per-tenant key+cert pairs are stored (see below). Default `./tenants`. |
 | `RESULTS_DIR` | Payload output root. Program default: `./results`; MCP adds `/mcp/`. The Docker MCP guide sets `/data` and mounts a host `data` folder there. |
 | `PII_FILTER_TIER` | MCP PII tokenization level for **test** tenants: `0` off, `1` (default) stand-alone sensitive PII such as national IDs and bank accounts, `2` adds birth dates, home contact data and protected characteristics, `3` adds names and other identifying data. Production tenants are always tier 3 (see [Production or test](#production-or-test)). |
 | `PII_EXTRA_FIELDS` | JSON map of tenant-specific fields to tokenize, e.g. `{"PerPersonal": {"customString6": 2}}`; `{}` for an entity marks it reviewed, so it isn't tokenized whole (see [PII tokenization](MCP_SERVER.md#pii-tokenization)). |
 | `PII_VAULT_DIR` | Where the token key and vault live. Default `./pii_vault`. Must persist and must not be inside `RESULTS_DIR`. |
+
+### Limits
+
+Each call is bounded in memory and time. A call that passes a limit fails with
+an error (`413` or `504` on the REST API) and never returns a shortened result
+as if it were complete.
+
+| Limit | Default | Applies to |
+|---|---|---|
+| `MAX_RESPONSE_BYTES` | 50 MiB | One SuccessFactors response, measured after decompression. |
+| `MAX_EXTRACT_BYTES` | 500 MiB | Response data gathered across the pages of one OData `extract` / `extract-by-filter-in` or Compound Employee `query-all` call. |
+| `MAX_EXTRACT_SECONDS` | 1800 | Duration of one multi-page extract, including the MCP `ce_query`; checked between pages. |
+| `MAX_FILTER_VALUES` | 10000 | Distinct `values` in one `extract-by-filter-in` call. |
+
+Fixed: one request, including its retries, takes at most 600 s, and 429
+`Retry-After` waits add up to at most 300 s (the 429 is returned after that).
+`max_pages` is at most 1000 for OData and 500 for Compound Employee.
 
 ### Private key resolution order
 

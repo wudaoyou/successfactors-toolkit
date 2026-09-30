@@ -40,6 +40,8 @@ curl -X POST http://127.0.0.1:8000/api/odata/extract \
   }'
 ```
 
+`max_pages` is 1–1000.
+
 Response includes `pages_fetched`, `total_records`, `results` (flattened
 `d.results`, or v4 `value`), `stopped_reason` (`exhausted` | `max_pages` |
 `http_error` | `parse_error`), and, if `max_pages` was hit mid-stream,
@@ -63,6 +65,10 @@ curl -X POST http://127.0.0.1:8000/api/odata/extract-by-filter-in \
     "max_pages_per_chunk": 100
   }'
 ```
+
+`column` is a property path (letters, digits, `_` and `/`). One call accepts at
+most `MAX_FILTER_VALUES` distinct values (default 10000); `max_pages_per_chunk`
+is 1–1000.
 
 **Footgun:** each chunk is sent as `col eq 'a' or col eq 'b' or ...` on the
 URL query string, not a native `in()` (SF OData v2 doesn't accept it despite

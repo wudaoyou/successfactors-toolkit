@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -293,10 +294,11 @@ class _RecordingHTTPClient:
         self.headers: dict[str, str] = {}
         self.url = ""
 
-    async def request(self, *, method, url, headers, params, json, timeout):
+    @asynccontextmanager
+    async def stream(self, method, url, *, headers, params, json, timeout):
         self.url = url
         self.headers = headers
-        return httpx.Response(200, text="", request=httpx.Request(method, url))
+        yield httpx.Response(200, text="", request=httpx.Request(method, url))
 
 
 def test_caller_headers_cannot_retarget_or_reauthorize_the_request():
