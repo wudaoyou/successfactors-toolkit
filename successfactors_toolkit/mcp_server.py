@@ -1101,7 +1101,7 @@ async def ce_query(
     answers INVALID_SFQL naming a segment, that module is not enabled on the
     tenant — pass a narrower list. Only documented segment names are accepted,
     and person_id_external / user_id values may contain only letters, digits,
-    space and _ . @ -.
+    space and _ . @ : / + -.
 
     Each queryMore page is written as its own XML file. The tool returns counts
     and paths only: one employee's payload is ~80 KB of HR data.

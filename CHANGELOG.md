@@ -19,7 +19,7 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - **Behavior change:** Compound Employee queries reject ID and code filter
   values (`person_id_external`, `user_id`, company, business unit, pay group,
   territory, division, location, employee class) with characters other than
-  letters, digits, space and `_ . @ -`, and empty list items;
+  letters, digits, space and `_ . @ : / + -`, and empty list items;
   `select_segments` accepts only the documented segment names. REST returns
   400 and MCP raises an error; nothing is sent to SuccessFactors.
 - **Behavior change:** the `extract-by-filter-in` `column` must be a property
