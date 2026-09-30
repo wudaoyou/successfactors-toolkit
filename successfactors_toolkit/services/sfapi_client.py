@@ -25,8 +25,8 @@ import httpx
 
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.models.common import SFAPIConnectionConfig
-from successfactors_toolkit.services import saml_bearer
-from successfactors_toolkit.services.connection_policy import check_host
+from successfactors_toolkit.services import http_limits, saml_bearer
+from successfactors_toolkit.services.connection_policy import check_host, check_identity
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.tenant_store import TenantStore
 
@@ -73,15 +73,17 @@ class SFAPIClient:
     def _resolve(self, conn: SFAPIConnectionConfig | None) -> dict:
         s = self._settings
         c = conn or SFAPIConnectionConfig()
-        company_id = _eff(c.company_id, s.sf_company_id)
+        company_id = c.company_id or s.sf_company_id
         # Per-request override, then the tenant's {company_id}.json, then SF_*.
         t = TenantStore(s.tenant_keys_dir).connection(company_id)
         return {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in _endpoint()'s URL.
             "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
-            "client_key": _eff(c.client_key, t.get("client_key", s.sf_client_key)),
-            "user_id": _eff(c.user_id, t.get("user_id", s.sf_user_id)),
+            "client_key": check_identity(
+                "client_key", c.client_key, t.get("client_key", s.sf_client_key)
+            ),
+            "user_id": check_identity("user_id", c.user_id, t.get("user_id", s.sf_user_id)),
             "company_id": company_id,
             "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
@@ -108,8 +110,11 @@ class SFAPIClient:
             timeout=self._settings.request_timeout,
         )
         envelope = _SOAP_ENVELOPE.format(body=_LOGIN_BODY)
-        resp = await self._client.post(
+        resp = await http_limits.send_capped(
+            self._client,
+            "POST",
             self._endpoint(r),
+            self._settings.max_response_bytes,
             content=envelope.encode("utf-8"),
             headers={
                 "Content-Type": "text/xml; charset=UTF-8",
@@ -138,15 +143,26 @@ class SFAPIClient:
         body: str,
         conn: SFAPIConnectionConfig | None,
     ) -> dict[str, str | int]:
+        return await http_limits.within_request_limit(self._send(soap_action, body, conn))
+
+    async def _send(
+        self,
+        soap_action: str,
+        body: str,
+        conn: SFAPIConnectionConfig | None,
+    ) -> dict[str, str | int]:
         r = self._resolve(conn)
         envelope = _SOAP_ENVELOPE.format(body=body).encode("utf-8")
         endpoint = self._endpoint(r)
         headers = {"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": soap_action}
         key = self._session_key(r)
 
-        async def _do_request(session_id: str) -> httpx.Response:
-            return await self._client.post(
+        async def _do_request(session_id: str) -> http_limits.CappedResponse:
+            return await http_limits.send_capped(
+                self._client,
+                "POST",
                 endpoint,
+                self._settings.max_response_bytes,
                 content=envelope,
                 headers={**headers, "Cookie": f"JSESSIONID={session_id}"},
                 timeout=self._settings.request_timeout,

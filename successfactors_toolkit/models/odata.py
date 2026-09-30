@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -14,6 +15,12 @@ _PATH_DESC = (
     "asOfDate/fromDate/toDate return ONLY today's effective record. "
     "Pass fromDate=1900-01-01&toDate=9999-12-31 for full history."
 )
+
+
+# A property or navigation path ("externalCode", "jobInfoNav/company"): it is
+# placed into $filter unquoted, so nothing else may get through.
+COLUMN_PATTERN = r"^[A-Za-z0-9_/]+$"
+COLUMN_RE = re.compile(COLUMN_PATTERN)
 
 
 class ODataRequest(BaseModel):
@@ -41,7 +48,7 @@ class ODataExtractRequest(BaseModel):
             "Otherwise client-side $skip+$top pagination is used."
         ),
     )
-    max_pages: int = Field(default=100, ge=1, le=10000, description="Safety cap.")
+    max_pages: int = Field(default=100, ge=1, le=1000, description="Safety cap.")
 
 
 class ODataExtractResponse(BaseModel):
@@ -66,14 +73,18 @@ class ODataExtractByFilterInRequest(BaseModel):
 
     connection: ODataConnectionConfig | None = None
     path: str = Field(..., description=_PATH_DESC)
-    column: str = Field(..., description="Column to filter on, e.g. 'externalCode'.")
+    column: str = Field(
+        ...,
+        pattern=COLUMN_PATTERN,
+        description="Column to filter on, e.g. 'externalCode'; a property path (letters, digits, '_' and '/').",
+    )
     values: list[str] = Field(..., description="Values to match. Deduplicated automatically.")
     params: dict[str, Any] | None = Field(
         default=None,
         description="Additional query params. An existing $filter is AND-combined with the IN clause.",
     )
     chunk_size: int = Field(default=1000, ge=1, le=1000)
-    max_pages_per_chunk: int = Field(default=100, ge=1, le=10000)
+    max_pages_per_chunk: int = Field(default=100, ge=1, le=1000)
 
 
 class ODataExtractByFilterInResponse(BaseModel):

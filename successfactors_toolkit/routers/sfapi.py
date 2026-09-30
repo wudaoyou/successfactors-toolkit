@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from successfactors_toolkit.config import get_settings
 from successfactors_toolkit.models.sfapi import (
     ApiResponse,
     CEQueryAllPage,
@@ -17,6 +18,7 @@ from successfactors_toolkit.services.ce_query_builder import (
     build_query_string,
 )
 from successfactors_toolkit.services.ce_response import parse_page
+from successfactors_toolkit.services.http_limits import ExtractBudget
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
 
 router = APIRouter(prefix="/sfapi", tags=["EC SFAPI — Compound Employee (SOAP)"])
@@ -36,14 +38,18 @@ def _params_from_filter(payload: CEQueryFilter) -> list[tuple[str, str]] | None:
     return params or None
 
 
-def _query_and_params(payload: CEQueryFilter) -> tuple[str, list[tuple[str, str]] | None]:
-    """Build the SFQL query and its params. A filter the builder rejects (an
-    ISO timestamp without a timezone, say) is the caller's mistake — 400, not
-    an unhandled 500."""
+def _build_query(payload: CEQueryFilter) -> str:
+    """Build the SFQL query. A filter the builder rejects (an ISO timestamp
+    without a timezone, a value with characters no ID has) is the caller's
+    mistake — 400, not an unhandled 500."""
     try:
-        return build_query_string(payload), _params_from_filter(payload)
+        return build_query_string(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _query_and_params(payload: CEQueryFilter) -> tuple[str, list[tuple[str, str]] | None]:
+    return _build_query(payload), _params_from_filter(payload)
 
 
 @router.post(
@@ -69,7 +75,7 @@ async def ce_query_by_person_id(
     payload: CEQueryByPersonIdRequest,
     client: Annotated[SFAPIClient, Depends(get_sfapi_client)],
 ) -> ApiResponse:
-    query_string = build_query_string(
+    query_string = _build_query(
         CEQueryFilter(
             person_id_external=",".join(payload.person_id_external),
             include_contingent_workers=payload.include_contingent_workers,
@@ -89,7 +95,7 @@ async def ce_query_by_user_id(
     payload: CEQueryByUserIdRequest,
     client: Annotated[SFAPIClient, Depends(get_sfapi_client)],
 ) -> ApiResponse:
-    query_string = build_query_string(
+    query_string = _build_query(
         CEQueryFilter(
             user_id=",".join(payload.user_id),
             include_contingent_workers=payload.include_contingent_workers,
@@ -122,12 +128,15 @@ async def ce_query_all(
 ) -> CEQueryAllResponse:
     """Run the initial query, then loop queryMore until SF reports
     hasMore=false or max_pages is hit. Pages are returned as a list — caller
-    stitches the sfobjects from each body."""
+    stitches the sfobjects from each body. The pages are held in memory, so the
+    call is bounded by MAX_EXTRACT_BYTES and MAX_EXTRACT_SECONDS."""
+    budget = ExtractBudget(get_settings())
     pages: list[CEQueryAllPage] = []
     query_string, params = _query_and_params(payload)
     result = await client.query(query_string, conn=payload.connection, params=params)
     stopped_reason = "exhausted"
     while True:
+        budget.spend(len(str(result["body"])))
         count, more, session, error = parse_page(str(result["body"]), int(result["status_code"]))
         pages.append(
             CEQueryAllPage(
@@ -146,6 +155,7 @@ async def ce_query_all(
         if len(pages) >= payload.max_pages:
             stopped_reason = "max_pages"
             break
+        budget.check_time()
         result = await client.query_more(session, conn=payload.connection)
     return CEQueryAllResponse(
         page_count=len(pages),

@@ -46,7 +46,8 @@ def require_admin_key(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Tenant admin API is disabled (set ADMIN_API_KEY to enable).",
         )
-    if not x_admin_key or not compare_digest(x_admin_key, settings.admin_api_key):
+    # compare_digest raises TypeError on non-ASCII str, so compare bytes.
+    if not x_admin_key or not compare_digest(x_admin_key.encode(), settings.admin_api_key.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid X-Admin-Key header.",

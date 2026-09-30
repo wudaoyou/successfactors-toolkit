@@ -40,6 +40,8 @@ curl -X POST http://127.0.0.1:8000/api/odata/extract \
   }'
 ```
 
+`max_pages` is 1–1000.
+
 Response includes `pages_fetched`, `total_records`, `results` (flattened
 `d.results`, or v4 `value`), `stopped_reason` (`exhausted` | `max_pages` |
 `http_error` | `parse_error`), and, if `max_pages` was hit mid-stream,
@@ -63,6 +65,10 @@ curl -X POST http://127.0.0.1:8000/api/odata/extract-by-filter-in \
     "max_pages_per_chunk": 100
   }'
 ```
+
+`column` is a property path (letters, digits, `_` and `/`). One call accepts at
+most `MAX_FILTER_VALUES` distinct values (default 10000); `max_pages_per_chunk`
+is 1–1000.
 
 **Footgun:** each chunk is sent as `col eq 'a' or col eq 'b' or ...` on the
 URL query string, not a native `in()` (SF OData v2 doesn't accept it despite
@@ -115,8 +121,13 @@ Onboarding and Succession services offer actions, not entity sets.
 `host` and `token_url` overrides are only accepted for the configured
 `SF_HOST`, a host listed in `SF_ALLOWED_HOSTS`, or a SAP SuccessFactors
 datacenter domain; anything else is rejected with `400`.
-`private_key_path` must resolve inside `TENANT_KEYS_DIR`, or the request is
-rejected with `400`. `csrf_protected` defaults to `false` (CSRF is a
+`private_key_path` must resolve inside `TENANT_KEYS_DIR/<company_id>/`, the
+key directory of the tenant the request names, or the request is rejected with
+`400`. `user_id` and `client_key` are the tenant's configured identity
+(`{company_id}.json`, else `SF_USER_ID` / `SF_CLIENT_KEY`): a request may repeat
+them, or supply them where none is configured, but a different value is
+rejected with `400`. An empty `company_id` means the default tenant
+(`SF_COMPANY_ID`). `csrf_protected` defaults to `false` (CSRF is a
 session-cookie defense, not needed under Bearer auth) — set it per request
 for tenants that enforce it.
 
