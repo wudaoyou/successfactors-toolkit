@@ -38,6 +38,7 @@ from successfactors_toolkit.models.sfapi import CEQueryFilter
 from successfactors_toolkit.services import pii_filter, pii_query_guard
 from successfactors_toolkit.services.ce_query_builder import COMMON_SEGMENTS, build_query_string
 from successfactors_toolkit.services.ce_response import parse_page
+from successfactors_toolkit.services.http_limits import ExtractBudget
 from successfactors_toolkit.services.odata_client import (
     ODataClient,
     split_path_query,
@@ -871,8 +872,8 @@ async def odata_query(
     return that many records inline only when their serialized UTF-8 size is at
     most 16 KiB. Otherwise, inspect the saved file locally.
     """
-    if not 1 <= max_pages <= 10000 or not 0 <= preview <= 20:
-        raise ValueError("max_pages must be 1-10000 and preview must be 0-20.")
+    if not 1 <= max_pages <= 1000 or not 0 <= preview <= 20:
+        raise ValueError("max_pages must be 1-1000 and preview must be 0-20.")
     raw_path, raw_params = path, params
     entity = _query_entity(path)
     try:
@@ -1098,7 +1099,9 @@ async def ce_query(
 
     select_segments defaults to the widely supported COMMON_SEGMENTS. If SF
     answers INVALID_SFQL naming a segment, that module is not enabled on the
-    tenant — pass a narrower list.
+    tenant — pass a narrower list. Only documented segment names are accepted,
+    and person_id_external / user_id values may contain only letters, digits,
+    space and _ . @ -.
 
     Each queryMore page is written as its own XML file. The tool returns counts
     and paths only: one employee's payload is ~80 KB of HR data.
@@ -1128,6 +1131,7 @@ async def ce_query(
     pages = 0
     total = 0
     has_more: bool | None = None
+    budget = ExtractBudget(get_settings())
     result = await sfapi.query(query, conn=conn, params=params)
 
     while True:
@@ -1173,6 +1177,7 @@ async def ce_query(
         files.append(_write(body, f"ce_query_p{pages}", company_id, "xml"))
         if not (has_more and session and pages < max_pages):
             break
+        budget.check_time()
         result = await sfapi.query_more(session, conn=conn)
 
     out = {

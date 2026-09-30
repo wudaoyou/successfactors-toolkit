@@ -62,6 +62,17 @@ class Settings(BaseSettings):
 
     # ── General ───────────────────────────────────────────────────────────────
     request_timeout: int = 120
+    # Bounds on memory and wall-clock per call; a call that passes one fails
+    # with an error rather than returning a shortened result. See
+    # services/http_limits.py.
+    # One upstream response.
+    max_response_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
+    # Response data gathered across all pages of one extract.
+    max_extract_bytes: int = Field(default=500 * 1024 * 1024, ge=1)
+    # Duration of one multi-page extract.
+    max_extract_seconds: int = Field(default=1800, ge=1)
+    # Distinct values in one extract-by-filter-in call.
+    max_filter_values: int = Field(default=10_000, ge=1)
 
     # Directory for payloads written to disk instead of returned in-band: the
     # MCP tools write under {results_dir}/mcp/. Relative paths resolve against

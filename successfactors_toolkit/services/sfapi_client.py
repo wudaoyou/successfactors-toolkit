@@ -25,7 +25,7 @@ import httpx
 
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.models.common import SFAPIConnectionConfig
-from successfactors_toolkit.services import saml_bearer
+from successfactors_toolkit.services import http_limits, saml_bearer
 from successfactors_toolkit.services.connection_policy import check_host
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.tenant_store import TenantStore
@@ -108,8 +108,11 @@ class SFAPIClient:
             timeout=self._settings.request_timeout,
         )
         envelope = _SOAP_ENVELOPE.format(body=_LOGIN_BODY)
-        resp = await self._client.post(
+        resp = await http_limits.send_capped(
+            self._client,
+            "POST",
             self._endpoint(r),
+            self._settings.max_response_bytes,
             content=envelope.encode("utf-8"),
             headers={
                 "Content-Type": "text/xml; charset=UTF-8",
@@ -138,15 +141,26 @@ class SFAPIClient:
         body: str,
         conn: SFAPIConnectionConfig | None,
     ) -> dict[str, str | int]:
+        return await http_limits.within_request_limit(self._send(soap_action, body, conn))
+
+    async def _send(
+        self,
+        soap_action: str,
+        body: str,
+        conn: SFAPIConnectionConfig | None,
+    ) -> dict[str, str | int]:
         r = self._resolve(conn)
         envelope = _SOAP_ENVELOPE.format(body=body).encode("utf-8")
         endpoint = self._endpoint(r)
         headers = {"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": soap_action}
         key = self._session_key(r)
 
-        async def _do_request(session_id: str) -> httpx.Response:
-            return await self._client.post(
+        async def _do_request(session_id: str) -> http_limits.CappedResponse:
+            return await http_limits.send_capped(
+                self._client,
+                "POST",
                 endpoint,
+                self._settings.max_response_bytes,
                 content=envelope,
                 headers={**headers, "Cookie": f"JSESSIONID={session_id}"},
                 timeout=self._settings.request_timeout,

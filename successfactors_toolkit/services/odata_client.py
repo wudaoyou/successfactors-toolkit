@@ -11,7 +11,8 @@ client_key), with a lock to coalesce concurrent first-call token storms.
 Retry policy (§12.7, p.228-229):
   * 401 once  — refresh token, retry
   * 429 up to MAX_RETRIES — honor Retry-After header (capped at 300s; SAP rate
-    limiting has been observed returning a 300s Retry-After)
+    limiting has been observed returning a 300s Retry-After); once the waits
+    add up to 300s the 429 is returned instead of waiting again
   * 5xx up to MAX_RETRIES — exponential backoff; ONLY for idempotent methods
     (GET/HEAD) since POST/PATCH/PUT/DELETE may have already mutated state.
 """
@@ -32,9 +33,11 @@ import httpx
 
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.models.common import ODataConnectionConfig
-from successfactors_toolkit.services import saml_bearer
+from successfactors_toolkit.models.odata import COLUMN_RE
+from successfactors_toolkit.services import http_limits, saml_bearer
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError, check_host
 from successfactors_toolkit.services.credentials import load_key_pem
+from successfactors_toolkit.services.http_limits import ExtractBudget
 from successfactors_toolkit.services.tenant_store import TenantStore
 
 _MUTATING = {"POST", "PATCH", "PUT", "DELETE"}
@@ -269,12 +272,14 @@ class ODataClient:
             return token
 
     async def _fetch_csrf_token(self, base_url: str, auth_header: str) -> str:
-        resp = await self._client.get(
+        # Only the header matters: leaving the stream unread skips the body.
+        async with self._client.stream(
+            "GET",
             f"{base_url}?$top=0",
             headers={"Authorization": auth_header, "X-CSRF-Token": "Fetch"},
             timeout=self._settings.request_timeout,
-        )
-        return resp.headers.get("x-csrf-token", "")
+        ) as resp:
+            return resp.headers.get("x-csrf-token", "")
 
     async def request(
         self,
@@ -284,6 +289,19 @@ class ODataClient:
         params: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return await http_limits.within_request_limit(
+            self._request(method, path, conn, params, body, extra_headers)
+        )
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        conn: ODataConnectionConfig | None,
+        params: dict[str, Any] | None,
+        body: dict[str, Any] | None,
+        extra_headers: dict[str, str] | None,
     ) -> dict[str, Any]:
         # Query options embedded in the path (e.g. "EmpJob?$select=userId") are
         # pulled out here so they reach the request instead of being silently
@@ -317,7 +335,7 @@ class ODataClient:
         else:
             format_headers = _V4_JSON_HEADERS if v4 else {"Accept": "application/json"}
 
-        async def _do(token: str) -> httpx.Response:
+        async def _do(token: str) -> http_limits.CappedResponse:
             auth_header = f"Bearer {token}"
             headers: dict[str, str] = {
                 **format_headers,
@@ -333,9 +351,11 @@ class ODataClient:
                 csrf = await self._fetch_csrf_token(base_url, auth_header)
                 if csrf:
                     headers["X-CSRF-Token"] = csrf
-            return await self._client.request(
-                method=m,
-                url=url,
+            return await http_limits.send_capped(
+                self._client,
+                m,
+                url,
+                self._settings.max_response_bytes,
                 headers=headers,
                 params=effective_params,
                 json=body,
@@ -343,8 +363,9 @@ class ODataClient:
             )
 
         token = await self._get_token(r)
-        resp: httpx.Response | None = None
+        resp: http_limits.CappedResponse | None = None
         token_refreshed = False
+        slept = 0.0
 
         for attempt in range(_MAX_RETRIES + 1):
             resp = await _do(token)
@@ -359,8 +380,12 @@ class ODataClient:
             # 429: always retryable (server didn't process the request)
             if sc == 429 and attempt < _MAX_RETRIES:
                 wait = _parse_retry_after(resp.headers.get("retry-after"))
+                if slept + wait > http_limits.MAX_RETRY_SLEEP_SECONDS:
+                    break  # the caller gets the 429 rather than a longer wait
                 # Add small jitter to avoid thundering herd on shared retry-after.
-                await asyncio.sleep(wait + random.uniform(0, 0.5))
+                pause = wait + random.uniform(0, 0.5)
+                slept += pause
+                await asyncio.sleep(pause)
                 continue
 
             # 5xx: retry only idempotent methods (mutating may have committed).
@@ -384,6 +409,7 @@ class ODataClient:
         conn: ODataConnectionConfig | None = None,
         params: dict[str, Any] | None = None,
         max_pages: int = 100,
+        budget: ExtractBudget | None = None,
     ) -> dict[str, Any]:
         """Auto-follow next links and aggregate records across pages: v2's
         `d.results` + `d.__next`, v4's `value` + `@odata.nextLink`.
@@ -393,6 +419,10 @@ class ODataClient:
         ``paging=cursor`` or ``paging=snapshot`` in params for server-side
         pagination (v2); otherwise client-side `$skip`+`$top` is used and the
         ``__next`` link follows the same offset semantics.
+
+        The whole call is bounded by MAX_EXTRACT_SECONDS and MAX_EXTRACT_BYTES
+        (``budget`` lets extract_by_filter_in share one allowance across its
+        chunks); passing either raises LimitExceededError.
 
         v4: only the link's paging options ($skiptoken, $skip, $top) are
         taken from `@odata.nextLink`; the request keeps this call's host,
@@ -420,6 +450,7 @@ class ODataClient:
             }
         """
         v4 = self._resolve(conn)["version"] == "v4"
+        budget = budget or ExtractBudget(self._settings)
         # Path options join the params here so a v4 link's paging options can
         # replace them; request() would merge them the same way.
         path, path_params = split_path_query(path)
@@ -433,7 +464,9 @@ class ODataClient:
         stopped = "exhausted"
 
         while pages < max_pages:
+            budget.check_time()
             resp = await self.request("GET", path, conn=conn, params=current_params)
+            budget.spend(len(resp["body"]))
             last_status = resp["status_code"]
             last_headers = resp["headers"]
 
@@ -524,6 +557,8 @@ class ODataClient:
         """
         if chunk_size > 1000:
             raise ValueError("chunk_size must be <= 1000 (SF $filter 'in' limit)")
+        if not COLUMN_RE.fullmatch(column):
+            raise ValueError("column must be a property path: letters, digits, '_' and '/'.")
         if not values:
             return {
                 "chunks_processed": 0,
@@ -536,6 +571,12 @@ class ODataClient:
         # Deduplicate while preserving order.
         seen: set[str] = set()
         deduped = [v for v in values if not (v in seen or seen.add(v))]
+        if len(deduped) > self._settings.max_filter_values:
+            raise http_limits.LimitExceededError(
+                413,
+                f"{len(deduped)} distinct values exceed the limit of "
+                f"{self._settings.max_filter_values}; split the lookup or raise MAX_FILTER_VALUES.",
+            )
 
         v4 = self._resolve(conn)["version"] == "v4"
         base_params = dict(params or {})
@@ -562,6 +603,7 @@ class ODataClient:
         all_results: list[dict[str, Any]] = []
         diagnostics: list[dict[str, Any]] = []
         total_pages = 0
+        budget = ExtractBudget(self._settings)
 
         for index, chunk in enumerate(chunks):
             chunk_params = {
@@ -573,6 +615,7 @@ class ODataClient:
                 conn=conn,
                 params=chunk_params,
                 max_pages=max_pages_per_chunk,
+                budget=budget,
             )
             all_results.extend(result["results"])
             total_pages += result["pages_fetched"]

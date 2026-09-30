@@ -38,10 +38,17 @@ with either. `last_modified_on` **must carry a timezone offset** (e.g.
 caps look-back on this filter at 3 months.
 
 `select_segments` overrides the default `DEFAULT_SEGMENTS` (22 segments,
-`SELECT *` is not supported by this API). `max_rows` is 1–800, sent as the
-`maxRows` SOAP parameter.
+`SELECT *` is not supported by this API); only those segment names are
+accepted. ID and code filters (`person_id_external`, `user_id`, `company`, ...)
+take comma-separated values of letters, digits, space and `_ . @ -`; anything
+else is rejected with `400` before a request is sent. `max_rows` is 1–800, sent
+as the `maxRows` SOAP parameter.
 
 ## Pagination
+
+`query-all` holds every page in memory, so it stops with an error once the
+pages total `MAX_EXTRACT_BYTES` or the call runs past `MAX_EXTRACT_SECONDS`
+(see [Limits](CONNECT.md#limits)).
 
 ```bash
 # Manual, one page at a time

@@ -136,6 +136,37 @@ def test_ce_query_writes_payload_to_disk_and_keeps_it_out_of_the_result(monkeypa
     assert all(stat.S_IMODE(Path(f).stat().st_mode) == 0o600 for f in result["files"])
 
 
+def test_ce_query_rejects_unvalidated_input_before_any_request(monkeypatch, tmp_path):
+    _, sfapi = _install(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        sfapi, "query", lambda *a, **k: pytest.fail("a rejected query must not be sent")
+    )
+
+    with pytest.raises(ValueError, match="Unknown segment"):
+        asyncio.run(
+            mcp_server.ce_query(
+                company_id="example-a",
+                user_id="u1",
+                select_segments=["person FROM CompoundEmployee where 1=1 --"],
+            )
+        )
+    with pytest.raises(ValueError, match="Invalid person_id_external"):
+        asyncio.run(
+            mcp_server.ce_query(
+                company_id="example-a", person_id_external="X') or person_id_external in('"
+            )
+        )
+
+
+@pytest.mark.parametrize("max_pages", [0, 1001])
+def test_odata_query_rejects_max_pages_outside_the_ceiling(monkeypatch, max_pages):
+    monkeypatch.setattr(
+        mcp_server, "_clients", lambda: pytest.fail("rejected before creating clients")
+    )
+    with pytest.raises(ValueError, match="max_pages must be 1-1000"):
+        asyncio.run(mcp_server.odata_query(path="EmpJob", max_pages=max_pages))
+
+
 def test_ce_query_surfaces_soap_faults_without_writing_a_file(monkeypatch, tmp_path):
     _, sfapi = _install(monkeypatch, tmp_path)
     fault = (

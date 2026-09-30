@@ -1,5 +1,6 @@
 import base64
 import unittest
+from contextlib import asynccontextmanager
 
 import httpx
 
@@ -15,11 +16,12 @@ class _RecordingHTTPClient:
         self.headers: dict = {}
         self.url = ""
 
-    async def request(self, *, method, url, headers, params, json, timeout):
+    @asynccontextmanager
+    async def stream(self, method, url, *, headers, params, json, timeout):
         self.url = url
         self.headers = headers
         self.params = params
-        return httpx.Response(200, text="", request=httpx.Request(method, url))
+        yield httpx.Response(200, text="", request=httpx.Request(method, url))
 
 
 def _client() -> tuple[ODataClient, _RecordingHTTPClient]:
