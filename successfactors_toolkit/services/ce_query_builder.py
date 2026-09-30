@@ -75,7 +75,7 @@ COMMON_SEGMENTS: tuple[str, ...] = (
 
 # SFQL has no documented escaping for quoted values, so values are restricted to
 # what SF IDs and codes are made of instead of being escaped.
-_VALUE_RE = re.compile(r"[A-Za-z0-9_.@ -]+")
+_VALUE_RE = re.compile(r"[A-Za-z0-9_.@ :/+-]+")
 
 
 def _in_clause(column: str, raw_value: str) -> str:
@@ -84,7 +84,7 @@ def _in_clause(column: str, raw_value: str) -> str:
     for v in values:
         if not _VALUE_RE.fullmatch(v):
             raise ValueError(
-                f"Invalid {column} value {v!r}: only letters, digits, space and _ . @ - "
+                f"Invalid {column} value {v!r}: only letters, digits, space and _ . @ : / + - "
                 "are allowed, and values must not be empty."
             )
     vals = "','".join(values)
@@ -107,7 +107,7 @@ def build_select_clause(segments: list[str] | tuple[str, ...] | None) -> str:
 
     Empty/None falls back to DEFAULT_SEGMENTS.
     """
-    seg = [s.strip() for s in segments or DEFAULT_SEGMENTS if s.strip()]
+    seg = [s.strip() for s in segments or () if s.strip()] or list(DEFAULT_SEGMENTS)
     unknown = [s for s in seg if s not in DEFAULT_SEGMENTS]
     if unknown:
         raise ValueError(

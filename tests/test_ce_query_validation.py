@@ -57,6 +57,17 @@ def test_normal_ids_and_segments_still_work():
     )
 
 
+def test_codes_with_slash_colon_plus_are_accepted():
+    f = CEQueryFilter(location="US/NY, LOC:01, A+B", select_segments=["person"])
+    assert build_query_string(f).endswith("location in('US/NY','LOC:01','A+B')")
+
+
+def test_blank_segment_list_falls_back_to_defaults():
+    assert build_query_string(CEQueryFilter(select_segments=[" "], user_id="u1")) == (
+        build_query_string(CEQueryFilter(user_id="u1"))
+    )
+
+
 def test_rest_returns_400_for_a_rejected_value():
     payload = CEQueryByPersonIdRequest(person_id_external=["X') or person_id_external in('"])
     with pytest.raises(HTTPException) as raised:

@@ -40,7 +40,7 @@ caps look-back on this filter at 3 months.
 `select_segments` overrides the default `DEFAULT_SEGMENTS` (22 segments,
 `SELECT *` is not supported by this API); only those segment names are
 accepted. ID and code filters (`person_id_external`, `user_id`, `company`, ...)
-take comma-separated values of letters, digits, space and `_ . @ -`; anything
+take comma-separated values of letters, digits, space and `_ . @ : / + -`; anything
 else is rejected with `400` before a request is sent. `max_rows` is 1–800, sent
 as the `maxRows` SOAP parameter.
 
