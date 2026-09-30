@@ -18,6 +18,12 @@ Requests then authenticate with an `X-API-Key` header (all `/api/*` routes)
 and, for `/api/tenants/*`, an additional `X-Admin-Key` header. `CORS_ORIGINS`
 is a JSON list of allowed browser origins and defaults to `[]` (closed).
 
+`API_KEY` is server-wide: it reaches every tenant the server holds a key for.
+The `connection` object of a data request may name the tenant's own key
+directory, but cannot change the tenant's configured `user_id` or `client_key`
+or use another tenant's key; see
+[What `API_KEY` grants](../SECURITY.md#what-api_key-grants).
+
 These two access keys apply to REST endpoints. They are not required by the
 stdio MCP workflow in the [README](../README.md), which connects directly to SuccessFactors using
 your SF credentials.

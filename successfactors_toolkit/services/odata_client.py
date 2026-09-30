@@ -33,7 +33,11 @@ import httpx
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.models.common import ODataConnectionConfig
 from successfactors_toolkit.services import saml_bearer
-from successfactors_toolkit.services.connection_policy import ConnectionPolicyError, check_host
+from successfactors_toolkit.services.connection_policy import (
+    ConnectionPolicyError,
+    check_host,
+    check_identity,
+)
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.tenant_store import TenantStore
 
@@ -212,15 +216,17 @@ class ODataClient:
         # those don't exist anymore, only SF_ODATA_VERSION is OData-specific).
         s = self._settings
         c = conn or ODataConnectionConfig()
-        company_id = _eff(c.company_id, s.sf_company_id)
+        company_id = c.company_id or s.sf_company_id
         t = TenantStore(s.tenant_keys_dir).connection(company_id)
         return {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in the request base_url.
             "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
             "version": _eff(c.odata_version, t.get("odata_version", s.sf_odata_version)),
-            "client_key": _eff(c.client_key, t.get("client_key", s.sf_client_key)),
-            "user_id": _eff(c.user_id, t.get("user_id", s.sf_user_id)),
+            "client_key": check_identity(
+                "client_key", c.client_key, t.get("client_key", s.sf_client_key)
+            ),
+            "user_id": check_identity("user_id", c.user_id, t.get("user_id", s.sf_user_id)),
             "company_id": company_id,
             "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
             "csrf_protected": c.csrf_protected,

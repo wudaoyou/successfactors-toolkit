@@ -215,7 +215,7 @@ def test_resolve_picks_the_tenant_file_for_odata_and_sfapi():
     )
 
 
-def test_request_override_beats_file_beats_env():
+def test_file_beats_env_and_a_request_cannot_replace_the_identity():
     _write("example-a", production=False, client_key="file-key")
     odata, sfapi = _clients()
     for client, config in ((odata, ODataConnectionConfig), (sfapi, SFAPIConnectionConfig)):
@@ -225,9 +225,38 @@ def test_request_override_beats_file_beats_env():
             "ENVUSER",
             "api.example.invalid",
         )
-        r = client._resolve(config(client_key="request-key"))
-        assert r["client_key"] == "request-key"
+        # Repeating the configured identity is fine; replacing it is not.
+        assert client._resolve(config(client_key="file-key", user_id="ENVUSER"))["user_id"] == (
+            "ENVUSER"
+        )
+        for override in ({"client_key": "request-key"}, {"user_id": "OTHER"}):
+            with pytest.raises(ConnectionPolicyError, match="cannot be overridden"):
+                client._resolve(config(**override))
+        # The file's own identity is pinned too, when the request names that tenant.
+        with pytest.raises(ConnectionPolicyError):
+            client._resolve(config(company_id="example-a", client_key="request-key"))
     assert odata._resolve(None)["version"] == "v2"
+
+
+def test_an_empty_company_id_uses_the_default_tenants_pinned_settings():
+    _file_connection("example-a")
+    for client, config in zip(_clients(), (ODataConnectionConfig, SFAPIConnectionConfig)):
+        r = client._resolve(config(company_id=""))
+        assert (r["company_id"], r["host"], r["client_key"], r["user_id"]) == (
+            "example-a",
+            _FILE_HOST,
+            "key-example-a",
+            "FILEUSER",
+        )
+        with pytest.raises(ConnectionPolicyError):
+            client._resolve(config(company_id="", user_id="OTHER"))
+
+
+def test_a_request_cannot_switch_to_another_user_than_the_tenants_file():
+    _file_connection("example-b")
+    for client, config in zip(_clients(), (ODataConnectionConfig, SFAPIConnectionConfig)):
+        with pytest.raises(ConnectionPolicyError, match="user_id"):
+            client._resolve(config(company_id="example-b", user_id="ENVUSER"))
 
 
 def test_a_disallowed_host_in_the_file_raises_the_policy_error():
@@ -256,8 +285,12 @@ def test_connection_uses_the_file_even_when_the_rest_is_invalid_or_unset(extra):
 def test_rest_override_host_beats_the_file():
     _file_connection("example-a")
     odata, _ = _clients()
-    r = odata._resolve(ODataConnectionConfig(host="api.example.invalid", client_key="k"))
-    assert (r["host"], r["client_key"], r["user_id"]) == ("api.example.invalid", "k", "FILEUSER")
+    r = odata._resolve(ODataConnectionConfig(host="api.example.invalid"))
+    assert (r["host"], r["client_key"], r["user_id"]) == (
+        "api.example.invalid",
+        "key-example-a",
+        "FILEUSER",
+    )
 
 
 # ── MCP: one server, two tenants ──────────────────────────────────────────

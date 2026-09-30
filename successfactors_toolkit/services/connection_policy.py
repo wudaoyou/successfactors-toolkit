@@ -2,9 +2,10 @@
 
 `SFAPIConnectionConfig` / `ODataConnectionConfig` let a caller holding only the
 plain API key redirect the server: an arbitrary `host`/`token_url` turns it into
-an authenticated HTTPS relay, and an arbitrary `private_key_path` makes it read
-any local file. These checks run where an override is consumed — before any
-network or filesystem I/O — so REST and MCP are covered by the same code path.
+an authenticated HTTPS relay, an arbitrary `private_key_path` makes it read
+any local file, and `user_id`/`client_key` choose which SF identity signs in.
+These checks run where an override is consumed — before any network or
+filesystem I/O — so REST and MCP are covered by the same code path.
 Values that come from Settings are trusted by definition.
 """
 
@@ -66,16 +67,32 @@ def check_token_url(token_url: str, settings: Settings) -> str:
     return token_url
 
 
-def check_key_path(path: str, settings: Settings) -> Path:
-    """Return the resolved key path if it stays inside the tenant key store."""
-    keys_dir = Path(settings.tenant_keys_dir).resolve()
-    # resolve() follows symlinks, so a link inside the store pointing out fails.
+def check_key_path(path: str, settings: Settings, company_id: str) -> Path:
+    """Return the resolved key path if it stays inside this tenant's key directory."""
+    tenant_dir = (Path(settings.tenant_keys_dir) / company_id).resolve()
+    # resolve() follows symlinks, so a link inside the directory pointing out fails.
     try:
         resolved = Path(path).resolve()
     except (OSError, ValueError) as exc:  # e.g. an embedded NUL, or a name too long
         raise ConnectionPolicyError(f"private_key_path {path!r} is not a usable path.") from exc
-    if not resolved.is_relative_to(keys_dir):
+    if not resolved.is_relative_to(tenant_dir):
         raise ConnectionPolicyError(
-            f"private_key_path {path!r} must be inside the tenant key store."
+            f"private_key_path {path!r} must be inside the key directory of tenant {company_id!r}."
         )
     return resolved
+
+
+def check_identity(field: str, override: str | None, configured: str) -> str:
+    """Return the `user_id`/`client_key` to sign in with.
+
+    `configured` is what the operator set for the tenant ({company_id}.json,
+    else Settings). A request may repeat it but not replace it; it may only
+    supply a value where nothing is configured.
+    """
+    if override is None or override == configured:
+        return configured
+    if configured:
+        raise ConnectionPolicyError(
+            f"{field} is configured for this tenant and cannot be overridden per request."
+        )
+    return override

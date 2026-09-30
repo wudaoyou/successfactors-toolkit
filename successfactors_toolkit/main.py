@@ -72,7 +72,8 @@ def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> Non
     expected = get_settings().api_key
     if not expected:
         raise HTTPException(503, "REST API disabled: configure API_KEY.")
-    if not key or not compare_digest(key, expected):
+    # compare_digest raises TypeError on non-ASCII str, so compare bytes.
+    if not key or not compare_digest(key.encode(), expected.encode()):
         raise HTTPException(401, "Missing or invalid X-API-Key header.")
 
 

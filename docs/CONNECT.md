@@ -57,7 +57,7 @@ tenant; see [Per-tenant settings](#per-tenant-settings).
 
 | Variable | Description |
 |---|---|
-| `API_KEY` | Required for any `/api/*` call. Sent as `X-API-Key`. Empty = all `/api/*` routes return 503. |
+| `API_KEY` | Required for any `/api/*` call. Sent as `X-API-Key`. Empty = all `/api/*` routes return 503. It grants the REST data routes for every tenant on the server, each under the tenant's own key and configured identity (see [Security](../SECURITY.md#what-api_key-grants)). |
 | `ADMIN_API_KEY` | Required for any `/api/tenants/*` call. Sent as `X-Admin-Key`. Empty = those routes return 503. |
 | `CORS_ORIGINS` | JSON list of allowed browser origins. Default `[]` (closed). |
 | `SF_HOST` | SuccessFactors host, e.g. `example.invalid`. |
@@ -78,7 +78,7 @@ tenant; see [Per-tenant settings](#per-tenant-settings).
 
 For each request, the toolkit resolves the RSA private key in this order:
 
-1. Per-request `connection.private_key_path` — must resolve to a path inside `TENANT_KEYS_DIR`, or the request is rejected with `400`.
+1. Per-request `connection.private_key_path` — must resolve to a path inside `{TENANT_KEYS_DIR}/{company_id}/` (the tenant the request names), or the request is rejected with `400`.
 2. `{TENANT_KEYS_DIR}/{company_id}/sf_private_key_{company_id}.pem` — populated via the tenant management API.
 3. `SF_PRIVATE_KEY_PEM_<COMPANY_ID>` env var (base64-encoded PEM, per company — for CI/CD).
 4. `SF_PRIVATE_KEY_PEM` env var (base64-encoded PEM, single-tenant fallback).
@@ -181,9 +181,11 @@ Only `production` is required; every other key falls back to the environment:
 ```
 
 - Precedence: a per-request connection override on the REST API, then the
-  file, then the environment. The MCP tools and the REST data routes all pick
-  the file up for the `company_id` they call; an empty `company_id` reads
-  `SF_COMPANY_ID`'s file.
+  file, then the environment. `user_id` and `client_key` are the exception: a
+  request may repeat the configured value, or supply one where none is
+  configured, but a different value is rejected with `400`. The MCP tools and the REST data routes all pick
+  the file up for the `company_id` they call; an empty `company_id` means
+  `SF_COMPANY_ID`.
 - The file is read on every call, so edits take effect without a restart.
   Edit it by hand; the API only sets `production`.
 - `host` and `token_url` pass the same allowlist as request overrides

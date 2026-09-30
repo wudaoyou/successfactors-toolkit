@@ -14,9 +14,11 @@ from successfactors_toolkit.services import saml_bearer
 from successfactors_toolkit.services.connection_policy import (
     ConnectionPolicyError,
     check_host,
+    check_identity,
     check_key_path,
     check_token_url,
 )
+from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.odata_client import ODataClient, api_url
 
 
@@ -85,30 +87,58 @@ def test_token_url_must_be_https_on_an_allowed_host(settings):
             check_token_url(bad, settings)
 
 
-def test_key_path_must_stay_inside_the_tenant_store(settings, tmp_path):
+def test_key_path_must_stay_inside_the_tenants_own_directory(settings, tmp_path):
     keys_dir = tmp_path / "tenants"
     (keys_dir / "demo").mkdir(parents=True)
     inside = keys_dir / "demo" / "sf_private_key_demo.pem"
     inside.write_bytes(b"synthetic-key")
-    assert check_key_path(str(inside), settings) == inside.resolve()
+    assert check_key_path(str(inside), settings, "demo") == inside.resolve()
 
     outside = tmp_path / "elsewhere.pem"
     outside.write_bytes(b"synthetic-key")
     with pytest.raises(ConnectionPolicyError):
-        check_key_path(str(outside), settings)
+        check_key_path(str(outside), settings, "demo")
     with pytest.raises(ConnectionPolicyError):
-        check_key_path(str(keys_dir / ".." / "elsewhere.pem"), settings)
+        check_key_path(str(keys_dir / ".." / "elsewhere.pem"), settings, "demo")
+    # The store's root is not the tenant's directory.
+    root_level = keys_dir / "stray.pem"
+    root_level.write_bytes(b"synthetic-key")
+    with pytest.raises(ConnectionPolicyError):
+        check_key_path(str(root_level), settings, "demo")
+
+
+def test_key_path_into_another_tenants_directory_is_rejected(settings, tmp_path):
+    other = tmp_path / "tenants" / "other"
+    other.mkdir(parents=True)
+    foreign = other / "sf_private_key_other.pem"
+    foreign.write_bytes(b"synthetic-key")
+    assert check_key_path(str(foreign), settings, "other") == foreign.resolve()
+    with pytest.raises(ConnectionPolicyError, match="tenant 'demo'"):
+        check_key_path(str(foreign), settings, "demo")
+
+
+def test_load_key_pem_rejects_another_tenants_key_and_an_empty_company_id(settings, tmp_path):
+    other = tmp_path / "tenants" / "other"
+    other.mkdir(parents=True)
+    foreign = other / "sf_private_key_other.pem"
+    foreign.write_bytes(b"other-tenant-key")
+    with pytest.raises(ConnectionPolicyError):
+        load_key_pem(str(foreign), settings, "demo")
+    assert load_key_pem(str(foreign), settings, "other") == b"other-tenant-key"
+    for bad in ("", "../other"):
+        with pytest.raises(ConnectionPolicyError):
+            load_key_pem(None, settings, bad)
 
 
 def test_symlink_out_of_the_tenant_store_is_rejected(settings, tmp_path):
     keys_dir = tmp_path / "tenants"
-    keys_dir.mkdir()
+    (keys_dir / "demo").mkdir(parents=True)
     outside = tmp_path / "elsewhere.pem"
     outside.write_bytes(b"synthetic-key")
-    link = keys_dir / "escape.pem"
+    link = keys_dir / "demo" / "escape.pem"
     link.symlink_to(outside)
     with pytest.raises(ConnectionPolicyError):
-        check_key_path(str(link), settings)
+        check_key_path(str(link), settings, "demo")
 
 
 def test_rest_rejects_a_foreign_host_with_400(api_client):
@@ -133,7 +163,58 @@ def test_rest_rejects_a_private_key_path_outside_the_store_with_400(api_client, 
         },
     )
     assert response.status_code == 400
-    assert "tenant key store" in response.json()["detail"]
+    assert "key directory of tenant" in response.json()["detail"]
+
+
+def test_rest_rejects_another_tenants_private_key_with_400(api_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_KEYS_DIR", str(tmp_path / "tenants"))
+    get_settings.cache_clear()
+    other = tmp_path / "tenants" / "other"
+    other.mkdir(parents=True)
+    foreign = other / "sf_private_key_other.pem"
+    foreign.write_bytes(b"synthetic-key")
+    response = api_client.post(
+        "/api/odata/execute",
+        headers={"X-API-Key": "test-api-key"},
+        json={
+            "path": "User",
+            "connection": {"company_id": "demo", "private_key_path": str(foreign)},
+        },
+    )
+    assert response.status_code == 400
+    assert "key directory of tenant" in response.json()["detail"]
+
+
+def test_rest_rejects_an_empty_company_id_with_no_default_tenant(api_client, monkeypatch):
+    monkeypatch.setenv("SF_COMPANY_ID", "")
+    get_settings.cache_clear()
+    response = api_client.post(
+        "/api/odata/execute",
+        headers={"X-API-Key": "test-api-key"},
+        json={"path": "User", "connection": {"company_id": ""}},
+    )
+    assert response.status_code == 400
+    assert "company_id" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("header", ["X-API-Key", "X-Admin-Key"])
+def test_non_ascii_access_keys_are_401_not_500(header, monkeypatch):
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key")
+    get_settings.cache_clear()
+    headers = {"X-API-Key": "test-api-key"}
+    headers[header] = "k\u00e9y".encode("utf-8")
+    with TestClient(app) as client:
+        assert client.get("/api/tenants", headers=headers).status_code == 401
+
+
+def test_identity_may_be_repeated_or_set_where_unconfigured_but_not_replaced():
+    assert check_identity("user_id", None, "FILEUSER") == "FILEUSER"
+    assert check_identity("user_id", "FILEUSER", "FILEUSER") == "FILEUSER"
+    assert check_identity("user_id", "ANYONE", "") == "ANYONE"
+    for override in ("OTHER", ""):
+        with pytest.raises(ConnectionPolicyError, match="user_id"):
+            check_identity("user_id", override, "FILEUSER")
 
 
 # ── Adversarial review follow-ups ─────────────────────────────────────────────
@@ -163,7 +244,7 @@ def test_unparseable_overrides_are_policy_errors_not_crashes(settings):
     with pytest.raises(ConnectionPolicyError):
         check_token_url("https://[::1", settings)  # urlsplit raises ValueError
     with pytest.raises(ConnectionPolicyError):
-        check_key_path("\x00", settings)  # Path.resolve raises ValueError
+        check_key_path("\x00", settings, "demo")  # Path.resolve raises ValueError
 
 
 def test_rest_rejects_an_unparseable_private_key_path_with_400(api_client):
