@@ -4,6 +4,88 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-01
+
+### Security
+
+- The Docker base image is pinned to a `python:3.12-slim` digest, which
+  Dependabot keeps current. CI installs the pinned `requirements-dev.txt`
+  set, the same one the image ships, instead of the `pyproject.toml` floors
+  (#83).
+- `.gitignore` now covers `credentials/`, `data/` and `*.env`, and
+  `scripts/check_repository.py` also fails on tracked files there and on
+  base64-encoded PEM private keys, wrapped or not (#84).
+- **Behavior change:** both Compose files now run the container with a
+  read-only root filesystem, all capabilities dropped, `no-new-privileges` and
+  a 256-process limit, with `/tmp` as a tmpfs. The tenant keys volume (REST)
+  and the results and PII vault mounts (MCP) stay writable, so a
+  `RESULTS_DIR`, `PII_VAULT_DIR` or `TENANT_KEYS_DIR` outside a mounted
+  volume now needs its own writable mount. The CI container smoke test runs
+  with the same restrictions (#91).
+- The release workflow is split into `publish`, `attest` and `release` jobs:
+  `id-token: write` is granted only to the signing job, `contents: write` only
+  to the job that creates the GitHub Release, and the Docker Hub token only to
+  the publishing job, which runs in the `dockerhub` environment so the token
+  can be held as an environment secret limited to `v*` tags (#92).
+- `SF_PRIVATE_KEY_PEM`, `ADMIN_API_KEY` and `API_KEY` are held as `SecretStr` in
+  `Settings`, and settings validation errors no longer echo input values. A bad
+  setting at startup (printed to stderr in MCP mode) can no longer show the
+  first and last characters of these secrets. Environment variable names and
+  behavior are unchanged; plugin code that reads these three `Settings` fields
+  now calls `.get_secret_value()`. (#85)
+- **Behavior change:** the `headers` (and `last_headers`) in REST API responses
+  now carry only `content-type`, `etag`, `last-modified`, `location`,
+  `retry-after`, `odata-version` and `dataserviceversion` from SuccessFactors;
+  `Set-Cookie` and every other header are no longer passed through. (#86)
+- A failed SFAPI login now reports the HTTP status only; the first 500
+  characters of the SuccessFactors response body are no longer included in the
+  error, which reached the model. (#92)
+- The OData client caches an access token for the `expires_in` the token
+  endpoint reports, less a tenth of it (at most one hour), instead of a fixed
+  23 hours; without a usable `expires_in` it still caches for 23 hours. (#92)
+- Token fetches (OData) and SFAPI logins are serialized per tenant instead of
+  behind one process-wide lock, so a slow tenant no longer blocks the others.
+  (#92)
+- **Behavior change:** where PII tokenization is on, MCP `odata_query`
+  returns `next_skiptoken` as a `[PII-T1-<hex>]` token, since a server may
+  build it from key values; passed back in `params["$skiptoken"]` it resolves
+  as before. REST is unchanged. (#92)
+- A tokenized value echoed in a JSON error body with JSON escapes (`\uXXXX`
+  in either case, `\/`) is now put back under its token. (#92)
+- A resolved token value has its single quotes doubled wherever the token
+  sits inside an OData string literal, not only right after the opening
+  quote (e.g. two tokens in one literal, or text before the token). (#92)
+- **Behavior change:** security-relevant events are written to stderr as
+  `key=value` audit lines (logger `successfactors_toolkit.audit`), on by
+  default with no off switch, so a log sink fed from stderr sees new
+  `WARNING` lines after upgrade: key install and delete, `production` flag
+  changes, accepted and rejected connection overrides (each with the
+  `company_id` it targeted), a `host` or `token_url` from tenant or `SF_*`
+  configuration that fails the policy (`event=connection_config`, not
+  reported as a rejected override), `X-API-Key` / `X-Admin-Key` failures and
+  refused SuccessFactors token requests. Lines hold identifiers and outcomes
+  only, never secrets, `connection` values or PII (`SECURITY.md`). (#89)
+- **Behavior change:** the keypair endpoint rejects a private key that is not
+  RSA or is under 2048 bits (an EC key cannot sign the `rsa-sha256` assertion
+  and used to fail only at runtime), and a certificate whose `notBefore` is
+  more than 5 minutes ahead (`certificate_not_yet_valid`), with 400. (#90)
+- **Behavior change:** tenant files are matched by `company_id` with exact
+  case, on case-insensitive filesystems (macOS, Docker Desktop bind mounts)
+  too: `DEMO` no longer reads the key, `{company_id}.json` settings or
+  production flag in `tenants/demo/`, and resolves like a company without a
+  tenant directory. Installing a tenant whose directory exists in another case
+  returns 409. (#87)
+- Installing a keypair swaps the new tenant directory in with one atomic
+  rename, so the tenant never disappears mid-install (which made key lookup
+  fall back to the global key); on a filesystem without an atomic exchange
+  (some FUSE or network mounts) the key and certificate are replaced one file
+  at a time instead. It also checks for an existing tenant under a
+  lock file (`TENANT_KEYS_DIR/.lock`) that serializes threads and processes,
+  so concurrent POSTs without `?force=true` cannot both succeed. (#88)
+- `TENANT_KEYS_DIR` and tenant directories are created mode 0700, including
+  `/data/tenants` in the Docker image; existing directories keep their mode.
+  (#92)
+
 ## [0.5.3] - 2026-09-30
 
 ### Security

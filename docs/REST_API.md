@@ -59,8 +59,9 @@ docker compose up --build
 
 Binds to `127.0.0.1:8000` by default (see `docker-compose.yml`). Tenant keys
 are stored in a named volume mounted at `TENANT_KEYS_DIR=/data/tenants`
-inside the container. This Compose service runs the REST API, not the MCP
-server. For Docker MCP, use the client configuration in the [business user guide](DOCKER_MCP_GUIDE.md).
+inside the container. The container's root filesystem is read-only and all
+capabilities are dropped; only that volume and `/tmp` are writable. This
+Compose service runs the REST API, not the MCP server. For Docker MCP, use the client configuration in the [business user guide](DOCKER_MCP_GUIDE.md).
 
 ### Run the MCP server with a local Python installation
 
@@ -133,3 +134,8 @@ All `/api/sfapi/*` and `/api/odata/execute` calls return the same shape:
   "body": "<raw response body as a string — XML for SFAPI, JSON for OData>"
 }
 ```
+
+`headers` holds only these SuccessFactors response headers, lowercased, when
+present: `content-type`, `etag`, `last-modified`, `location`, `retry-after`,
+`odata-version`, `dataserviceversion`. Everything else (notably `Set-Cookie`)
+is dropped.

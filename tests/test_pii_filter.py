@@ -550,6 +550,27 @@ def test_retokenize_hides_encoded_echoes_of_the_plaintext(tmp_path):
         assert raw not in out and encoded not in out
 
 
+def test_retokenize_hides_json_escaped_echoes_of_the_plaintext(tmp_path):
+    # SF error bodies are JSON: a serializer may write non-ASCII as \uXXXX
+    # (either hex case) and "/" as "\/", also on top of URL encoding.
+    raw = 'Zoë/"Ann"'
+    vault, token = _seed(tmp_path, raw, tier=3)
+    _, subs = detokenize(f"lastName eq '{token}'", vault)
+
+    ascii_ = json.dumps(raw)[1:-1]
+    variants = (
+        ascii_,
+        re.sub(r"\\u([0-9a-f]{4})", lambda m: "\\u" + m[1].upper(), ascii_),
+        ascii_.replace("/", "\\/"),
+        json.dumps(raw, ensure_ascii=False)[1:-1].replace("/", "\\/"),
+        quote(raw).replace("/", "\\/"),
+    )
+    for encoded in variants:
+        body = '{"error": {"message": {"value": "Invalid filter: lastName eq %s"}}}' % encoded
+        out = retokenize(body, subs)
+        assert token in out and encoded not in out, encoded
+
+
 def test_detokenize_percent_encoded_token_yields_encoded_plaintext(tmp_path):
     vault, token = _seed(tmp_path, "A B/1")
     encoded = token.replace("[", "%5B").replace("]", "%5D")
@@ -595,6 +616,31 @@ def test_detokenize_percent_encoded_quote_before_a_token_doubles_quotes(tmp_path
     text, subs = detokenize(f"lastName eq %27{encoded}%27", vault)
     assert text == "lastName eq %27O%27%27Brien%27"
     assert subs["O''Brien"] == subs["O'Brien"] == encoded
+
+
+@pytest.mark.parametrize(
+    "template, expected",
+    [
+        # Two tokens in one literal: the second follows "]", not a quote.
+        ("lastName eq '{t}{t}'", "lastName eq 'x''yx''y'"),
+        # Text between the opening quote and the token.
+        ("lastName eq 'Dr. {t}'", "lastName eq 'Dr. x''y'"),
+        # An escaped quote ('') earlier in the same literal.
+        ("lastName eq 'it''s {t}'", "lastName eq 'it''s x''y'"),
+        ("lastName eq %27a {e}%27", "lastName eq %27a x%27%27y%27"),
+        # Outside any literal (after a quote that closed one): not doubled.
+        ("lastName eq 'a' and {t}", "lastName eq 'a' and x'y"),
+    ],
+)
+def test_detokenize_doubles_quotes_wherever_the_token_sits_inside_a_literal(
+    tmp_path, template, expected
+):
+    # A stored value carrying a quote must never close the literal it is put
+    # into and turn the rest of the value into query syntax.
+    vault, token = _seed(tmp_path, "x'y", tier=3)
+    encoded = token.replace("[", "%5B").replace("]", "%5D")
+    text, _ = detokenize(template.format(t=token, e=encoded), vault)
+    assert text == expected
 
 
 def test_detokenize_encode_percent_encodes_a_bracketed_token(tmp_path):

@@ -28,6 +28,7 @@ from fastapi import (
 from pydantic import BaseModel, Field, StrictBool
 
 from successfactors_toolkit.config import Settings, get_settings
+from successfactors_toolkit.services.audit import audit
 from successfactors_toolkit.services.tenant_store import (
     TenantInfo,
     TenantStore,
@@ -41,13 +42,16 @@ def require_admin_key(
 ) -> None:
     """Reject every request if admin_api_key is unset (safe default) or the
     header is missing/wrong."""
-    if not settings.admin_api_key:
+    admin_key = settings.admin_api_key.get_secret_value()
+    if not admin_key:
+        audit("auth", "denied", scope="admin", reason="disabled")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Tenant admin API is disabled (set ADMIN_API_KEY to enable).",
         )
     # compare_digest raises TypeError on non-ASCII str, so compare bytes.
-    if not x_admin_key or not compare_digest(x_admin_key.encode(), settings.admin_api_key.encode()):
+    if not x_admin_key or not compare_digest(x_admin_key.encode(), admin_key.encode()):
+        audit("auth", "denied", scope="admin", reason="invalid" if x_admin_key else "missing")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid X-Admin-Key header.",
@@ -159,7 +163,11 @@ CompanyIdPath = Path(
 # ── error mapping ─────────────────────────────────────────────────────────
 
 
-def _raise_http(e: TenantStoreError) -> None:
+def _raise_http(
+    e: TenantStoreError, event: str | None = None, company_id: str | None = None
+) -> None:
+    if event:
+        audit(event, "failed", company_id=company_id, code=e.code)
     code_to_status = {
         "invalid_company_id": status.HTTP_400_BAD_REQUEST,
         "invalid_private_key": status.HTTP_400_BAD_REQUEST,
@@ -224,7 +232,8 @@ async def install_keypair(
     try:
         info = store.install(company_id, key_bytes, cert_bytes, force=force)
     except TenantStoreError as e:
-        _raise_http(e)
+        _raise_http(e, "key_install", company_id)
+    audit("key_install", "ok", company_id=company_id, force=force)
     _invalidate_session_cache(request, company_id)
     return _to_dto(info)
 
@@ -240,11 +249,18 @@ async def set_environment(
     store: Annotated[TenantStore, Depends(get_tenant_store)],
 ) -> TenantInfoDTO:
     try:
-        store.get(company_id)  # tenant_not_found before anything is written
+        previous = store.get(company_id).production  # tenant_not_found before anything is written
         store.set_production(company_id, body.production)
+        audit(
+            "production_flag",
+            "ok",
+            company_id=company_id,
+            previous="unset" if previous is None else previous,
+            production=body.production,
+        )
         return _to_dto(store.get(company_id))
     except TenantStoreError as e:
-        _raise_http(e)
+        _raise_http(e, "production_flag", company_id)
 
 
 @router.delete(
@@ -260,5 +276,6 @@ async def delete_tenant(
     try:
         store.delete(company_id)
     except TenantStoreError as e:
-        _raise_http(e)
+        _raise_http(e, "key_delete", company_id)
+    audit("key_delete", "ok", company_id=company_id)
     _invalidate_session_cache(request, company_id)

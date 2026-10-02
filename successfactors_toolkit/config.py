@@ -2,12 +2,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # hide_input_in_errors: a startup ValidationError (MCP prints it to stderr,
+    # where the AI host can read it) must not echo the input values.
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
+    )
 
     # SAP SuccessFactors host, e.g. "api4preview.sapsf.com"
     sf_host: str = "example.invalid"
@@ -22,7 +26,7 @@ class Settings(BaseSettings):
     sf_token_url: str = ""  # https://{host}/oauth/token
     # Private key — set exactly one of the two options below:
     sf_private_key_path: str = ""  # Path to PEM file (Docker Secret: /run/secrets/sf_private_key)
-    sf_private_key_pem: str = ""  # Base64-encoded PEM content (for CI/CD env vars)
+    sf_private_key_pem: SecretStr = SecretStr("")  # Base64-encoded PEM content (for CI/CD env vars)
 
     # ── OData ─────────────────────────────────────────────────────────────────
     # OData and SFAPI share the same OAuth2 SAML Bearer flow against the same
@@ -43,8 +47,8 @@ class Settings(BaseSettings):
     # random value in production. Endpoints reject the request with 401 if the
     # X-Admin-Key header does not match. If left empty, admin endpoints refuse
     # all requests (safe default).
-    admin_api_key: str = ""
-    api_key: str = ""
+    admin_api_key: SecretStr = SecretStr("")
+    api_key: SecretStr = SecretStr("")
     cors_origins: list[str] = []
 
     # ── PII tokenization (MCP only) ───────────────────────────────────────────

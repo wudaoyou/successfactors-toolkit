@@ -12,13 +12,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  publish:
+    # DOCKERHUB_TOKEN is an environment secret, released only to v* tags.
+    environment: dockerhub
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: write
-      attestations: write
-      id-token: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+      image: ${{ steps.publish.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,7 +45,7 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          test -n "$DOCKERHUB_TOKEN" || { echo "Configure the DOCKERHUB_TOKEN repository secret."; exit 1; }
+          test -n "$DOCKERHUB_TOKEN" || { echo "Configure the DOCKERHUB_TOKEN secret in the dockerhub environment."; exit 1; }
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || { echo "Release tag is not a valid Docker tag."; exit 1; }
       - name: Enable the containerd image store
         uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5
@@ -110,16 +111,47 @@ jobs:
           printf '%s\n' "$image" > dist/image-reference.txt
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Keep the distributions and image reference for the release job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # The only job that can mint an OIDC token, and it does nothing but sign.
+  attest:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    steps:
       - name: Attest the published image
-        id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: docker.io/wudaoyou/successfactors-toolkit
-          subject-digest: ${{ steps.publish.outputs.digest }}
+          subject-digest: ${{ needs.publish.outputs.digest }}
+
+  release:
+    needs: [publish, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - name: Fetch the distributions and image reference
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist
       - name: Verify published image provenance
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE: ${{ steps.publish.outputs.image }}
+          IMAGE: ${{ needs.publish.outputs.image }}
           REPOSITORY: ${{ github.repository }}
         run: |
           gh attestation verify "oci://$IMAGE" --repo "$REPOSITORY" \
@@ -128,8 +160,9 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-          IMAGE: ${{ steps.publish.outputs.image }}
+          IMAGE: ${{ needs.publish.outputs.image }}
         run: |
           flags=()
           if [[ "$RELEASE_TAG" == *-* ]]; then
