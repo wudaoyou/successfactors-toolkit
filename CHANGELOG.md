@@ -4,6 +4,13 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow lists each release in the MCP Registry itself, in a
+  new `registry` job that signs in with GitHub Actions OIDC, so no registry
+  or GitHub token is stored and no manual `mcp-publisher` step is needed.
+  Release candidates are not listed.
+
 ## [0.5.4] - 2026-10-01
 
 ### Security
