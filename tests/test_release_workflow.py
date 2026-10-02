@@ -36,4 +36,5 @@ def test_only_the_release_job_can_write_contents() -> None:
 
 def test_jobs_run_in_order() -> None:
     assert JOBS["attest"]["needs"] == "publish"
+    assert JOBS["publish"]["environment"] == "dockerhub"
     assert set(JOBS["release"]["needs"]) == {"publish", "attest"}

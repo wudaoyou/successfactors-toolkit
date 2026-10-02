@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-01
+
 ### Security
 
 - The Docker base image is pinned to a `python:3.12-slim` digest, which
@@ -23,7 +25,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - The release workflow is split into `publish`, `attest` and `release` jobs:
   `id-token: write` is granted only to the signing job, `contents: write` only
   to the job that creates the GitHub Release, and the Docker Hub token only to
-  the publishing job (#92).
+  the publishing job, which runs in the `dockerhub` environment so the token
+  can be held as an environment secret limited to `v*` tags (#92).
 - `SF_PRIVATE_KEY_PEM`, `ADMIN_API_KEY` and `API_KEY` are held as `SecretStr` in
   `Settings`, and settings validation errors no longer echo input values. A bad
   setting at startup (printed to stderr in MCP mode) can no longer show the

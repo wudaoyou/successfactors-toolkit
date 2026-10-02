@@ -13,6 +13,8 @@ concurrency:
 
 jobs:
   publish:
+    # DOCKERHUB_TOKEN is an environment secret, released only to v* tags.
+    environment: dockerhub
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -43,7 +45,7 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          test -n "$DOCKERHUB_TOKEN" || { echo "Configure the DOCKERHUB_TOKEN repository secret."; exit 1; }
+          test -n "$DOCKERHUB_TOKEN" || { echo "Configure the DOCKERHUB_TOKEN secret in the dockerhub environment."; exit 1; }
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || { echo "Release tag is not a valid Docker tag."; exit 1; }
       - name: Enable the containerd image store
         uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5
