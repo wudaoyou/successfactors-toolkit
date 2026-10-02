@@ -1,5 +1,6 @@
 """Validate bootstrap hygiene and version syntax; no dependencies or live access."""
 
+import base64
 import json
 import re
 import subprocess
@@ -16,6 +17,8 @@ SEMVER = re.compile(
 PRIVATE_DIRS = {
     "secrets",
     "certs",
+    "credentials",
+    "data",
     "tenants",
     "results",
     "logs",
@@ -26,7 +29,36 @@ PRIVATE_DIRS = {
     ".cursor",
 }
 PRIVATE_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules"}
-PRIVATE_SUFFIXES = {".pem", ".key", ".crt", ".p12", ".pfx", ".zip", ".log"}
+PRIVATE_SUFFIXES = {".pem", ".key", ".crt", ".p12", ".pfx", ".zip", ".log", ".env"}
+
+PEM_PRIVATE_KEY = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----")
+
+
+def _base64_needles(plain: bytes) -> tuple[bytes, ...]:
+    """`plain` as it reads inside base64 text, at each of the three byte alignments.
+
+    Only the characters that don't depend on the neighbouring bytes are kept.
+    """
+    needles = []
+    for pad in range(3):
+        encoded = base64.b64encode(b"\0" * pad + plain)
+        first_clean = -(-pad * 8 // 6)  # ceil(pad * 8 / 6)
+        last_clean = (pad + len(plain)) * 8 // 6
+        needles.append(encoded[first_clean:last_clean])
+    return tuple(needles)
+
+
+# Every PEM private key label ends this way, so this also matches a base64-encoded
+# key (as in SF_PRIVATE_KEY_PEM), wherever it starts and however it is line-wrapped.
+BASE64_PRIVATE_KEY = _base64_needles(b"PRIVATE KEY-----")
+
+
+def has_private_key(content: bytes) -> bool:
+    if PEM_PRIVATE_KEY.search(content):
+        return True
+    unwrapped = re.sub(rb"\s+", b"", content)
+    return any(needle in unwrapped for needle in BASE64_PRIVATE_KEY)
+
 
 # Docker Hub release tags are immutable, so a released tag never points at a
 # previous image; a stray tagless digest pin (from before a release) would.
@@ -77,7 +109,7 @@ def main():
         ):
             errors.append(f"Private or generated artifact is tracked: {name}")
         content = (ROOT / path).read_bytes()
-        if re.search(rb"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----", content):
+        if has_private_key(content):
             errors.append(f"Potential private key content: {name}")
         try:
             text = content.decode("utf-8")

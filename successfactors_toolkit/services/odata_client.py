@@ -6,7 +6,7 @@ by SFAPI. OData uses the shared `SF_*` settings and per-request connection overr
 The REST API version is configured separately through `SF_ODATA_VERSION`.
 
 Token caching mirrors `SFAPIClient`: keyed by (host, company_id, user_id,
-client_key), with a lock to coalesce concurrent first-call token storms.
+client_key), with a per-key lock to coalesce concurrent first-call token storms.
 
 Retry policy (§12.7, p.228-229):
   * 401 once  — refresh token, retry
@@ -24,6 +24,7 @@ import json
 import random
 import re
 import time
+import weakref
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -37,8 +38,10 @@ from successfactors_toolkit.models.odata import COLUMN_RE
 from successfactors_toolkit.services import http_limits, saml_bearer
 from successfactors_toolkit.services.connection_policy import (
     ConnectionPolicyError,
+    audit_overrides,
     check_host,
     check_identity,
+    check_token_url,
 )
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.http_limits import ExtractBudget
@@ -51,6 +54,11 @@ _MUTATING = {"POST", "PATCH", "PUT", "DELETE"}
 _RESERVED_HEADERS = {"host", "authorization"}
 _IDEMPOTENT_FOR_5XX_RETRY = {"GET", "HEAD"}
 _TOKEN_EXPIRY_SLACK_SECONDS = 60
+# Cache lifetime of a token whose response has no usable expires_in, and the most
+# a token's own lifetime is cut by (a tenth of it, up to this) so a token about to
+# expire is never handed out.
+_TOKEN_DEFAULT_LIFETIME_SECONDS = 23 * 3600
+_TOKEN_MAX_MARGIN_SECONDS = 3600
 _MAX_RETRIES = 3
 _MAX_RETRY_AFTER_SECONDS = 300.0
 _ODATA_VERSIONS = {"v2", "v4"}
@@ -209,7 +217,11 @@ class ODataClient:
         self._client = client
         # Token cache: (host, company_id, user_id, client_key) -> (token, exp_epoch)
         self._tokens: dict[tuple[str, str, str, str], tuple[str, float]] = {}
-        self._token_lock = asyncio.Lock()
+        # One lock per token key, so a slow token endpoint only holds up its own
+        # tenant. Weak values: a lock goes away once nobody holds or awaits it.
+        self._token_locks: weakref.WeakValueDictionary[tuple[str, str, str, str], asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
 
     def _resolve(self, conn: ODataConnectionConfig | None) -> dict[str, Any]:
         # OData shares OAuth2 client + tenant key with SFAPI — both use the
@@ -221,20 +233,31 @@ class ODataClient:
         c = conn or ODataConnectionConfig()
         company_id = c.company_id or s.sf_company_id
         t = TenantStore(s.tenant_keys_dir).connection(company_id)
-        return {
+        resolved = {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in the request base_url.
-            "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
+            "host": check_host(
+                _eff(c.host, t.get("host", s.sf_host)), s, company_id, requested=c.host is not None
+            ),
             "version": _eff(c.odata_version, t.get("odata_version", s.sf_odata_version)),
             "client_key": check_identity(
-                "client_key", c.client_key, t.get("client_key", s.sf_client_key)
+                "client_key", c.client_key, t.get("client_key", s.sf_client_key), company_id
             ),
-            "user_id": check_identity("user_id", c.user_id, t.get("user_id", s.sf_user_id)),
+            "user_id": check_identity(
+                "user_id", c.user_id, t.get("user_id", s.sf_user_id), company_id
+            ),
             "company_id": company_id,
-            "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
+            # Checked here too, not only in fetch_token: a cached token skips that
+            # call, and audit_overrides below must not log a denied URL as ok.
+            # An unset one is left for fetch_token to refuse.
+            "token_url": (token_url := _eff(c.token_url, t.get("token_url", s.sf_token_url)))
+            and check_token_url(token_url, s, company_id, requested=c.token_url is not None),
+            "token_url_requested": c.token_url is not None,
             "csrf_protected": c.csrf_protected,
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
         }
+        audit_overrides(c, company_id, s, t)
+        return resolved
 
     @staticmethod
     def _token_key(r: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -243,8 +266,9 @@ class ODataClient:
     async def _fetch_new_token(self, r: dict[str, Any]) -> tuple[str, float]:
         """Mint a fresh access token via SAML Bearer; returns (token, exp_epoch).
 
-        saml_bearer.fetch_token returns only the token string; SAP tokens default
-        to 24h, so we cache for 23h to leave a safety margin and absorb skew.
+        The cache lifetime is the token response's ``expires_in`` less a safety
+        margin to absorb skew; SAP tokens default to 24h, so when the response
+        has no usable value we cache for 23h.
         """
         token = await saml_bearer.fetch_token(
             http_client=self._client,
@@ -252,12 +276,18 @@ class ODataClient:
             user_id=r["user_id"],
             company_id=r["company_id"],
             token_url=r["token_url"],
+            token_url_requested=r["token_url_requested"],
             private_key_pem=r["private_key_pem"],
             settings=self._settings,
             timeout=self._settings.request_timeout,
         )
-        exp = time.monotonic() + (23 * 3600)
-        return token, exp
+        # getattr: a plain str (no expires_in) gets the default.
+        expires_in = getattr(token, "expires_in", None)
+        if expires_in:
+            lifetime = expires_in - min(_TOKEN_MAX_MARGIN_SECONDS, expires_in / 10)
+        else:
+            lifetime = _TOKEN_DEFAULT_LIFETIME_SECONDS
+        return token, time.monotonic() + lifetime
 
     async def _get_token(self, r: dict[str, Any], force_refresh: bool = False) -> str:
         key = self._token_key(r)
@@ -265,7 +295,8 @@ class ODataClient:
             cached = self._tokens.get(key)
             if cached and cached[1] - _TOKEN_EXPIRY_SLACK_SECONDS > time.monotonic():
                 return cached[0]
-        async with self._token_lock:
+        lock = self._token_locks.get(key) or self._token_locks.setdefault(key, asyncio.Lock())
+        async with lock:
             cached = self._tokens.get(key)
             if (
                 not force_refresh
@@ -405,7 +436,7 @@ class ODataClient:
         assert resp is not None
         return {
             "status_code": resp.status_code,
-            "headers": dict(resp.headers),
+            "headers": http_limits.passthrough_headers(resp.headers),
             "body": resp.text,
         }
 

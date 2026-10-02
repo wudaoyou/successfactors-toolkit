@@ -670,6 +670,15 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
     tty: false
+    # Locked down: read-only root filesystem, no capabilities. Writable: /data, /vault, /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     env_file:
       - path: ./credentials/sf.env
         format: raw
@@ -1090,6 +1099,15 @@ AI 应用中验证。</p>
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
     tty: false
+    # Locked down: read-only root filesystem, no capabilities. Writable: /data, /vault, /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     env_file:
       - path: ./credentials/sf.env
         format: raw

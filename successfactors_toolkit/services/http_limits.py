@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -22,6 +22,22 @@ from successfactors_toolkit.config import Settings
 MAX_REQUEST_SECONDS = 600.0
 # Ceiling for the time one request spends sleeping on 429 Retry-After waits.
 MAX_RETRY_SLEEP_SECONDS = 300.0
+
+# The only SuccessFactors response headers handed on to callers (REST and MCP):
+# enough to read the body (content-type), update safely (etag, last-modified),
+# find a created entity (location), back off (retry-after) and tell the protocol
+# version. Everything else is dropped, above all Set-Cookie (a JSESSIONID).
+PASSTHROUGH_HEADERS = frozenset(
+    {
+        "content-type",
+        "etag",
+        "last-modified",
+        "location",
+        "retry-after",
+        "odata-version",
+        "dataserviceversion",
+    }
+)
 
 _T = TypeVar("_T")
 
@@ -39,6 +55,11 @@ class CappedResponse:
     status_code: int
     headers: httpx.Headers
     text: str
+
+
+def passthrough_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """The allowlisted subset of an upstream response's headers, names lowercased."""
+    return {k.lower(): v for k, v in headers.items() if k.lower() in PASSTHROUGH_HEADERS}
 
 
 async def send_capped(
