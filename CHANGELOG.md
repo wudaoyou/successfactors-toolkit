@@ -34,6 +34,9 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   now carry only `content-type`, `etag`, `last-modified`, `location`,
   `retry-after`, `odata-version` and `dataserviceversion` from SuccessFactors;
   `Set-Cookie` and every other header are no longer passed through. (#86)
+- A failed SFAPI login now reports the HTTP status only; the first 500
+  characters of the SuccessFactors response body are no longer included in the
+  error, which reached the model. (#92)
 
 ## [0.5.3] - 2026-09-30
 

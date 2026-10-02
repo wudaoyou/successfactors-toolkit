@@ -5,8 +5,10 @@ import base64
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 
 from successfactors_toolkit.config import Settings
+from successfactors_toolkit.services import saml_bearer
 from successfactors_toolkit.services.http_limits import passthrough_headers
 from successfactors_toolkit.services.odata_client import ODataClient
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
@@ -85,3 +87,23 @@ def test_odata_retries_on_retry_after_though_responses_are_filtered(monkeypatch)
     monkeypatch.setattr("successfactors_toolkit.services.odata_client.asyncio.sleep", sleep)
     assert asyncio.run(client.request("GET", "User"))["status_code"] == 200
     assert 7 <= sleep.await_args.args[0] <= 7.5
+
+
+# ── login errors (#92) ────────────────────────────────────────────────────
+
+
+def test_failed_sfapi_login_keeps_the_status_but_not_the_response_body(monkeypatch):
+    monkeypatch.setattr(saml_bearer, "fetch_token", AsyncMock(return_value="tok"))
+    client = SFAPIClient(
+        _settings(),
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(401, text="<fault>jane.doe@example.invalid denied</fault>")
+            )
+        ),
+    )
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(client.query("SELECT person FROM CompoundEmployee"))
+    assert "HTTP 401" in str(raised.value)
+    assert "jane.doe" not in str(raised.value)
+    assert "fault" not in str(raised.value)

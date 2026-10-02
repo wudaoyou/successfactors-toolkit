@@ -125,7 +125,10 @@ class SFAPIClient:
         )
         m = _SESSION_ID_RE.search(resp.text)
         if not m:
-            raise RuntimeError(f"SFAPI login failed (HTTP {resp.status_code}): {resp.text[:500]}")
+            # Never echo the response body: this message reaches the model.
+            raise RuntimeError(
+                f"SFAPI login failed (HTTP {resp.status_code}): no session returned."
+            )
         return m.group(1)
 
     async def _ensure_session(self, r: dict) -> str:
