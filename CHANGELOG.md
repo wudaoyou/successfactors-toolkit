@@ -30,6 +30,10 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   first and last characters of these secrets. Environment variable names and
   behavior are unchanged; plugin code that reads these three `Settings` fields
   now calls `.get_secret_value()`. (#85)
+- **Behavior change:** the `headers` (and `last_headers`) in REST API responses
+  now carry only `content-type`, `etag`, `last-modified`, `location`,
+  `retry-after`, `odata-version` and `dataserviceversion` from SuccessFactors;
+  `Set-Cookie` and every other header are no longer passed through. (#86)
 
 ## [0.5.3] - 2026-09-30
 

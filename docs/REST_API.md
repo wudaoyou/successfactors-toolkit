@@ -134,3 +134,8 @@ All `/api/sfapi/*` and `/api/odata/execute` calls return the same shape:
   "body": "<raw response body as a string — XML for SFAPI, JSON for OData>"
 }
 ```
+
+`headers` holds only these SuccessFactors response headers, lowercased, when
+present: `content-type`, `etag`, `last-modified`, `location`, `retry-after`,
+`odata-version`, `dataserviceversion`. Everything else (notably `Set-Cookie`)
+is dropped.

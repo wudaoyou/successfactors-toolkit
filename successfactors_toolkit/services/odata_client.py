@@ -405,7 +405,7 @@ class ODataClient:
         assert resp is not None
         return {
             "status_code": resp.status_code,
-            "headers": dict(resp.headers),
+            "headers": http_limits.passthrough_headers(resp.headers),
             "body": resp.text,
         }
 

@@ -177,7 +177,11 @@ class SFAPIClient:
             session_id = await self._ensure_session(r)
             resp = await _do_request(session_id)
 
-        return {"status_code": resp.status_code, "headers": dict(resp.headers), "body": resp.text}
+        return {
+            "status_code": resp.status_code,
+            "headers": http_limits.passthrough_headers(resp.headers),
+            "body": resp.text,
+        }
 
     @staticmethod
     def _render_params(params: list[tuple[str, str]] | None) -> str:
