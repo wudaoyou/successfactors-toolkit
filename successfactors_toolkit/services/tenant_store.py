@@ -22,17 +22,24 @@ PII settings, and optional connection settings that override the SF_*
 environment. It may exist without a key+cert pair (a default tenant keyed from
 the environment); such a directory is not listed as a tenant.
 
-Writes are atomic: contents go to a temp directory, then `os.replace` swaps
-it into place. A half-written tenant directory should never be visible.
+Writes are atomic: contents go to a temp directory, which is then exchanged
+with the tenant directory in one rename (see _exchange). A half-written tenant
+directory is never visible, and the tenant directory never disappears. Writers
+hold an flock on ${tenant_keys_dir}/.lock, so they serialize across threads
+and processes. Directories are created mode 0700.
 """
 
 from __future__ import annotations
 
+import contextlib
+import ctypes
+import fcntl
 import json
 import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -198,6 +205,18 @@ def validate_company_id(company_id: str) -> None:
         )
 
 
+def _exchange(a: Path, b: Path) -> None:
+    """Swap two existing paths in one atomic rename."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        rc = libc.renamex_np(os.fsencode(a), os.fsencode(b), 0x2)  # RENAME_SWAP
+    else:
+        rc = libc.renameat2(-100, os.fsencode(a), -100, os.fsencode(b), 0x2)  # AT_FDCWD, EXCHANGE
+    if rc:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), str(b))
+
+
 def _parse_key(pem_bytes: bytes):
     try:
         return load_pem_private_key(pem_bytes, password=None)
@@ -275,6 +294,18 @@ class TenantStore:
 
     def config_path(self, company_id: str) -> Path:
         return self.tenant_dir(company_id) / f"{company_id}.json"
+
+    @contextlib.contextmanager
+    def _locked(self):
+        """Hold the store's write lock. flock on a fresh descriptor conflicts
+        with every other descriptor, so threads of one process exclude each other too."""
+        self._base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(self._base / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)  # releases the lock
 
     # ── queries ───────────────────────────────────────────────────────────
     def exists(self, company_id: str) -> bool:
@@ -374,56 +405,61 @@ class TenantStore:
         ``force=False``. Raises various validation errors otherwise.
         """
         validate_company_id(company_id)
-        if self.exists(company_id) and not force:
-            raise TenantAlreadyExists(
-                "tenant_already_exists",
-                f"Tenant {company_id!r} already exists. Re-POST with ?force=true to overwrite.",
-            )
-
-        key = _parse_key(key_bytes)
-        cert = _parse_cert(cert_bytes)
-        _check_key(key)
-        _check_pair(key, cert)
-        _check_expiry(cert)
-
-        # Normalize: write the key + cert from the parsed objects so we always
-        # store standard, single-block PEM (rejects SailPoint-style combined
-        # files, comments, etc.).
-        normalized_key = key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.NoEncryption(),
-        )
-        normalized_cert = cert.public_bytes(serialization.Encoding.PEM)
-
-        self._base.mkdir(parents=True, exist_ok=True)
-
-        # Atomic: stage in a sibling temp dir, then os.replace into place.
-        # If we crashed mid-install, the destination would still hold the
-        # previous (working) version.
-        with tempfile.TemporaryDirectory(prefix=f".{company_id}-stage-", dir=self._base) as stage:
-            stage_path = Path(stage)
-            tmp_key = stage_path / self.key_path(company_id).name
-            tmp_cert = stage_path / self.cert_path(company_id).name
-            tmp_key.write_bytes(normalized_key)
-            tmp_cert.write_bytes(normalized_cert)
-            os.chmod(tmp_key, 0o600)
-            os.chmod(tmp_cert, 0o644)
-
+        with self._locked():
+            # Checked under the lock: concurrent POSTs cannot both see no tenant.
+            if self.exists(company_id) and not force:
+                raise TenantAlreadyExists(
+                    "tenant_already_exists",
+                    f"Tenant {company_id!r} already exists. Re-POST with ?force=true to overwrite.",
+                )
             dest = self.tenant_dir(company_id)
-            # A key rotation keeps the tenant's settings.
-            config = self.config_path(company_id)
-            if config.exists():
-                shutil.copy2(config, stage_path / config.name)
-            if dest.exists():
-                shutil.rmtree(dest)
-            # Rename the temp dir into place. Both paths are on the same
-            # filesystem (sibling of base dir) so this is atomic on POSIX.
-            os.rename(stage, dest)
 
-            # tempfile context exit will try to remove `stage`, which we just
-            # moved away — re-create it so the cleanup does not raise.
-            stage_path.mkdir(exist_ok=True)
+            key = _parse_key(key_bytes)
+            cert = _parse_cert(cert_bytes)
+            _check_key(key)
+            _check_pair(key, cert)
+            _check_expiry(cert)
+
+            # Normalize: write the key + cert from the parsed objects so we always
+            # store standard, single-block PEM (rejects SailPoint-style combined
+            # files, comments, etc.).
+            normalized_key = key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+            normalized_cert = cert.public_bytes(serialization.Encoding.PEM)
+
+            # Stage in a sibling temp dir (mode 0700), then swap it into place.
+            with tempfile.TemporaryDirectory(
+                prefix=f".{company_id}-stage-", dir=self._base
+            ) as stage:
+                stage_path = Path(stage)
+                tmp_key = stage_path / self.key_path(company_id).name
+                tmp_cert = stage_path / self.cert_path(company_id).name
+                tmp_key.write_bytes(normalized_key)
+                tmp_cert.write_bytes(normalized_cert)
+                os.chmod(tmp_key, 0o600)
+                os.chmod(tmp_cert, 0o644)
+
+                if not dest.exists():
+                    os.rename(stage, dest)
+                    # The cleanup on exit expects the stage directory to exist.
+                    stage_path.mkdir()
+                else:
+                    # A key rotation keeps the tenant's settings.
+                    config = self.config_path(company_id)
+                    if config.exists():
+                        shutil.copy2(config, stage_path / config.name)
+                    try:
+                        # The stage then holds the old version, removed on exit.
+                        _exchange(stage_path, dest)
+                    except (AttributeError, OSError):
+                        # ponytail: no exchange on this filesystem (some FUSE or network
+                        # mounts): replace the files in place, so the directory never
+                        # disappears, but the pair changes one file at a time.
+                        for name in (tmp_cert.name, tmp_key.name):
+                            os.replace(stage_path / name, dest / name)
 
         return self.get(company_id)
 
@@ -431,26 +467,30 @@ class TenantStore:
         """Set "production" in {company_id}.json, keeping its other keys and its
         file mode (new file: 0644), atomically (temp file, then os.replace)."""
         validate_company_id(company_id)
-        dest = self.tenant_dir(company_id)
-        dest.mkdir(parents=True, exist_ok=True)
-        path = self.config_path(company_id)
-        data = {**self._read(company_id), "production": production}
-        try:
-            mode = stat.S_IMODE(path.stat().st_mode)
-        except OSError:
-            mode = 0o644
-        descriptor, tmp = tempfile.mkstemp(prefix=f".{path.name}-", dir=dest)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as out:
-                json.dump(data, out, indent=2)
-            os.chmod(tmp, mode)
-            os.replace(tmp, path)
-        except BaseException:
-            os.unlink(tmp)
-            raise
+        with self._locked():
+            dest = self.tenant_dir(company_id)
+            dest.mkdir(mode=0o700, exist_ok=True)
+            path = self.config_path(company_id)
+            data = {**self._read(company_id), "production": production}
+            try:
+                mode = stat.S_IMODE(path.stat().st_mode)
+            except OSError:
+                mode = 0o644
+            descriptor, tmp = tempfile.mkstemp(prefix=f".{path.name}-", dir=dest)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as out:
+                    json.dump(data, out, indent=2)
+                os.chmod(tmp, mode)
+                os.replace(tmp, path)
+            except BaseException:
+                os.unlink(tmp)
+                raise
 
     def delete(self, company_id: str) -> None:
         validate_company_id(company_id)
-        if not self.exists(company_id):
-            raise TenantNotFound("tenant_not_found", f"No tenant registered for {company_id!r}.")
-        shutil.rmtree(self.tenant_dir(company_id))
+        with self._locked():
+            if not self.exists(company_id):
+                raise TenantNotFound(
+                    "tenant_not_found", f"No tenant registered for {company_id!r}."
+                )
+            shutil.rmtree(self.tenant_dir(company_id))

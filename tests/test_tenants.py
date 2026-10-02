@@ -1,6 +1,12 @@
 import base64
+import errno
+import fcntl
 import json
+import os
+import shutil
 import stat
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -13,6 +19,7 @@ from fastapi.testclient import TestClient
 from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import Settings, get_settings
 from successfactors_toolkit.main import app
+from successfactors_toolkit.services import tenant_store
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.tenant_store import (
@@ -20,6 +27,7 @@ from successfactors_toolkit.services.tenant_store import (
     InvalidCompanyId,
     InvalidKeyOrCert,
     KeyCertMismatch,
+    TenantAlreadyExists,
     TenantStore,
 )
 
@@ -308,3 +316,79 @@ def test_install_rejects_a_certificate_not_yet_valid_beyond_clock_skew(tmp_path)
         store.install("example-a", *_pem_pair(not_before=timedelta(days=1)))
     assert exc.value.code == "certificate_not_yet_valid"
     store.install("example-a", *_pem_pair(not_before=timedelta(minutes=1)))
+
+
+def test_concurrent_installs_do_not_both_succeed(monkeypatch, tmp_path, keypair):
+    store = TenantStore(str(tmp_path / "tenants"))
+    check_pair = tenant_store._check_pair
+    monkeypatch.setattr(tenant_store, "_check_pair", lambda *a: (time.sleep(0.2), check_pair(*a)))
+    start, results = threading.Barrier(2), []
+
+    def install():
+        start.wait()
+        try:
+            store.install("example-a", *keypair)
+            results.append("ok")
+        except TenantAlreadyExists:
+            results.append("exists")
+
+    threads = [threading.Thread(target=install) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(results) == ["exists", "ok"]
+
+
+def test_install_waits_for_the_lock_file_another_process_holds(tmp_path, keypair):
+    store = TenantStore(str(tmp_path / "tenants"))
+    store.set_production("example-a", False)  # creates the root and its .lock
+    fd = os.open(tmp_path / "tenants" / ".lock", os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    worker = threading.Thread(target=store.install, args=("example-a", *keypair))
+    worker.start()
+    time.sleep(0.2)
+    assert worker.is_alive() and not store.exists("example-a")
+    os.close(fd)
+    worker.join()
+    assert store.exists("example-a")
+
+
+@pytest.mark.parametrize("exchange", [True, False], ids=["exchange", "file-by-file"])
+def test_forced_reinstall_never_removes_the_tenant_directory(
+    monkeypatch, tmp_path, keypair, exchange
+):
+    store = TenantStore(str(tmp_path / "tenants"))
+    store.install("example-a", *keypair)
+    store.set_production("example-a", True)
+    if not exchange:
+
+        def unsupported(*_):
+            raise OSError(errno.EINVAL, "not supported")
+
+        monkeypatch.setattr(tenant_store, "_exchange", unsupported)
+    rmtree = shutil.rmtree
+
+    def checked_rmtree(path, *args, **kwargs):
+        rmtree(path, *args, **kwargs)
+        assert store.key_path("example-a").exists(), "tenant key missing mid-install"
+
+    monkeypatch.setattr(shutil, "rmtree", checked_rmtree)
+    new = _pem_pair()
+    store.install("example-a", *new, force=True)
+    assert store.key_path("example-a").read_bytes() == new[0]
+    assert store.cert_path("example-a").read_bytes() == new[1]
+    assert store.production("example-a") is True
+    assert sorted(p.name for p in (tmp_path / "tenants").iterdir()) == [".lock", "example-a"]
+
+
+def test_tenant_store_directories_are_private(tmp_path, keypair):
+    store = TenantStore(str(tmp_path / "tenants"))
+    store.install("example-a", *keypair)
+    store.set_production("example-b", False)
+    for path in (
+        tmp_path / "tenants",
+        store.tenant_dir("example-a"),
+        store.tenant_dir("example-b"),
+    ):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700

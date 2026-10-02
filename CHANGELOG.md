@@ -56,6 +56,14 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   RSA or is under 2048 bits (an EC key cannot sign the `rsa-sha256` assertion
   and used to fail only at runtime), and a certificate whose `notBefore` is
   more than 5 minutes ahead (`certificate_not_yet_valid`), with 400. (#90)
+- Installing a keypair swaps the new tenant directory in with one atomic
+  rename, so the tenant never disappears mid-install (which made key lookup
+  fall back to the global key), and checks for an existing tenant under a
+  lock file (`TENANT_KEYS_DIR/.lock`) that serializes threads and processes,
+  so concurrent POSTs without `?force=true` cannot both succeed. (#88)
+- `TENANT_KEYS_DIR` and tenant directories are created mode 0700, including
+  `/data/tenants` in the Docker image; existing directories keep their mode.
+  (#92)
 
 ## [0.5.3] - 2026-09-30
 
