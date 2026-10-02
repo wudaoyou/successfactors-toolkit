@@ -230,12 +230,21 @@ def test_token_url_denials_say_whether_the_request_or_the_config_supplied_it(set
     asyncio.run(run())
     config = "event=connection_config outcome=failed company_id=demo field=token_url"
     override = "event=connection_override outcome=denied company_id=demo field=token_url"
-    assert [line for line in lines() if " outcome=ok " not in line] == [
-        config,
-        override,
-        config,
-        override,
-    ]
+    # A denied token_url is never also logged as an accepted override.
+    assert lines() == [config, override, config, override]
+
+
+def test_denied_token_url_override_is_refused_with_a_warm_token_cache(settings, lines):
+    odata, sfapi = ODataClient(settings, None), SFAPIClient(settings, None)
+    odata._tokens[odata._token_key(odata._resolve(None))] = ("cached", float("inf"))
+    sfapi._sessions[sfapi._session_key(sfapi._resolve(None))] = object()
+    with pytest.raises(ConnectionPolicyError):
+        odata._resolve(ODataConnectionConfig(token_url="https://evil.invalid/t"))
+    with pytest.raises(ConnectionPolicyError):
+        sfapi._resolve(SFAPIConnectionConfig(token_url="https://evil.invalid/t"))
+    assert (
+        lines() == ["event=connection_override outcome=denied company_id=demo field=token_url"] * 2
+    )
 
 
 def test_accepted_overrides_are_logged_by_field_name_only(settings, lines):

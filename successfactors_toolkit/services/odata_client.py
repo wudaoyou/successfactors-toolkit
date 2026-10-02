@@ -41,6 +41,7 @@ from successfactors_toolkit.services.connection_policy import (
     audit_overrides,
     check_host,
     check_identity,
+    check_token_url,
 )
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.http_limits import ExtractBudget
@@ -246,7 +247,11 @@ class ODataClient:
                 "user_id", c.user_id, t.get("user_id", s.sf_user_id), company_id
             ),
             "company_id": company_id,
-            "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
+            # Checked here too, not only in fetch_token: a cached token skips that
+            # call, and audit_overrides below must not log a denied URL as ok.
+            # An unset one is left for fetch_token to refuse.
+            "token_url": (token_url := _eff(c.token_url, t.get("token_url", s.sf_token_url)))
+            and check_token_url(token_url, s, company_id, requested=c.token_url is not None),
             "token_url_requested": c.token_url is not None,
             "csrf_protected": c.csrf_protected,
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
