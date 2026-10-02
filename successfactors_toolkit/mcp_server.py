@@ -1025,11 +1025,16 @@ async def odata_query(
             )
 
     pii_count = 0
+    next_skiptoken = r["next_skiptoken"]
     if pii is not None:
         try:
             results, pii_count = pii.tokenize_records(
                 results, v4=v4, entity=entity, fail_closed=True
             )
+            # The server may build it from the last row's key; passed back in
+            # $skiptoken, the token resolves like any other.
+            if next_skiptoken:
+                next_skiptoken = pii.tokenize_value(next_skiptoken)
         except PiiVaultError as exc:
             return _pii_error(exc)
 
@@ -1037,7 +1042,7 @@ async def odata_query(
         "total_records": r["total_records"],
         "pages_fetched": r["pages_fetched"],
         "stopped_reason": r["stopped_reason"],
-        "next_skiptoken": r["next_skiptoken"],
+        "next_skiptoken": next_skiptoken,
         "fields": sorted(results[0]) if results else [],
         "file": _write(
             json.dumps(results, indent=2, ensure_ascii=False, default=str),

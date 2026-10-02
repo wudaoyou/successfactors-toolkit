@@ -19,6 +19,7 @@ only documented way.
 
 import asyncio
 import re
+import weakref
 from xml.sax.saxutils import escape
 
 import httpx
@@ -26,7 +27,12 @@ import httpx
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.models.common import SFAPIConnectionConfig
 from successfactors_toolkit.services import http_limits, saml_bearer
-from successfactors_toolkit.services.connection_policy import check_host, check_identity
+from successfactors_toolkit.services.connection_policy import (
+    audit_overrides,
+    check_host,
+    check_identity,
+    check_token_url,
+)
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.tenant_store import TenantStore
 
@@ -68,7 +74,11 @@ class SFAPIClient:
         # SFAPI sessions are long-lived (typically 60 min) but expire eventually;
         # _post invalidates on INVALID_SESSION and retries once.
         self._sessions: dict[tuple[str, str, str, str], str] = {}
-        self._login_lock = asyncio.Lock()
+        # One lock per session key, so a slow login only holds up its own tenant.
+        # Weak values: a lock goes away once nobody holds or awaits it.
+        self._login_locks: weakref.WeakValueDictionary[tuple[str, str, str, str], asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
 
     def _resolve(self, conn: SFAPIConnectionConfig | None) -> dict:
         s = self._settings
@@ -76,18 +86,29 @@ class SFAPIClient:
         company_id = c.company_id or s.sf_company_id
         # Per-request override, then the tenant's {company_id}.json, then SF_*.
         t = TenantStore(s.tenant_keys_dir).connection(company_id)
-        return {
+        resolved = {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in _endpoint()'s URL.
-            "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
-            "client_key": check_identity(
-                "client_key", c.client_key, t.get("client_key", s.sf_client_key)
+            "host": check_host(
+                _eff(c.host, t.get("host", s.sf_host)), s, company_id, requested=c.host is not None
             ),
-            "user_id": check_identity("user_id", c.user_id, t.get("user_id", s.sf_user_id)),
+            "client_key": check_identity(
+                "client_key", c.client_key, t.get("client_key", s.sf_client_key), company_id
+            ),
+            "user_id": check_identity(
+                "user_id", c.user_id, t.get("user_id", s.sf_user_id), company_id
+            ),
             "company_id": company_id,
-            "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
+            # Checked here too, not only in fetch_token: a cached token skips that
+            # call, and audit_overrides below must not log a denied URL as ok.
+            # An unset one is left for fetch_token to refuse.
+            "token_url": (token_url := _eff(c.token_url, t.get("token_url", s.sf_token_url)))
+            and check_token_url(token_url, s, company_id, requested=c.token_url is not None),
+            "token_url_requested": c.token_url is not None,
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
         }
+        audit_overrides(c, company_id, s, t)
+        return resolved
 
     @staticmethod
     def _session_key(r: dict) -> tuple[str, str, str, str]:
@@ -105,6 +126,7 @@ class SFAPIClient:
             user_id=r["user_id"],
             company_id=r["company_id"],
             token_url=r["token_url"],
+            token_url_requested=r["token_url_requested"],
             private_key_pem=r["private_key_pem"],
             settings=self._settings,
             timeout=self._settings.request_timeout,
@@ -125,14 +147,18 @@ class SFAPIClient:
         )
         m = _SESSION_ID_RE.search(resp.text)
         if not m:
-            raise RuntimeError(f"SFAPI login failed (HTTP {resp.status_code}): {resp.text[:500]}")
+            # Never echo the response body: this message reaches the model.
+            raise RuntimeError(
+                f"SFAPI login failed (HTTP {resp.status_code}): no session returned."
+            )
         return m.group(1)
 
     async def _ensure_session(self, r: dict) -> str:
         key = self._session_key(r)
         if key in self._sessions:
             return self._sessions[key]
-        async with self._login_lock:
+        lock = self._login_locks.get(key) or self._login_locks.setdefault(key, asyncio.Lock())
+        async with lock:
             if key not in self._sessions:  # double-check
                 self._sessions[key] = await self._login(r)
             return self._sessions[key]
@@ -177,7 +203,11 @@ class SFAPIClient:
             session_id = await self._ensure_session(r)
             resp = await _do_request(session_id)
 
-        return {"status_code": resp.status_code, "headers": dict(resp.headers), "body": resp.text}
+        return {
+            "status_code": resp.status_code,
+            "headers": http_limits.passthrough_headers(resp.headers),
+            "body": resp.text,
+        }
 
     @staticmethod
     def _render_params(params: list[tuple[str, str]] | None) -> str:

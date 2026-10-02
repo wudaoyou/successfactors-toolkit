@@ -21,9 +21,10 @@ _TOKEN = re.compile(r"\[PII-T1-[0-9a-f]{16}\]")
 
 
 class _OData:
-    def __init__(self, results=None, fail=False):
+    def __init__(self, results=None, fail=False, next_skiptoken=None):
         self.results = results or []
         self.fail = fail
+        self.next_skiptoken = next_skiptoken
         self.sent: list[tuple[str, dict]] = []
 
     async def extract_all(self, path, conn=None, params=None, max_pages=10):
@@ -34,7 +35,7 @@ class _OData:
             "stopped_reason": "exhausted",
             "total_records": len(self.results),
             "pages_fetched": 1,
-            "next_skiptoken": None,
+            "next_skiptoken": self.next_skiptoken,
             "results": self.results,
         }
 
@@ -145,6 +146,27 @@ def test_odata_query_tokenizes_a_status_200_body_recovered_after_a_parse_error(
     assert result["error"] == "parse_error"
     assert _SSN not in json.dumps(result)
     assert _TOKEN.search(result["body"])
+
+
+def test_odata_query_next_skiptoken_is_a_token_that_resumes_paging(monkeypatch, tmp_path):
+    # A server may build $skiptoken from the last row's key, which can be PII.
+    skiptoken = f"nationalId-'{_SSN}'"
+    odata = _OData([_national_id_record()], next_skiptoken=skiptoken)
+    _install(monkeypatch, tmp_path, odata=odata)
+    first = asyncio.run(mcp_server.odata_query("PerNationalId", max_pages=1))
+    assert _SSN not in json.dumps(first)
+    assert _TOKEN.fullmatch(first["next_skiptoken"])
+    asyncio.run(
+        mcp_server.odata_query(
+            "PerNationalId", max_pages=1, params={"$skiptoken": first["next_skiptoken"]}
+        )
+    )
+    assert odata.sent[1][1]["$skiptoken"] == skiptoken
+
+
+def test_odata_query_next_skiptoken_is_plaintext_at_tier_zero(monkeypatch, tmp_path):
+    _install(monkeypatch, tmp_path, odata=_OData(next_skiptoken="abc"), tier="0")
+    assert asyncio.run(mcp_server.odata_query("PerNationalId"))["next_skiptoken"] == "abc"
 
 
 def test_odata_query_unknown_token_is_refused_before_any_request(monkeypatch, tmp_path):

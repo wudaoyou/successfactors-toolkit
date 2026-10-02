@@ -1,10 +1,19 @@
 services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.5.3
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.5.4@sha256:a5b04f1c04c7efe97345f27246117dcbee941ec97cdba89deeffa60212724e28
     command: ["python", "-m", "successfactors_toolkit.mcp_server"]
     user: "YOUR_UID:YOUR_GID"
     stdin_open: true
     tty: false
+    # Locked down: read-only root filesystem, no capabilities. Writable: /data, /vault, /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     env_file:
       - path: ./credentials/sf.env
         format: raw

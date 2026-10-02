@@ -44,7 +44,11 @@
    `main`, repository checks, and that application code exists. It builds Python
    packages, tests and publishes the Docker image, signs and verifies its
    provenance, then creates a GitHub Release only after those steps succeed.
-   Versions with a hyphen (e.g. `-rc.1`) are marked prerelease.
+   Versions with a hyphen (e.g. `-rc.1`) are marked prerelease. It runs as three
+   jobs in order: `publish` (build, test and push; the only job with the Docker
+   Hub token), `attest` (signing; the only job with `id-token: write`) and
+   `release` (verifies the attestation and creates the Release; the only job
+   with `contents: write`).
 6. After a release or hotfix, merge `main` back into `develop` before
    starting the next development cycle. As part of that sync, add the
    `@sha256:...` digest from the release's `image-reference.txt` asset to
@@ -55,7 +59,7 @@
 
 ## Docker Hub publication
 
-The release job publishes
+The `publish` job publishes
 `wudaoyou/successfactors-toolkit:<release-tag>` (including the `v` prefix)
 for `linux/amd64` and `linux/arm64`. It builds and loads both platforms once,
 then checks MCP initialization, tool discovery, and a local tenant-list call
@@ -65,6 +69,9 @@ the same tested images without rebuilding, verifies both published platforms,
 captures the published manifest digest, and only then creates the GitHub
 Release with the Python distributions.
 
+The `Dockerfile` pins its `python:3.12-slim` base image by digest; Dependabot
+opens a pull request when a newer digest is published.
+
 The containerd image store enables loading both platforms, following
 [Docker's multi-platform GitHub Actions guidance](https://docs.docker.com/build/ci/github-actions/multi-platform/).
 
@@ -73,8 +80,11 @@ Before the first image release:
 1. Create a **public** Docker Hub repository named
    `wudaoyou/successfactors-toolkit` so users can pull it without signing in.
 2. Create a Docker Hub access token with the read/write access needed to push
-   that repository. In GitHub repository **Settings → Secrets and variables →
-   Actions**, save it as `DOCKERHUB_TOKEN`. Never put the token in chat or Git.
+   that repository. In GitHub repository **Settings → Environments**, create
+   the `dockerhub` environment the `publish` job runs in, limit its deployment
+   branches and tags to the tag pattern `v*`, and save the token there as the
+   environment secret `DOCKERHUB_TOKEN` (not as a repository secret). Never put
+   the token in chat or Git.
 3. In Docker Hub **Repository Settings**, select **Specific tags immutable**
    with the expression `^v.*$`. This repository is configured that way, so all
    release tags are immutable. Keep the setting in place before publishing.

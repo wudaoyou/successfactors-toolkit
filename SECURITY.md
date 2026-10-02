@@ -59,6 +59,31 @@ To keep a tenant's data away from holders of `API_KEY`, do not register it on a
 shared server. `API_KEY` does not apply to the MCP server, which accepts only a
 `company_id`. The tenant-management routes need `ADMIN_API_KEY` as well.
 
+## Audit log
+
+Security-relevant events are written to stderr (never stdout, which carries
+the MCP protocol) as one `key=value` line each, from the logger
+`successfactors_toolkit.audit`, e.g.
+`2026-10-01T09:30:00Z WARNING audit event=auth outcome=denied scope=admin reason=invalid`.
+`docker logs` shows them. To route them elsewhere, give that logger its own
+handler in your logging config (for uvicorn, `--log-config`).
+
+| `event` | When |
+| --- | --- |
+| `key_install`, `key_delete` | A tenant keypair is installed/replaced (`force`) or deleted |
+| `production_flag` | A tenant's `production` flag is set (`previous` is `unset`, `true` or `false`) |
+| `connection_override` | A request's `connection` values are accepted (`fields` names them) or rejected by the policy (`field`), with the `company_id` the request targeted |
+| `connection_config` | A `host` or `token_url` from the tenant's `{company_id}.json` or `SF_*` settings fails the policy (`field`), so every request to that tenant is refused; fix the configuration. MCP mode has no per-request overrides, so it only logs this |
+| `auth` | `X-API-Key` or `X-Admin-Key` is missing, wrong or the API is disabled (`scope`, `reason`) |
+| `sf_token` | SuccessFactors refuses the OAuth token request (`status`) |
+
+`outcome` is `ok`, `denied` or `failed`; only `ok` lines are `INFO`. Lines carry
+identifiers and outcomes only: a `company_id`, field names, error codes and
+status codes — never keys, certificates, tokens, `connection` values, request
+bodies or employee data. A request's source address is not recorded; use the
+uvicorn access log, which shares timestamps with these lines. Edits to
+`{company_id}.json` made on disk are not audited.
+
 ## Deployment Guidance
 
 This service brokers OAuth2 credentials and returns HR data (employee

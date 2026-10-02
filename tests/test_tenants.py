@@ -1,30 +1,39 @@
 import base64
+import errno
+import fcntl
 import json
+import os
+import shutil
 import stat
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 from fastapi.testclient import TestClient
 
 from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import Settings, get_settings
 from successfactors_toolkit.main import app
+from successfactors_toolkit.services import tenant_store
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.tenant_store import (
+    CertNotYetValid,
     InvalidCompanyId,
+    InvalidKeyOrCert,
     KeyCertMismatch,
+    TenantAlreadyExists,
     TenantStore,
 )
 
 
-@pytest.fixture
-def keypair():
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def _pem_pair(key=None, not_before=timedelta(minutes=-1)):
+    key = key or rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "synthetic-test-user")])
     now = datetime.now(timezone.utc)
     cert = (
@@ -33,7 +42,7 @@ def keypair():
         .issuer_name(subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_before(now + not_before)
         .not_valid_after(now + timedelta(days=7))
         .sign(key, hashes.SHA256())
     )
@@ -45,6 +54,11 @@ def keypair():
         ),
         cert.public_bytes(serialization.Encoding.PEM),
     )
+
+
+@pytest.fixture
+def keypair():
+    return _pem_pair()
 
 
 def test_registered_tenants_are_listed_without_loading_connection_attribute(
@@ -278,3 +292,134 @@ def test_mcp_list_tenants_reports_effective_settings_and_config_errors(
     assert "config_error" not in a and "config_error" not in b
     assert "token_url" in c["config_error"] and c["pii_filter_tier"] is None
     assert any("example-c" in w and "token_url" in w for w in result["warnings"])
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        ec.generate_private_key(ec.SECP256R1()),
+        rsa.generate_private_key(public_exponent=65537, key_size=1024),
+    ],
+    ids=["ec-p256", "rsa-1024"],
+)
+def test_install_rejects_keys_other_than_rsa_2048_or_more(tmp_path, key):
+    store = TenantStore(str(tmp_path / "tenants"))
+    with pytest.raises(InvalidKeyOrCert, match="RSA") as exc:
+        store.install("example-a", *_pem_pair(key))
+    assert exc.value.code == "invalid_private_key"
+    assert not store.exists("example-a")
+
+
+def test_install_rejects_a_certificate_not_yet_valid_beyond_clock_skew(tmp_path):
+    store = TenantStore(str(tmp_path / "tenants"))
+    with pytest.raises(CertNotYetValid) as exc:
+        store.install("example-a", *_pem_pair(not_before=timedelta(days=1)))
+    assert exc.value.code == "certificate_not_yet_valid"
+    store.install("example-a", *_pem_pair(not_before=timedelta(minutes=1)))
+
+
+def test_concurrent_installs_do_not_both_succeed(monkeypatch, tmp_path, keypair):
+    store = TenantStore(str(tmp_path / "tenants"))
+    check_pair = tenant_store._check_pair
+    monkeypatch.setattr(tenant_store, "_check_pair", lambda *a: (time.sleep(0.2), check_pair(*a)))
+    start, results = threading.Barrier(2), []
+
+    def install():
+        start.wait()
+        try:
+            store.install("example-a", *keypair)
+            results.append("ok")
+        except TenantAlreadyExists:
+            results.append("exists")
+
+    threads = [threading.Thread(target=install) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(results) == ["exists", "ok"]
+
+
+def test_install_waits_for_the_lock_file_another_process_holds(tmp_path, keypair):
+    store = TenantStore(str(tmp_path / "tenants"))
+    store.set_production("example-a", False)  # creates the root and its .lock
+    fd = os.open(tmp_path / "tenants" / ".lock", os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    worker = threading.Thread(target=store.install, args=("example-a", *keypair))
+    worker.start()
+    time.sleep(0.2)
+    assert worker.is_alive() and not store.exists("example-a")
+    os.close(fd)
+    worker.join()
+    assert store.exists("example-a")
+
+
+@pytest.mark.parametrize("exchange", [True, False], ids=["exchange", "file-by-file"])
+def test_forced_reinstall_never_removes_the_tenant_directory(
+    monkeypatch, tmp_path, keypair, exchange
+):
+    store = TenantStore(str(tmp_path / "tenants"))
+    store.install("example-a", *keypair)
+    store.set_production("example-a", True)
+    if not exchange:
+
+        def unsupported(*_):
+            raise OSError(errno.EINVAL, "not supported")
+
+        monkeypatch.setattr(tenant_store, "_exchange", unsupported)
+    rmtree = shutil.rmtree
+
+    def checked_rmtree(path, *args, **kwargs):
+        rmtree(path, *args, **kwargs)
+        assert store.key_path("example-a").exists(), "tenant key missing mid-install"
+
+    monkeypatch.setattr(shutil, "rmtree", checked_rmtree)
+    new = _pem_pair()
+    store.install("example-a", *new, force=True)
+    assert store.key_path("example-a").read_bytes() == new[0]
+    assert store.cert_path("example-a").read_bytes() == new[1]
+    assert store.production("example-a") is True
+    assert sorted(p.name for p in (tmp_path / "tenants").iterdir()) == [".lock", "example-a"]
+
+
+def test_tenant_store_directories_are_private(tmp_path, keypair):
+    store = TenantStore(str(tmp_path / "tenants"))
+    store.install("example-a", *keypair)
+    store.set_production("example-b", False)
+    for path in (
+        tmp_path / "tenants",
+        store.tenant_dir("example-a"),
+        store.tenant_dir("example-b"),
+    ):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700
+
+
+def test_company_id_case_variants_do_not_share_tenant_files(tmp_path, keypair):
+    # On a case-insensitive filesystem (macOS, Docker Desktop) tenants/demo/
+    # also opens as tenants/DEMO/; "DEMO" must still not read "demo"'s files.
+    settings = Settings(
+        _env_file=None,
+        tenant_keys_dir=str(tmp_path / "tenants"),
+        sf_private_key_pem=base64.b64encode(b"global").decode(),
+    )
+    store = TenantStore(settings.tenant_keys_dir)
+    store.install("demo", *keypair)
+    store.set_production("demo", False)
+    assert load_key_pem(None, settings, "demo") == keypair[0]
+    assert load_key_pem(None, settings, "DEMO") == b"global"
+    assert store.production("DEMO") is None and store.connection("DEMO") == {}
+    variant = tmp_path / "tenants" / "DEMO" / "sf_private_key_demo.pem"
+    with pytest.raises(ConnectionPolicyError):
+        load_key_pem(str(variant), settings, "DEMO")
+    with pytest.raises(ConnectionPolicyError):
+        load_key_pem(str(store.tenant_dir("demo") / "SF_PRIVATE_KEY_DEMO.pem"), settings, "demo")
+
+
+def test_install_refuses_a_directory_differing_only_in_case(tmp_path, keypair):
+    store = TenantStore(str(tmp_path / "tenants"))
+    (tmp_path / "tenants" / "DEMO").mkdir(parents=True)
+    if not store.tenant_dir("demo").exists():
+        pytest.skip("case-sensitive filesystem")
+    with pytest.raises(TenantAlreadyExists):
+        store.install("demo", *keypair, force=True)
+    assert (tmp_path / "tenants" / "DEMO").is_dir()
