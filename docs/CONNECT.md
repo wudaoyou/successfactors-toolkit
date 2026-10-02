@@ -97,7 +97,7 @@ Fixed: one request, including its retries, takes at most 600 s, and 429
 For each request, the toolkit resolves the RSA private key in this order:
 
 1. Per-request `connection.private_key_path` — must resolve to a path inside `{TENANT_KEYS_DIR}/{company_id}/` (the tenant the request names), or the request is rejected with `400`.
-2. `{TENANT_KEYS_DIR}/{company_id}/sf_private_key_{company_id}.pem` — populated via the tenant management API.
+2. `{TENANT_KEYS_DIR}/{company_id}/sf_private_key_{company_id}.pem` — populated via the tenant management API. Folder and file names must match `company_id` exactly, including case, on case-insensitive filesystems too (path overrides in step 1 likewise).
 3. `SF_PRIVATE_KEY_PEM_<COMPANY_ID>` env var (base64-encoded PEM, per company — for CI/CD).
 4. `SF_PRIVATE_KEY_PEM` env var (base64-encoded PEM, single-tenant fallback).
 5. `SF_PRIVATE_KEY_PATH`, a path template with a `{company_id}` placeholder.

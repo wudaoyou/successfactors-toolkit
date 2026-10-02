@@ -56,6 +56,12 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   RSA or is under 2048 bits (an EC key cannot sign the `rsa-sha256` assertion
   and used to fail only at runtime), and a certificate whose `notBefore` is
   more than 5 minutes ahead (`certificate_not_yet_valid`), with 400. (#90)
+- **Behavior change:** tenant files are matched by `company_id` with exact
+  case, on case-insensitive filesystems (macOS, Docker Desktop bind mounts)
+  too: `DEMO` no longer reads the key, `{company_id}.json` settings or
+  production flag in `tenants/demo/`, and resolves like a company without a
+  tenant directory. Installing a tenant whose directory exists in another case
+  returns 409. (#87)
 - Installing a keypair swaps the new tenant directory in with one atomic
   rename, so the tenant never disappears mid-install (which made key lookup
   fall back to the global key), and checks for an existing tenant under a

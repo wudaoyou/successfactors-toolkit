@@ -392,3 +392,34 @@ def test_tenant_store_directories_are_private(tmp_path, keypair):
         store.tenant_dir("example-b"),
     ):
         assert stat.S_IMODE(path.stat().st_mode) == 0o700
+
+
+def test_company_id_case_variants_do_not_share_tenant_files(tmp_path, keypair):
+    # On a case-insensitive filesystem (macOS, Docker Desktop) tenants/demo/
+    # also opens as tenants/DEMO/; "DEMO" must still not read "demo"'s files.
+    settings = Settings(
+        _env_file=None,
+        tenant_keys_dir=str(tmp_path / "tenants"),
+        sf_private_key_pem=base64.b64encode(b"global").decode(),
+    )
+    store = TenantStore(settings.tenant_keys_dir)
+    store.install("demo", *keypair)
+    store.set_production("demo", False)
+    assert load_key_pem(None, settings, "demo") == keypair[0]
+    assert load_key_pem(None, settings, "DEMO") == b"global"
+    assert store.production("DEMO") is None and store.connection("DEMO") == {}
+    variant = tmp_path / "tenants" / "DEMO" / "sf_private_key_demo.pem"
+    with pytest.raises(ConnectionPolicyError):
+        load_key_pem(str(variant), settings, "DEMO")
+    with pytest.raises(ConnectionPolicyError):
+        load_key_pem(str(store.tenant_dir("demo") / "SF_PRIVATE_KEY_DEMO.pem"), settings, "demo")
+
+
+def test_install_refuses_a_directory_differing_only_in_case(tmp_path, keypair):
+    store = TenantStore(str(tmp_path / "tenants"))
+    (tmp_path / "tenants" / "DEMO").mkdir(parents=True)
+    if not store.tenant_dir("demo").exists():
+        pytest.skip("case-sensitive filesystem")
+    with pytest.raises(TenantAlreadyExists):
+        store.install("demo", *keypair, force=True)
+    assert (tmp_path / "tenants" / "DEMO").is_dir()

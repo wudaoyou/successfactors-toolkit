@@ -27,6 +27,8 @@ with the tenant directory in one rename (see _exchange). A half-written tenant
 directory is never visible, and the tenant directory never disappears. Writers
 hold an flock on ${tenant_keys_dir}/.lock, so they serialize across threads
 and processes. Directories are created mode 0700.
+
+Lookups match company_id case exactly (see exact_case_path).
 """
 
 from __future__ import annotations
@@ -205,6 +207,24 @@ def validate_company_id(company_id: str) -> None:
         )
 
 
+def exact_case_path(base: Path, *parts: str) -> Path | None:
+    """base/parts if each part exists in its parent spelled exactly so, else None.
+
+    A case-insensitive filesystem (macOS, Docker Desktop bind mounts) opens
+    tenants/demo/ for "DEMO". SF company IDs are sent as given, so "DEMO" and
+    "demo" are different tenants and one must never read the other's files.
+    """
+    path = base
+    for part in parts:
+        try:
+            if part not in os.listdir(path):
+                return None
+        except OSError:
+            return None
+        path = path / part
+    return path
+
+
 def _exchange(a: Path, b: Path) -> None:
     """Swap two existing paths in one atomic rename."""
     libc = ctypes.CDLL(None, use_errno=True)
@@ -310,7 +330,10 @@ class TenantStore:
     # ── queries ───────────────────────────────────────────────────────────
     def exists(self, company_id: str) -> bool:
         validate_company_id(company_id)
-        return self.key_path(company_id).exists() and self.cert_path(company_id).exists()
+        return all(
+            exact_case_path(self._base, company_id, path.name) is not None
+            for path in (self.key_path(company_id), self.cert_path(company_id))
+        )
 
     def list_tenants(self) -> list[TenantInfo]:
         if not self._base.exists():
@@ -352,8 +375,11 @@ class TenantStore:
         """{company_id}.json as a dict; {} if missing, unreadable or not an object."""
         if not _FLAG_ID_RE.fullmatch(company_id):
             return {}
+        path = exact_case_path(self._base, company_id, f"{company_id}.json")
+        if path is None:
+            return {}
         try:
-            data = json.loads(self.config_path(company_id).read_text("utf-8"))
+            data = json.loads(path.read_text("utf-8"))
         except (OSError, ValueError):
             return {}
         return data if isinstance(data, dict) else {}
@@ -413,6 +439,11 @@ class TenantStore:
                     f"Tenant {company_id!r} already exists. Re-POST with ?force=true to overwrite.",
                 )
             dest = self.tenant_dir(company_id)
+            if dest.exists() and exact_case_path(self._base, company_id) is None:
+                raise TenantAlreadyExists(
+                    "tenant_already_exists",
+                    f"A tenant directory differing from {company_id!r} only in case exists.",
+                )
 
             key = _parse_key(key_bytes)
             cert = _parse_cert(cert_bytes)
