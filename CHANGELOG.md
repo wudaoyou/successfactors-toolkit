@@ -24,6 +24,12 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   `id-token: write` is granted only to the signing job, `contents: write` only
   to the job that creates the GitHub Release, and the Docker Hub token only to
   the publishing job (#92).
+- `SF_PRIVATE_KEY_PEM`, `ADMIN_API_KEY` and `API_KEY` are held as `SecretStr` in
+  `Settings`, and settings validation errors no longer echo input values. A bad
+  setting at startup (printed to stderr in MCP mode) can no longer show the
+  first and last characters of these secrets. Environment variable names and
+  behavior are unchanged; plugin code that reads these three `Settings` fields
+  now calls `.get_secret_value()`. (#85)
 
 ## [0.5.3] - 2026-09-30
 

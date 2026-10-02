@@ -33,8 +33,9 @@ def load_key_pem(path_override: str | None, settings: Settings, company_id: str)
     company_pem = os.environ.get(f"SF_PRIVATE_KEY_PEM_{company_id.upper()}")
     if company_pem:
         return base64.b64decode(company_pem)
-    if settings.sf_private_key_pem:
-        return base64.b64decode(settings.sf_private_key_pem)
+    pem = settings.sf_private_key_pem.get_secret_value()
+    if pem:
+        return base64.b64decode(pem)
     path = settings.sf_private_key_path.format(company_id=company_id.lower())
     if not path:
         raise ValueError("No private key configured for this tenant.")

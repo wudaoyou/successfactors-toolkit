@@ -69,7 +69,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> None:
-    expected = get_settings().api_key
+    expected = get_settings().api_key.get_secret_value()
     if not expected:
         raise HTTPException(503, "REST API disabled: configure API_KEY.")
     # compare_digest raises TypeError on non-ASCII str, so compare bytes.
