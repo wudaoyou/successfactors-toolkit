@@ -19,6 +19,7 @@ only documented way.
 
 import asyncio
 import re
+import weakref
 from xml.sax.saxutils import escape
 
 import httpx
@@ -68,7 +69,11 @@ class SFAPIClient:
         # SFAPI sessions are long-lived (typically 60 min) but expire eventually;
         # _post invalidates on INVALID_SESSION and retries once.
         self._sessions: dict[tuple[str, str, str, str], str] = {}
-        self._login_lock = asyncio.Lock()
+        # One lock per session key, so a slow login only holds up its own tenant.
+        # Weak values: a lock goes away once nobody holds or awaits it.
+        self._login_locks: weakref.WeakValueDictionary[tuple[str, str, str, str], asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
 
     def _resolve(self, conn: SFAPIConnectionConfig | None) -> dict:
         s = self._settings
@@ -135,7 +140,8 @@ class SFAPIClient:
         key = self._session_key(r)
         if key in self._sessions:
             return self._sessions[key]
-        async with self._login_lock:
+        lock = self._login_locks.get(key) or self._login_locks.setdefault(key, asyncio.Lock())
+        async with lock:
             if key not in self._sessions:  # double-check
                 self._sessions[key] = await self._login(r)
             return self._sessions[key]

@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import gc
 import time
 from unittest.mock import AsyncMock
 
@@ -11,6 +12,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from successfactors_toolkit.config import Settings
+from successfactors_toolkit.models.common import ODataConnectionConfig, SFAPIConnectionConfig
 from successfactors_toolkit.services import saml_bearer
 from successfactors_toolkit.services.http_limits import passthrough_headers
 from successfactors_toolkit.services.odata_client import ODataClient
@@ -197,3 +199,83 @@ def test_a_short_lived_token_is_minted_again_instead_of_reused(monkeypatch):
 
     asyncio.run(two())
     assert mint.await_count == 2
+
+
+# ── per-tenant locks (#92) ────────────────────────────────────────────────
+
+
+def _two_tenant_fetch(release: asyncio.Event, started: list[str]):
+    """A token/login stub where tenant "example-a" blocks until `release` is set."""
+
+    async def fetch(**kwargs):
+        company = kwargs["company_id"]
+        started.append(company)
+        if company == "example-a":
+            await release.wait()
+        return f"tok-{company}"
+
+    return fetch
+
+
+def test_a_slow_token_endpoint_does_not_block_another_tenant(monkeypatch):
+    client = ODataClient(_settings(), httpx.AsyncClient())
+    a = client._resolve(ODataConnectionConfig(company_id="example-a"))
+    b = client._resolve(ODataConnectionConfig(company_id="example-b"))
+
+    async def scenario():
+        release, started = asyncio.Event(), []
+        monkeypatch.setattr(saml_bearer, "fetch_token", _two_tenant_fetch(release, started))
+        slow = asyncio.create_task(client._get_token(a))
+        await asyncio.sleep(0)
+        assert await asyncio.wait_for(client._get_token(b), 1) == "tok-example-b"
+        assert not slow.done()  # A is still waiting on its token endpoint
+        release.set()
+        assert await slow == "tok-example-a"
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_token_requests_for_one_tenant_mint_once(monkeypatch):
+    client = ODataClient(_settings(), httpx.AsyncClient())
+    a = client._resolve(ODataConnectionConfig(company_id="example-a"))
+
+    async def scenario():
+        release, started = asyncio.Event(), []
+        monkeypatch.setattr(saml_bearer, "fetch_token", _two_tenant_fetch(release, started))
+        calls = [asyncio.create_task(client._get_token(a)) for _ in range(3)]
+        await asyncio.sleep(0)
+        release.set()
+        assert await asyncio.gather(*calls) == ["tok-example-a"] * 3
+        assert started == ["example-a"]
+
+    asyncio.run(scenario())
+
+
+def test_token_locks_do_not_pile_up_once_idle(monkeypatch):
+    client = ODataClient(_settings(), httpx.AsyncClient())
+    monkeypatch.setattr(saml_bearer, "fetch_token", AsyncMock(return_value="tok"))
+    asyncio.run(client._get_token(client._resolve(None)))
+    gc.collect()
+    assert len(client._token_locks) == 0
+
+
+def test_a_slow_sfapi_login_does_not_block_another_tenant(monkeypatch):
+    client = SFAPIClient(_settings(), httpx.AsyncClient())
+    a = client._resolve(SFAPIConnectionConfig(company_id="example-a"))
+    b = client._resolve(SFAPIConnectionConfig(company_id="example-b"))
+
+    async def scenario():
+        release, started = asyncio.Event(), []
+        fetch = _two_tenant_fetch(release, started)
+        monkeypatch.setattr(client, "_login", lambda r: fetch(company_id=r["company_id"]))
+        slow = asyncio.create_task(client._ensure_session(a))
+        await asyncio.sleep(0)
+        assert await asyncio.wait_for(client._ensure_session(b), 1) == "tok-example-b"
+        assert not slow.done()
+        release.set()
+        assert await slow == "tok-example-a"
+        # a second caller for a cached tenant never logs in again
+        assert await client._ensure_session(a) == "tok-example-a"
+        assert started == ["example-a", "example-b"]
+
+    asyncio.run(scenario())

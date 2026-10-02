@@ -40,6 +40,9 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - The OData client caches an access token for the `expires_in` the token
   endpoint reports, less a tenth of it (at most one hour), instead of a fixed
   23 hours; without a usable `expires_in` it still caches for 23 hours. (#92)
+- Token fetches (OData) and SFAPI logins are serialized per tenant instead of
+  behind one process-wide lock, so a slow tenant no longer blocks the others.
+  (#92)
 
 ## [0.5.3] - 2026-09-30
 

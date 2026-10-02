@@ -6,7 +6,7 @@ by SFAPI. OData uses the shared `SF_*` settings and per-request connection overr
 The REST API version is configured separately through `SF_ODATA_VERSION`.
 
 Token caching mirrors `SFAPIClient`: keyed by (host, company_id, user_id,
-client_key), with a lock to coalesce concurrent first-call token storms.
+client_key), with a per-key lock to coalesce concurrent first-call token storms.
 
 Retry policy (§12.7, p.228-229):
   * 401 once  — refresh token, retry
@@ -24,6 +24,7 @@ import json
 import random
 import re
 import time
+import weakref
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -214,7 +215,11 @@ class ODataClient:
         self._client = client
         # Token cache: (host, company_id, user_id, client_key) -> (token, exp_epoch)
         self._tokens: dict[tuple[str, str, str, str], tuple[str, float]] = {}
-        self._token_lock = asyncio.Lock()
+        # One lock per token key, so a slow token endpoint only holds up its own
+        # tenant. Weak values: a lock goes away once nobody holds or awaits it.
+        self._token_locks: weakref.WeakValueDictionary[tuple[str, str, str, str], asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
 
     def _resolve(self, conn: ODataConnectionConfig | None) -> dict[str, Any]:
         # OData shares OAuth2 client + tenant key with SFAPI — both use the
@@ -276,7 +281,8 @@ class ODataClient:
             cached = self._tokens.get(key)
             if cached and cached[1] - _TOKEN_EXPIRY_SLACK_SECONDS > time.monotonic():
                 return cached[0]
-        async with self._token_lock:
+        lock = self._token_locks.get(key) or self._token_locks.setdefault(key, asyncio.Lock())
+        async with lock:
             cached = self._tokens.get(key)
             if (
                 not force_refresh
