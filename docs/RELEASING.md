@@ -65,6 +65,9 @@ the same tested images without rebuilding, verifies both published platforms,
 captures the published manifest digest, and only then creates the GitHub
 Release with the Python distributions.
 
+The `Dockerfile` pins its `python:3.12-slim` base image by digest; Dependabot
+opens a pull request when a newer digest is published.
+
 The containerd image store enables loading both platforms, following
 [Docker's multi-platform GitHub Actions guidance](https://docs.docker.com/build/ci/github-actions/multi-platform/).
 

@@ -25,8 +25,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install package
-        run: pip install -e ".[dev]"
+      - name: Install pinned dependencies and the package
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -e . --no-deps
       - name: Lint
         run: ruff check .
       - name: Format check

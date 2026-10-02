@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
 
 # MCP Registry ownership check: must equal "name" in server.json.
 LABEL io.modelcontextprotocol.server.name="io.github.wudaoyou/successfactors-toolkit"

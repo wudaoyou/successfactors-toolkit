@@ -4,6 +4,13 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Security
+
+- The Docker base image is pinned to a `python:3.12-slim` digest, and
+  Dependabot now watches it. CI installs the pinned `requirements-dev.txt`
+  set, the same one the image ships, instead of the `pyproject.toml` floors
+  (#83).
+
 ## [0.5.3] - 2026-09-30
 
 ### Security
