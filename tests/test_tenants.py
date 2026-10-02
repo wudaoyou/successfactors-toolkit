@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 from fastapi.testclient import TestClient
 
@@ -16,15 +16,16 @@ from successfactors_toolkit.main import app
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.tenant_store import (
+    CertNotYetValid,
     InvalidCompanyId,
+    InvalidKeyOrCert,
     KeyCertMismatch,
     TenantStore,
 )
 
 
-@pytest.fixture
-def keypair():
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def _pem_pair(key=None, not_before=timedelta(minutes=-1)):
+    key = key or rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "synthetic-test-user")])
     now = datetime.now(timezone.utc)
     cert = (
@@ -33,7 +34,7 @@ def keypair():
         .issuer_name(subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_before(now + not_before)
         .not_valid_after(now + timedelta(days=7))
         .sign(key, hashes.SHA256())
     )
@@ -45,6 +46,11 @@ def keypair():
         ),
         cert.public_bytes(serialization.Encoding.PEM),
     )
+
+
+@pytest.fixture
+def keypair():
+    return _pem_pair()
 
 
 def test_registered_tenants_are_listed_without_loading_connection_attribute(
@@ -278,3 +284,27 @@ def test_mcp_list_tenants_reports_effective_settings_and_config_errors(
     assert "config_error" not in a and "config_error" not in b
     assert "token_url" in c["config_error"] and c["pii_filter_tier"] is None
     assert any("example-c" in w and "token_url" in w for w in result["warnings"])
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        ec.generate_private_key(ec.SECP256R1()),
+        rsa.generate_private_key(public_exponent=65537, key_size=1024),
+    ],
+    ids=["ec-p256", "rsa-1024"],
+)
+def test_install_rejects_keys_other_than_rsa_2048_or_more(tmp_path, key):
+    store = TenantStore(str(tmp_path / "tenants"))
+    with pytest.raises(InvalidKeyOrCert, match="RSA") as exc:
+        store.install("example-a", *_pem_pair(key))
+    assert exc.value.code == "invalid_private_key"
+    assert not store.exists("example-a")
+
+
+def test_install_rejects_a_certificate_not_yet_valid_beyond_clock_skew(tmp_path):
+    store = TenantStore(str(tmp_path / "tenants"))
+    with pytest.raises(CertNotYetValid) as exc:
+        store.install("example-a", *_pem_pair(not_before=timedelta(days=1)))
+    assert exc.value.code == "certificate_not_yet_valid"
+    store.install("example-a", *_pem_pair(not_before=timedelta(minutes=1)))

@@ -35,13 +35,14 @@ import shutil
 import stat
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.x509.oid import NameOID
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -54,6 +55,8 @@ _COMPANY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 # for, so a mixed-case SF_COMPANY_ID keyed from the environment has one too.
 _FLAG_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}")
 _LEGACY_FLAG_FILE = "tenant.json"  # the 0.3.3 name; no longer read
+# A certificate minted seconds ago on a clock slightly ahead of ours is valid.
+_CLOCK_SKEW = timedelta(minutes=5)
 
 
 class TenantConnection(BaseModel):
@@ -113,6 +116,10 @@ class KeyCertMismatch(TenantStoreError):
 
 
 class CertExpired(TenantStoreError):
+    pass
+
+
+class CertNotYetValid(TenantStoreError):
     pass
 
 
@@ -211,6 +218,17 @@ def _parse_cert(pem_bytes: bytes) -> x509.Certificate:
         ) from e
 
 
+def _check_key(key) -> None:
+    # The SAML assertion is signed rsa-sha256: any other key fails only at runtime.
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise InvalidKeyOrCert("invalid_private_key", "The private key must be an RSA key.")
+    if key.key_size < 2048:
+        raise InvalidKeyOrCert(
+            "invalid_private_key",
+            f"The RSA private key must be at least 2048 bits, not {key.key_size}.",
+        )
+
+
 def _check_pair(key, cert: x509.Certificate) -> None:
     key_pub = key.public_key().public_bytes(
         serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
@@ -231,6 +249,11 @@ def _check_expiry(cert: x509.Certificate) -> None:
         raise CertExpired(
             "certificate_expired",
             f"Certificate expired at {cert.not_valid_after_utc.isoformat()}.",
+        )
+    if cert.not_valid_before_utc > now + _CLOCK_SKEW:
+        raise CertNotYetValid(
+            "certificate_not_yet_valid",
+            f"Certificate is not valid until {cert.not_valid_before_utc.isoformat()}.",
         )
 
 
@@ -359,6 +382,7 @@ class TenantStore:
 
         key = _parse_key(key_bytes)
         cert = _parse_cert(cert_bytes)
+        _check_key(key)
         _check_pair(key, cert)
         _check_expiry(cert)
 

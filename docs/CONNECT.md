@@ -126,7 +126,8 @@ curl -X DELETE http://127.0.0.1:8000/api/tenants/demo \
 ```
 
 The keypair endpoint validates the key and certificate cryptographically
-(matching public key, not expired) before writing anything, returns `409` if
+(RSA key of at least 2048 bits, matching public key, certificate currently
+valid) before writing anything, returns `409` if
 the tenant already exists (bypass with `?force=true`), and returns
 certificate metadata including a `days_until_expiry` warning once a cert has
 under 90 days left. Installing or deleting a tenant's key invalidates any

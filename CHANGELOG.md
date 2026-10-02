@@ -52,6 +52,10 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - A resolved token value has its single quotes doubled wherever the token
   sits inside an OData string literal, not only right after the opening
   quote (e.g. two tokens in one literal, or text before the token). (#92)
+- **Behavior change:** the keypair endpoint rejects a private key that is not
+  RSA or is under 2048 bits (an EC key cannot sign the `rsa-sha256` assertion
+  and used to fail only at runtime), and a certificate whose `notBefore` is
+  more than 5 minutes ahead (`certificate_not_yet_valid`), with 400. (#90)
 
 ## [0.5.3] - 2026-09-30
 
