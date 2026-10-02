@@ -88,13 +88,18 @@ class SFAPIClient:
         resolved = {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in _endpoint()'s URL.
-            "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
-            "client_key": check_identity(
-                "client_key", c.client_key, t.get("client_key", s.sf_client_key)
+            "host": check_host(
+                _eff(c.host, t.get("host", s.sf_host)), s, company_id, requested=c.host is not None
             ),
-            "user_id": check_identity("user_id", c.user_id, t.get("user_id", s.sf_user_id)),
+            "client_key": check_identity(
+                "client_key", c.client_key, t.get("client_key", s.sf_client_key), company_id
+            ),
+            "user_id": check_identity(
+                "user_id", c.user_id, t.get("user_id", s.sf_user_id), company_id
+            ),
             "company_id": company_id,
             "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
+            "token_url_requested": c.token_url is not None,
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
         }
         audit_overrides(c, company_id, s, t)
@@ -116,6 +121,7 @@ class SFAPIClient:
             user_id=r["user_id"],
             company_id=r["company_id"],
             token_url=r["token_url"],
+            token_url_requested=r["token_url_requested"],
             private_key_pem=r["private_key_pem"],
             settings=self._settings,
             timeout=self._settings.request_timeout,

@@ -178,14 +178,64 @@ def test_rejected_overrides_are_logged_by_field_not_by_value(settings, tmp_path,
         with pytest.raises(ConnectionPolicyError):
             client._resolve(conn)
     with pytest.raises(ConnectionPolicyError):  # what saml_bearer.fetch_token runs
-        check_token_url("https://evil.invalid/oauth/token", settings)
+        check_token_url("https://evil.invalid/oauth/token", settings, "demo")
     assert lines() == [
-        "event=connection_override outcome=denied field=host",
+        "event=connection_override outcome=denied company_id=demo field=host",
         "event=connection_override outcome=denied company_id=demo field=private_key_path",
-        "event=connection_override outcome=denied field=client_key",
-        "event=connection_override outcome=denied field=token_url",
+        "event=connection_override outcome=denied company_id=demo field=client_key",
+        "event=connection_override outcome=denied company_id=demo field=token_url",
     ]
     assert not any("evil" in line or "secret-name" in line for line in lines())
+
+
+def _write_tenant_file(settings, text):
+    tenant = Path(settings.tenant_keys_dir) / "demo"
+    tenant.mkdir(parents=True)
+    (tenant / "demo.json").write_text(text)
+
+
+def test_a_bad_configured_value_is_a_config_failure_not_a_refused_override(settings, lines):
+    _write_tenant_file(
+        settings,
+        '{"production": false, "host": "evil.invalid", "token_url": "https://evil.invalid/oauth/token"}',
+    )
+    for client in (ODataClient(settings, None), SFAPIClient(settings, None)):
+        with pytest.raises(ConnectionPolicyError):
+            client._resolve(None)
+    # The same value sent in the request is a refused override.
+    with pytest.raises(ConnectionPolicyError):
+        ODataClient(settings, None)._resolve(ODataConnectionConfig(host="evil.invalid"))
+    assert lines() == [
+        "event=connection_config outcome=failed company_id=demo field=host",
+        "event=connection_config outcome=failed company_id=demo field=host",
+        "event=connection_override outcome=denied company_id=demo field=host",
+    ]
+
+
+def test_token_url_denials_say_whether_the_request_or_the_config_supplied_it(settings, lines):
+    _write_tenant_file(
+        settings,
+        '{"production": false, "host": "api4preview.sapsf.com", "token_url": "https://evil.invalid/t"}',
+    )
+
+    async def run():
+        odata, sfapi = ODataClient(settings, None), SFAPIClient(settings, None)
+        for conn in (None, ODataConnectionConfig(token_url="https://other.invalid/t")):
+            with pytest.raises(ConnectionPolicyError):
+                await odata._fetch_new_token(odata._resolve(conn))
+        for conn in (None, SFAPIConnectionConfig(token_url="https://other.invalid/t")):
+            with pytest.raises(ConnectionPolicyError):
+                await sfapi._login(sfapi._resolve(conn))
+
+    asyncio.run(run())
+    config = "event=connection_config outcome=failed company_id=demo field=token_url"
+    override = "event=connection_override outcome=denied company_id=demo field=token_url"
+    assert [line for line in lines() if " outcome=ok " not in line] == [
+        config,
+        override,
+        config,
+        override,
+    ]
 
 
 def test_accepted_overrides_are_logged_by_field_name_only(settings, lines):
@@ -210,10 +260,10 @@ def test_a_rejected_rest_override_is_logged(monkeypatch, lines):
         response = client.post(
             "/api/odata/execute",
             headers={"X-API-Key": "test-api-key"},
-            json={"path": "User", "connection": {"host": "evil.invalid"}},
+            json={"path": "User", "connection": {"company_id": "demo", "host": "evil.invalid"}},
         )
     assert response.status_code == 400
-    assert lines() == ["event=connection_override outcome=denied field=host"]
+    assert lines() == ["event=connection_override outcome=denied company_id=demo field=host"]
 
 
 def test_a_refused_sf_token_request_is_logged_without_the_assertion(settings, lines):
@@ -287,4 +337,6 @@ def test_mcp_stdio_keeps_audit_lines_off_the_protocol_stream(tmp_path):
                     assert result.is_error
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=60))
-    assert "event=connection_override outcome=denied field=host" in errlog.read_text()
+    # The bad host is in the tenant's file, not in a request: a config failure.
+    assert "event=connection_config outcome=failed company_id=demo field=host" in errlog.read_text()
+    assert "event=connection_override" not in errlog.read_text()

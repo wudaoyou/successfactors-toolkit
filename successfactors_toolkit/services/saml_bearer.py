@@ -104,12 +104,14 @@ async def fetch_token(
     private_key_pem: bytes,
     settings: Settings,
     timeout: int = 30,
+    token_url_requested: bool = True,
 ) -> AccessToken:
     # The signed assertion is a bearer credential: never POST it to a host the
     # connection policy does not allow. The policy has to come from the caller's
     # own Settings — reading the process-global ones here would check an
     # override against a configuration this client never agreed to.
-    check_token_url(token_url, settings)
+    # token_url_requested: whether the request named it (else it is configured).
+    check_token_url(token_url, settings, company_id, requested=token_url_requested)
     private_key = serialization.load_pem_private_key(private_key_pem, password=None)
 
     now = datetime.now(timezone.utc)

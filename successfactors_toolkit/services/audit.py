@@ -7,9 +7,10 @@ names, status codes), never secrets, key material, tokens, request bodies or
 personal data. Values are quoted when they hold anything but plain characters,
 so a caller-supplied string cannot forge a second line.
 
-Events: key_install, key_delete, production_flag, connection_override, auth,
-sf_token. `outcome` is "ok", "denied" (rejected by policy or authentication)
-or "failed" (an operation error); anything but "ok" logs at WARNING.
+Events: key_install, key_delete, production_flag, connection_override,
+connection_config, auth, sf_token. `outcome` is "ok", "denied" (rejected by
+policy or authentication) or "failed" (an operation error); anything but "ok"
+logs at WARNING.
 """
 
 from __future__ import annotations

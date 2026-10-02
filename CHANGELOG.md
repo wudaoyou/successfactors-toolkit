@@ -58,6 +58,16 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   `X-Admin-Key` failures and refused SuccessFactors token requests. Lines hold
   identifiers and outcomes only, never secrets, `connection` values or PII
   (`SECURITY.md`). (#89)
+- **Behavior change:** security-relevant events are written to stderr as
+  `key=value` audit lines (logger `successfactors_toolkit.audit`), on by
+  default with no off switch, so a log sink fed from stderr sees new
+  `WARNING` lines after upgrade: key install and delete, `production` flag
+  changes, accepted and rejected connection overrides (each with the
+  `company_id` it targeted), a `host` or `token_url` from tenant or `SF_*`
+  configuration that fails the policy (`event=connection_config`, not
+  reported as a rejected override), `X-API-Key` / `X-Admin-Key` failures and
+  refused SuccessFactors token requests. Lines hold identifiers and outcomes
+  only, never secrets, `connection` values or PII (`SECURITY.md`). (#89)
 - **Behavior change:** the keypair endpoint rejects a private key that is not
   RSA or is under 2048 bits (an EC key cannot sign the `rsa-sha256` assertion
   and used to fail only at runtime), and a certificate whose `notBefore` is

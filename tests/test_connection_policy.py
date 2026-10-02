@@ -53,7 +53,7 @@ def api_client(monkeypatch):
     ],
 )
 def test_allowed_hosts_pass(host, settings):
-    assert check_host(host, settings) == host
+    assert check_host(host, settings, "demo") == host
 
 
 @pytest.mark.parametrize(
@@ -71,12 +71,12 @@ def test_allowed_hosts_pass(host, settings):
 )
 def test_foreign_or_malformed_hosts_are_rejected(host, settings):
     with pytest.raises(ConnectionPolicyError):
-        check_host(host, settings)
+        check_host(host, settings, "demo")
 
 
 def test_token_url_must_be_https_on_an_allowed_host(settings):
     url = "https://api.example.invalid/oauth/token"
-    assert check_token_url(url, settings) == url
+    assert check_token_url(url, settings, "demo") == url
     for bad in (
         "http://api.example.invalid/oauth/token",
         "https://evil.invalid/oauth/token",
@@ -85,7 +85,7 @@ def test_token_url_must_be_https_on_an_allowed_host(settings):
         "api.example.invalid/oauth/token",
     ):
         with pytest.raises(ConnectionPolicyError):
-            check_token_url(bad, settings)
+            check_token_url(bad, settings, "demo")
 
 
 def test_key_path_must_stay_inside_the_tenants_own_directory(settings, tmp_path):
@@ -210,12 +210,12 @@ def test_non_ascii_access_keys_are_401_not_500(header, monkeypatch):
 
 
 def test_identity_may_be_repeated_or_set_where_unconfigured_but_not_replaced():
-    assert check_identity("user_id", None, "FILEUSER") == "FILEUSER"
-    assert check_identity("user_id", "FILEUSER", "FILEUSER") == "FILEUSER"
-    assert check_identity("user_id", "ANYONE", "") == "ANYONE"
+    assert check_identity("user_id", None, "FILEUSER", "demo") == "FILEUSER"
+    assert check_identity("user_id", "FILEUSER", "FILEUSER", "demo") == "FILEUSER"
+    assert check_identity("user_id", "ANYONE", "", "demo") == "ANYONE"
     for override in ("OTHER", ""):
         with pytest.raises(ConnectionPolicyError, match="user_id"):
-            check_identity("user_id", override, "FILEUSER")
+            check_identity("user_id", override, "FILEUSER", "demo")
 
 
 # ── Adversarial review follow-ups ─────────────────────────────────────────────
@@ -233,17 +233,17 @@ def test_configured_settings_are_trusted_even_when_unusual():
         sf_host="sf_internal.corp.invalid",
         sf_token_url="https://sf_internal.corp.invalid:8443/oauth/token",
     )
-    assert check_host(settings.sf_host, settings) == settings.sf_host
-    assert check_token_url(settings.sf_token_url, settings) == settings.sf_token_url
+    assert check_host(settings.sf_host, settings, "demo") == settings.sf_host
+    assert check_token_url(settings.sf_token_url, settings, "demo") == settings.sf_token_url
     # A per-request override still has to earn it.
     with pytest.raises(ConnectionPolicyError):
-        check_host("other_internal.corp.invalid", settings)
+        check_host("other_internal.corp.invalid", settings, "demo")
 
 
 def test_unparseable_overrides_are_policy_errors_not_crashes(settings):
     """A rejected override must reach the 400 handler, not escape as a 500."""
     with pytest.raises(ConnectionPolicyError):
-        check_token_url("https://[::1", settings)  # urlsplit raises ValueError
+        check_token_url("https://[::1", settings, "demo")  # urlsplit raises ValueError
     with pytest.raises(ConnectionPolicyError):
         check_key_path("\x00", settings, "demo")  # Path.resolve raises ValueError
 

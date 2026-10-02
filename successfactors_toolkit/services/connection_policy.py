@@ -37,10 +37,17 @@ class ConnectionPolicyError(ValueError):
     """An override points somewhere this server is not allowed to reach."""
 
 
-def deny(field: str, message: str, company_id: str | None = None) -> ConnectionPolicyError:
-    """The error to raise when `field` fails the policy; records the denial in
-    the audit log (the field's name, never its value)."""
-    audit("connection_override", "denied", company_id=company_id, field=field)
+def deny(
+    field: str, message: str, company_id: str, *, requested: bool = True
+) -> ConnectionPolicyError:
+    """The error to raise when `field` fails the policy; records it in the audit
+    log (the field's name, never its value). `requested` is whether the request
+    supplied the value: a rejected value that came from the tenant's file or
+    SF_* settings is a configuration error, not a refused override."""
+    if requested:
+        audit("connection_override", "denied", company_id=company_id, field=field)
+    else:
+        audit("connection_config", "failed", company_id=company_id, field=field)
     return ConnectionPolicyError(message)
 
 
@@ -58,12 +65,19 @@ def audit_overrides(conn: BaseModel, company_id: str, settings: Settings, tenant
         audit("connection_override", "ok", company_id=company_id, fields=",".join(fields))
 
 
-def check_host(host: str, settings: Settings, field: str = "host") -> str:
+def check_host(
+    host: str, settings: Settings, company_id: str, *, requested: bool = True, field: str = "host"
+) -> str:
     """Return `host` if it is a bare hostname this server may talk to."""
     if host and host == settings.sf_host:
         return host  # the operator's own configuration, whatever shape it has
     if not host or not _HOSTNAME_RE.fullmatch(host):
-        raise deny(field, f"Invalid host {host!r}: expected a bare hostname.")
+        raise deny(
+            field,
+            f"Invalid host {host!r}: expected a bare hostname.",
+            company_id,
+            requested=requested,
+        )
     lowered = host.lower()
     allowed = {settings.sf_host.lower(), *(h.lower() for h in settings.sf_allowed_hosts)}
     if lowered in allowed or lowered.endswith(_SAP_SUFFIXES):
@@ -72,23 +86,39 @@ def check_host(host: str, settings: Settings, field: str = "host") -> str:
         field,
         f"Host {host!r} is not allowed: use the configured SF_HOST, a host listed in "
         "SF_ALLOWED_HOSTS, or a SAP SuccessFactors datacenter host.",
+        company_id,
+        requested=requested,
     )
 
 
-def check_token_url(token_url: str, settings: Settings) -> str:
+def check_token_url(
+    token_url: str, settings: Settings, company_id: str, *, requested: bool = True
+) -> str:
     """Return `token_url` if it is https on an allowed host."""
     if token_url and token_url == settings.sf_token_url:
         return token_url  # the operator's own configuration
     try:
         parts = urlsplit(token_url)
     except ValueError as exc:  # e.g. an unterminated IPv6 literal
-        raise deny("token_url", f"token_url {token_url!r} is not a valid URL.") from exc
+        raise deny(
+            "token_url",
+            f"token_url {token_url!r} is not a valid URL.",
+            company_id,
+            requested=requested,
+        ) from exc
     if parts.scheme != "https":
-        raise deny("token_url", f"token_url {token_url!r} must use https.")
+        raise deny(
+            "token_url", f"token_url {token_url!r} must use https.", company_id, requested=requested
+        )
     hostname = parts.hostname or ""
     if parts.netloc.lower() != hostname:
-        raise deny("token_url", "token_url must not carry credentials or a port.")
-    check_host(hostname, settings, "token_url")
+        raise deny(
+            "token_url",
+            "token_url must not carry credentials or a port.",
+            company_id,
+            requested=requested,
+        )
+    check_host(hostname, settings, company_id, requested=requested, field="token_url")
     return token_url
 
 
@@ -111,7 +141,7 @@ def check_key_path(path: str, settings: Settings, company_id: str) -> Path:
     return resolved
 
 
-def check_identity(field: str, override: str | None, configured: str) -> str:
+def check_identity(field: str, override: str | None, configured: str, company_id: str) -> str:
     """Return the `user_id`/`client_key` to sign in with.
 
     `configured` is what the operator set for the tenant ({company_id}.json,
@@ -122,6 +152,8 @@ def check_identity(field: str, override: str | None, configured: str) -> str:
         return configured
     if configured:
         raise deny(
-            field, f"{field} is configured for this tenant and cannot be overridden per request."
+            field,
+            f"{field} is configured for this tenant and cannot be overridden per request.",
+            company_id,
         )
     return override

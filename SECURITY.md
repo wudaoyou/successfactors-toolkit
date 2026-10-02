@@ -72,7 +72,8 @@ handler in your logging config (for uvicorn, `--log-config`).
 | --- | --- |
 | `key_install`, `key_delete` | A tenant keypair is installed/replaced (`force`) or deleted |
 | `production_flag` | A tenant's `production` flag is set (`previous` is `unset`, `true` or `false`) |
-| `connection_override` | A request's `connection` values are accepted (`fields` names them) or rejected by the policy (`field`) |
+| `connection_override` | A request's `connection` values are accepted (`fields` names them) or rejected by the policy (`field`), with the `company_id` the request targeted |
+| `connection_config` | A `host` or `token_url` from the tenant's `{company_id}.json` or `SF_*` settings fails the policy (`field`), so every request to that tenant is refused; fix the configuration. MCP mode has no per-request overrides, so it only logs this |
 | `auth` | `X-API-Key` or `X-Admin-Key` is missing, wrong or the API is disabled (`scope`, `reason`) |
 | `sf_token` | SuccessFactors refuses the OAuth token request (`status`) |
 
