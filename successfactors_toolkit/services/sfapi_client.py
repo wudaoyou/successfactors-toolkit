@@ -27,7 +27,11 @@ import httpx
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.models.common import SFAPIConnectionConfig
 from successfactors_toolkit.services import http_limits, saml_bearer
-from successfactors_toolkit.services.connection_policy import check_host, check_identity
+from successfactors_toolkit.services.connection_policy import (
+    audit_overrides,
+    check_host,
+    check_identity,
+)
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.tenant_store import TenantStore
 
@@ -81,7 +85,7 @@ class SFAPIClient:
         company_id = c.company_id or s.sf_company_id
         # Per-request override, then the tenant's {company_id}.json, then SF_*.
         t = TenantStore(s.tenant_keys_dir).connection(company_id)
-        return {
+        resolved = {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in _endpoint()'s URL.
             "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
@@ -93,6 +97,8 @@ class SFAPIClient:
             "token_url": _eff(c.token_url, t.get("token_url", s.sf_token_url)),
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
         }
+        audit_overrides(c, company_id, s, t)
+        return resolved
 
     @staticmethod
     def _session_key(r: dict) -> tuple[str, str, str, str]:

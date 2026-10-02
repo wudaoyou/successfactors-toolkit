@@ -6,7 +6,11 @@ import re
 from pathlib import Path
 
 from successfactors_toolkit.config import Settings
-from successfactors_toolkit.services.connection_policy import ConnectionPolicyError, check_key_path
+from successfactors_toolkit.services.connection_policy import (
+    ConnectionPolicyError,
+    check_key_path,
+    deny,
+)
 from successfactors_toolkit.services.tenant_store import exact_case_path
 
 
@@ -36,8 +40,10 @@ def load_key_pem(path_override: str | None, settings: Settings, company_id: str)
             exact_case_path(base, company_id) is None
             or exact_case_path(tenant_dir, *key.relative_to(tenant_dir).parts) is None
         ):
-            raise ConnectionPolicyError(
-                f"private_key_path {path_override!r} must be inside the key directory of tenant {company_id!r}."
+            raise deny(
+                "private_key_path",
+                f"private_key_path {path_override!r} must be inside the key directory of tenant {company_id!r}.",
+                company_id,
             )
         return key.read_bytes()
     tenant_key = exact_case_path(

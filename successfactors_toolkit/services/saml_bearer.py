@@ -18,6 +18,7 @@ from lxml import etree
 from signxml import XMLSigner, methods
 
 from successfactors_toolkit.config import Settings
+from successfactors_toolkit.services.audit import audit
 from successfactors_toolkit.services.connection_policy import check_token_url
 
 _SAML_NS = "urn:oasis:names:tc:SAML:2.0:assertion"
@@ -137,6 +138,8 @@ async def fetch_token(
         },
         timeout=timeout,
     )
+    if resp.is_error:
+        audit("sf_token", "failed", company_id=company_id, status=resp.status_code)
     resp.raise_for_status()
     body = resp.json()
     token = AccessToken(body["access_token"])

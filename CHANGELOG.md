@@ -52,6 +52,12 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - A resolved token value has its single quotes doubled wherever the token
   sits inside an OData string literal, not only right after the opening
   quote (e.g. two tokens in one literal, or text before the token). (#92)
+- Security-relevant events are written to stderr as `key=value` audit lines
+  (logger `successfactors_toolkit.audit`): key install and delete, `production`
+  flag changes, accepted and rejected connection overrides, `X-API-Key` /
+  `X-Admin-Key` failures and refused SuccessFactors token requests. Lines hold
+  identifiers and outcomes only, never secrets, `connection` values or PII
+  (`SECURITY.md`). (#89)
 - **Behavior change:** the keypair endpoint rejects a private key that is not
   RSA or is under 2048 bits (an EC key cannot sign the `rsa-sha256` assertion
   and used to fail only at runtime), and a certificate whose `notBefore` is

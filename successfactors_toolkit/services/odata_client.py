@@ -38,6 +38,7 @@ from successfactors_toolkit.models.odata import COLUMN_RE
 from successfactors_toolkit.services import http_limits, saml_bearer
 from successfactors_toolkit.services.connection_policy import (
     ConnectionPolicyError,
+    audit_overrides,
     check_host,
     check_identity,
 )
@@ -231,7 +232,7 @@ class ODataClient:
         c = conn or ODataConnectionConfig()
         company_id = c.company_id or s.sf_company_id
         t = TenantStore(s.tenant_keys_dir).connection(company_id)
-        return {
+        resolved = {
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in the request base_url.
             "host": check_host(_eff(c.host, t.get("host", s.sf_host)), s),
@@ -245,6 +246,8 @@ class ODataClient:
             "csrf_protected": c.csrf_protected,
             "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
         }
+        audit_overrides(c, company_id, s, t)
+        return resolved
 
     @staticmethod
     def _token_key(r: dict[str, Any]) -> tuple[str, str, str, str]:
