@@ -20,6 +20,10 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   `RESULTS_DIR`, `PII_VAULT_DIR` or `TENANT_KEYS_DIR` outside a mounted
   volume now needs its own writable mount. The CI container smoke test runs
   with the same restrictions (#91).
+- The release workflow is split into `publish`, `attest` and `release` jobs:
+  `id-token: write` is granted only to the signing job, `contents: write` only
+  to the job that creates the GitHub Release, and the Docker Hub token only to
+  the publishing job (#92).
 
 ## [0.5.3] - 2026-09-30
 
