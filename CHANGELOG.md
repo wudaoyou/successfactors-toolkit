@@ -10,6 +10,9 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   Dependabot now watches it. CI installs the pinned `requirements-dev.txt`
   set, the same one the image ships, instead of the `pyproject.toml` floors
   (#83).
+- `.gitignore` now covers `credentials/`, `data/` and `*.env`, and
+  `scripts/check_repository.py` also fails on tracked files there and on
+  base64-encoded PEM private keys, wrapped or not (#84).
 
 ## [0.5.3] - 2026-09-30
 
