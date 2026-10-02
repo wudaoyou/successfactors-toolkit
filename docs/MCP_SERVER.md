@@ -118,7 +118,9 @@ several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
   untyped record, or one with a type the PII map doesn't know, fails closed
   as above. URIs that can embed key values (`__metadata` URIs,
   `__deferred`, nested `__next`, v4 `@odata.id`/`...Link`/`@odata.context`
-  annotations) are dropped; `__metadata` keeps only `type`.
+  annotations) are dropped; `__metadata` keeps only `type`. `odata_query`'s
+  `next_skiptoken`, which a server may build from key values, is a tier-1
+  token; pass it back in `params["$skiptoken"]` to resume.
 - Tiers are cumulative: tier 1 covers national IDs, passports, work permits,
   bank accounts and credentials. Tier 2 adds birth dates, home address,
   contact data on Per* entities (all emails and phones), login names,

@@ -43,6 +43,15 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - Token fetches (OData) and SFAPI logins are serialized per tenant instead of
   behind one process-wide lock, so a slow tenant no longer blocks the others.
   (#92)
+- **Behavior change:** where PII tokenization is on, MCP `odata_query`
+  returns `next_skiptoken` as a `[PII-T1-<hex>]` token, since a server may
+  build it from key values; passed back in `params["$skiptoken"]` it resolves
+  as before. REST is unchanged. (#92)
+- A tokenized value echoed in a JSON error body with JSON escapes (`\uXXXX`
+  in either case, `\/`) is now put back under its token. (#92)
+- A resolved token value has its single quotes doubled wherever the token
+  sits inside an OData string literal, not only right after the opening
+  quote (e.g. two tokens in one literal, or text before the token). (#92)
 
 ## [0.5.3] - 2026-09-30
 
