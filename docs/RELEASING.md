@@ -44,18 +44,20 @@
    `main`, repository checks, and that application code exists. It builds Python
    packages, tests and publishes the Docker image, signs and verifies its
    provenance, then creates a GitHub Release only after those steps succeed.
-   Versions with a hyphen (e.g. `-rc.1`) are marked prerelease. It runs as three
+   Versions with a hyphen (e.g. `-rc.1`) are marked prerelease. It runs as four
    jobs in order: `publish` (build, test and push; the only job with the Docker
-   Hub token), `attest` (signing; the only job with `id-token: write`) and
-   `release` (verifies the attestation and creates the Release; the only job
-   with `contents: write`).
+   Hub token), `attest` (signing, with `id-token: write`), `release` (verifies
+   the attestation and creates the Release; the only job with
+   `contents: write`) and `registry` (lists the release in the MCP Registry,
+   with `id-token: write`; skipped for release candidates).
 6. After a release or hotfix, merge `main` back into `develop` before
    starting the next development cycle. As part of that sync, add the
    `@sha256:...` digest from the release's `image-reference.txt` asset to
    the image references in `docker-compose.mcp.yml` and both Docker guides
    so `develop` pins the exact published image. `server.json` keeps the
    plain tag.
-7. Publish the release to the MCP Registry (see below).
+7. Check that the `registry` job listed the release in the MCP Registry (see
+   below).
 
 ## Docker Hub publication
 
@@ -142,9 +144,14 @@ ownership through the Dockerfile label `io.modelcontextprotocol.server.name`,
 which must equal `name` in `server.json`; `scripts/check_repository.py`
 enforces that and keeps `server.json` in step with `VERSION`.
 
-After the Docker Hub image for a release is published and verified, a
-maintainer publishes from a checkout of the release tag with
-[`mcp-publisher`](https://github.com/modelcontextprotocol/registry):
+The release workflow's `registry` job publishes it after the GitHub Release is
+created, with [`mcp-publisher`](https://github.com/modelcontextprotocol/registry)
+(version and SHA-256 pinned in `release.yml`). It signs in with
+`mcp-publisher login github-oidc`: the GitHub Actions OIDC token proves the
+workflow runs in `wudaoyou/successfactors-toolkit`, so no registry or GitHub
+token is stored. Release candidates are not listed.
+
+If the job fails, publish by hand from a checkout of the release tag:
 
 ```sh
 git switch --detach vX.Y.Z
@@ -152,5 +159,5 @@ mcp-publisher login github   # interactive; signs in as the wudaoyou account
 mcp-publisher publish
 ```
 
-Publishing is manual; CI does not run it. A published registry version is
-immutable, so fix a mistake with a new release.
+A published registry version is immutable, so fix a mistake with a new
+release.
