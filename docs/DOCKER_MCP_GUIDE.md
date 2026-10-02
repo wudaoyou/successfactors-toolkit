@@ -133,6 +133,15 @@ services:
     user: "YOUR_UID:YOUR_GID"
     stdin_open: true
     tty: false
+    # Locked down: read-only root filesystem, no capabilities. Writable: /data, /vault, /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     env_file:
       - path: ./credentials/sf.env
         format: raw

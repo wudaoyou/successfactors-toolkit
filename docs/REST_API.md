@@ -59,8 +59,9 @@ docker compose up --build
 
 Binds to `127.0.0.1:8000` by default (see `docker-compose.yml`). Tenant keys
 are stored in a named volume mounted at `TENANT_KEYS_DIR=/data/tenants`
-inside the container. This Compose service runs the REST API, not the MCP
-server. For Docker MCP, use the client configuration in the [business user guide](DOCKER_MCP_GUIDE.md).
+inside the container. The container's root filesystem is read-only and all
+capabilities are dropped; only that volume and `/tmp` are writable. This
+Compose service runs the REST API, not the MCP server. For Docker MCP, use the client configuration in the [business user guide](DOCKER_MCP_GUIDE.md).
 
 ### Run the MCP server with a local Python installation
 

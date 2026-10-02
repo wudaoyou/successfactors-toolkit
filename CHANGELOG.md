@@ -13,6 +13,13 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - `.gitignore` now covers `credentials/`, `data/` and `*.env`, and
   `scripts/check_repository.py` also fails on tracked files there and on
   base64-encoded PEM private keys, wrapped or not (#84).
+- **Behavior change:** both Compose files now run the container with a
+  read-only root filesystem, all capabilities dropped, `no-new-privileges` and
+  a 256-process limit, with `/tmp` as a tmpfs. The tenant keys volume (REST)
+  and the results and PII vault mounts (MCP) stay writable, so a
+  `RESULTS_DIR`, `PII_VAULT_DIR` or `TENANT_KEYS_DIR` outside a mounted
+  volume now needs its own writable mount. The CI container smoke test runs
+  with the same restrictions (#91).
 
 ## [0.5.3] - 2026-09-30
 

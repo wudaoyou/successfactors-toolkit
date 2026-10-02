@@ -63,7 +63,11 @@ jobs:
         run: docker build -t successfactors-toolkit:ci .
       - name: Smoke test container
         run: |
-          container_id=$(docker run -d -p 127.0.0.1:8000:8000 successfactors-toolkit:ci)
+          # Same runtime restrictions as the Compose files.
+          container_id=$(docker run -d -p 127.0.0.1:8000:8000 \
+            --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges:true --pids-limit 256 \
+            successfactors-toolkit:ci)
           trap 'docker stop "$container_id"' EXIT
 
           ok=""

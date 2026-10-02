@@ -37,8 +37,9 @@ conversation.
 - **A folder requested in chat:** the AI agent can save a converted file or
   copy to an authorized host folder. To change where MCP writes future raw
   files, change the output bind mount's host source and restart MCP, or change
-  `RESULTS_DIR` to another writable, persisted container path. MCP always adds
-  the `mcp/` subdirectory and has no per-query destination argument.
+  `RESULTS_DIR` to a path on another writable, persisted mount (the container's
+  root filesystem is read-only). MCP always adds the `mcp/` subdirectory and
+  has no per-query destination argument.
 
 Before reporting a complete export, check that OData `stopped_reason` is
 `exhausted`, or that Compound Employee has no error and `truncated` is false.
