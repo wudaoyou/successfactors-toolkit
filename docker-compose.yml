@@ -9,6 +9,15 @@ services:
       TENANT_KEYS_DIR: /data/tenants
     volumes:
       - tenant_keys:/data/tenants
+    # Locked down: read-only root filesystem, no capabilities. Writable: /data/tenants, /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     restart: unless-stopped
 
 volumes:

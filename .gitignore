@@ -15,8 +15,11 @@ dist/
 .env
 .env.*
 !.env.example
+*.env
 secrets/
 certs/
+credentials/
+data/
 tenants/
 results/
 logs/

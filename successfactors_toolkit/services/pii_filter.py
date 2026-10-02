@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import json
 import os
 import re
 import secrets
@@ -446,6 +447,14 @@ class PiiFilter:
         pending[hex_] = text
         return f"[PII-T{tier}-{hex_}]"
 
+    def tokenize_value(self, value: str) -> str:
+        """One opaque value (a paging $skiptoken, which a server may build
+        from key values) as a tier-1 token that detokenize resolves back."""
+        pending: dict[str, str] = {}
+        token = self._token(1, "", value, pending)
+        self.vault.save(pending)
+        return token
+
     def tokenize_records(
         self,
         records: Any,
@@ -599,6 +608,22 @@ def for_tenant(settings, company_id: str) -> PiiFilter | None:
 
 # A token as the model may write it: literal brackets or percent-encoded.
 _TOKEN = re.compile(r"(\[|%5[Bb])PII-T[1-3]-([0-9a-f]{16})(\]|%5[Dd])")
+# An OData string-literal quote, as sent or percent-encoded. Counting them
+# tells whether a token sits inside a literal: '' (an escaped quote) counts
+# twice, so it leaves that unchanged.
+_QUOTE = re.compile(r"'|%27", re.IGNORECASE)
+
+
+def _json_escapes(text: str) -> set[str]:
+    """`text` as a JSON string body may carry it: \\uXXXX for non-ASCII in
+    either hex case, or not, and "/" escaped as "\\/" or not."""
+    out = {text}
+    for ascii_ in (True, False):
+        body = json.dumps(text, ensure_ascii=ascii_)[1:-1]
+        upper = re.sub(r"\\u([0-9a-f]{4})", lambda m: "\\u" + m[1].upper(), body)
+        for form in (body, upper):
+            out.update((form, form.replace("/", "\\/")))
+    return out
 
 
 def _substitute(text: str, vault: Vault, *, request: bool, encode: bool = False):
@@ -612,9 +637,15 @@ def _substitute(text: str, vault: Vault, *, request: bool, encode: bool = False)
     substitutions: dict[str, str] = {}
     unknown: list[str] = []
     replaced = 0
+    scanned = 0
+    in_literal = False
 
     def swap(match: re.Match[str]) -> str:
-        nonlocal replaced
+        nonlocal replaced, scanned, in_literal
+        # Quotes between the previous token and this one; tokens hold none.
+        if len(_QUOTE.findall(text, scanned, match.start())) % 2:
+            in_literal = not in_literal
+        scanned = match.end()
         raw = known.get(match.group(2))
         if raw is None:
             unknown.append(match.group(0))
@@ -623,31 +654,36 @@ def _substitute(text: str, vault: Vault, *, request: bool, encode: bool = False)
         if request:
             # SF may echo the value back as sent, as the unencoded literal, or
             # as the raw plaintext — map every form so retokenize catches it.
-            before = text[max(0, match.start() - 3) : match.start()]
-            if before.endswith("'") or before.lower() == "%27":
+            forms = {raw}
+            if in_literal:
+                # Anywhere inside a literal, not just right after its quote:
+                # a quote in the value must not end the literal early.
                 value = value.replace("'", "''")
-                substitutions[value] = match.group(0)
+                forms.add(value)
             if encode or match.group(1) != "[":
                 value = quote(value, safe="")
-            substitutions[value] = match.group(0)
-            substitutions[raw] = match.group(0)
+            forms.add(value)
             # A server that echoes the request URL back in an error body may
             # encode it differently than we did on the way out (a different
             # quote() `safe`, quote_plus's '+' for spaces, HTML entities with
             # or without quotes escaped, numeric vs. hex entity, or lowercase
             # percent-hex) — cover those too, or retokenize won't find the
-            # exact substring. Not covered: a value double-encoded by SF
-            # itself (e.g. percent-encoded twice) — rare enough to skip.
-            for variant in (
-                quote(raw, safe=""),
-                quote(raw),
-                quote_plus(raw),
-                html.escape(raw),
-                html.escape(raw, quote=False),
-                html.escape(raw).replace("&#x27;", "&#39;"),
-                re.sub(r"%[0-9A-F]{2}", lambda m: m[0].lower(), quote(raw, safe="")),
-            ):
-                if variant != raw:
+            # exact substring. Each form may also sit JSON-escaped in a JSON
+            # error body. Not covered: a value double-encoded by SF itself
+            # (e.g. percent-encoded twice) — rare enough to skip.
+            forms.update(
+                (
+                    quote(raw, safe=""),
+                    quote(raw),
+                    quote_plus(raw),
+                    html.escape(raw),
+                    html.escape(raw, quote=False),
+                    html.escape(raw).replace("&#x27;", "&#39;"),
+                    re.sub(r"%[0-9A-F]{2}", lambda m: m[0].lower(), quote(raw, safe="")),
+                )
+            )
+            for form in forms:
+                for variant in _json_escapes(form):
                     substitutions[variant] = match.group(0)
         replaced += 1
         return value

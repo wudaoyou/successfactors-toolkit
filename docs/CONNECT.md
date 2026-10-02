@@ -97,7 +97,7 @@ Fixed: one request, including its retries, takes at most 600 s, and 429
 For each request, the toolkit resolves the RSA private key in this order:
 
 1. Per-request `connection.private_key_path` — must resolve to a path inside `{TENANT_KEYS_DIR}/{company_id}/` (the tenant the request names), or the request is rejected with `400`.
-2. `{TENANT_KEYS_DIR}/{company_id}/sf_private_key_{company_id}.pem` — populated via the tenant management API.
+2. `{TENANT_KEYS_DIR}/{company_id}/sf_private_key_{company_id}.pem` — populated via the tenant management API. Folder and file names must match `company_id` exactly, including case, on case-insensitive filesystems too (path overrides in step 1 likewise).
 3. `SF_PRIVATE_KEY_PEM_<COMPANY_ID>` env var (base64-encoded PEM, per company — for CI/CD).
 4. `SF_PRIVATE_KEY_PEM` env var (base64-encoded PEM, single-tenant fallback).
 5. `SF_PRIVATE_KEY_PATH`, a path template with a `{company_id}` placeholder.
@@ -126,7 +126,8 @@ curl -X DELETE http://127.0.0.1:8000/api/tenants/demo \
 ```
 
 The keypair endpoint validates the key and certificate cryptographically
-(matching public key, not expired) before writing anything, returns `409` if
+(RSA key of at least 2048 bits, matching public key, certificate currently
+valid) before writing anything, returns `409` if
 the tenant already exists (bypass with `?force=true`), and returns
 certificate metadata including a `days_until_expiry` warning once a cert has
 under 90 days left. Installing or deleting a tenant's key invalidates any

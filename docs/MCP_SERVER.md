@@ -37,8 +37,9 @@ conversation.
 - **A folder requested in chat:** the AI agent can save a converted file or
   copy to an authorized host folder. To change where MCP writes future raw
   files, change the output bind mount's host source and restart MCP, or change
-  `RESULTS_DIR` to another writable, persisted container path. MCP always adds
-  the `mcp/` subdirectory and has no per-query destination argument.
+  `RESULTS_DIR` to a path on another writable, persisted mount (the container's
+  root filesystem is read-only). MCP always adds the `mcp/` subdirectory and
+  has no per-query destination argument.
 
 Before reporting a complete export, check that OData `stopped_reason` is
 `exhausted`, or that Compound Employee has no error and `truncated` is false.
@@ -117,7 +118,9 @@ several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
   untyped record, or one with a type the PII map doesn't know, fails closed
   as above. URIs that can embed key values (`__metadata` URIs,
   `__deferred`, nested `__next`, v4 `@odata.id`/`...Link`/`@odata.context`
-  annotations) are dropped; `__metadata` keeps only `type`.
+  annotations) are dropped; `__metadata` keeps only `type`. `odata_query`'s
+  `next_skiptoken`, which a server may build from key values, is a tier-1
+  token; pass it back in `params["$skiptoken"]` to resume.
 - Tiers are cumulative: tier 1 covers national IDs, passports, work permits,
   bank accounts and credentials. Tier 2 adds birth dates, home address,
   contact data on Per* entities (all emails and phones), login names,
