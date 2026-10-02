@@ -52,12 +52,6 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - A resolved token value has its single quotes doubled wherever the token
   sits inside an OData string literal, not only right after the opening
   quote (e.g. two tokens in one literal, or text before the token). (#92)
-- Security-relevant events are written to stderr as `key=value` audit lines
-  (logger `successfactors_toolkit.audit`): key install and delete, `production`
-  flag changes, accepted and rejected connection overrides, `X-API-Key` /
-  `X-Admin-Key` failures and refused SuccessFactors token requests. Lines hold
-  identifiers and outcomes only, never secrets, `connection` values or PII
-  (`SECURITY.md`). (#89)
 - **Behavior change:** security-relevant events are written to stderr as
   `key=value` audit lines (logger `successfactors_toolkit.audit`), on by
   default with no off switch, so a log sink fed from stderr sees new
@@ -80,7 +74,9 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   returns 409. (#87)
 - Installing a keypair swaps the new tenant directory in with one atomic
   rename, so the tenant never disappears mid-install (which made key lookup
-  fall back to the global key), and checks for an existing tenant under a
+  fall back to the global key); on a filesystem without an atomic exchange
+  (some FUSE or network mounts) the key and certificate are replaced one file
+  at a time instead. It also checks for an existing tenant under a
   lock file (`TENANT_KEYS_DIR/.lock`) that serializes threads and processes,
   so concurrent POSTs without `?force=true` cannot both succeed. (#88)
 - `TENANT_KEYS_DIR` and tenant directories are created mode 0700, including
