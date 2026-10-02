@@ -39,6 +39,26 @@ Out of scope:
 - Issues that require an already-compromised `API_KEY`, `ADMIN_API_KEY`, or
   host environment.
 
+## What `API_KEY` grants
+
+`API_KEY` is a server-wide credential, not a per-tenant one. A caller that holds
+it can query every tenant on the server through the REST data routes
+(`/api/odata/*`, `/api/sfapi/*`) by naming a `company_id`, and sees whatever
+the tenant's configured SF technical user can see. The per-request `connection`
+object is bounded as follows:
+
+- `private_key_path` must resolve inside the key directory of the tenant the
+  request names (`TENANT_KEYS_DIR/<company_id>/`); a key of another tenant, or
+  any other file, is rejected.
+- `user_id` and `client_key` must equal what the operator configured for that
+  tenant (`{company_id}.json`, else `SF_USER_ID` / `SF_CLIENT_KEY`). A request
+  can supply them only where nothing is configured.
+- `host` and `token_url` must pass the host allowlist.
+
+To keep a tenant's data away from holders of `API_KEY`, do not register it on a
+shared server. `API_KEY` does not apply to the MCP server, which accepts only a
+`company_id`. The tenant-management routes need `ADMIN_API_KEY` as well.
+
 ## Deployment Guidance
 
 This service brokers OAuth2 credentials and returns HR data (employee

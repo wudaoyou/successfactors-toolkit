@@ -4,6 +4,39 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-30
+
+### Security
+
+- **Behavior change:** on the REST API, `connection.private_key_path` must
+  resolve inside `TENANT_KEYS_DIR/<company_id>/` of the tenant the request
+  names, not anywhere under `TENANT_KEYS_DIR`. A `connection.user_id` or
+  `connection.client_key` that differs from the tenant's configured value
+  (`{company_id}.json`, else `SF_USER_ID` / `SF_CLIENT_KEY`) is rejected with
+  400; it is accepted if it matches, or if the tenant has none configured.
+  MCP is unchanged. `SECURITY.md` now states what `API_KEY` grants.
+- **Behavior change:** an empty `connection.company_id` resolves to
+  `SF_COMPANY_ID` with that tenant's settings applied, and is rejected with
+  400 when no default company is configured.
+- **Behavior change:** Compound Employee queries reject ID and code filter
+  values (`person_id_external`, `user_id`, company, business unit, pay group,
+  territory, division, location, employee class) with characters other than
+  letters, digits, space and `_ . @ : / + -`, and empty list items;
+  `select_segments` accepts only the documented segment names. REST returns
+  400 and MCP raises an error; nothing is sent to SuccessFactors.
+- **Behavior change:** the `extract-by-filter-in` `column` must be a property
+  path (letters, digits, `_`, `/`); anything else gives 422.
+- **Behavior change:** `max_pages` and `max_pages_per_chunk` for OData (REST
+  and MCP) are capped at 1000, down from 10000.
+- **Behavior change:** a SuccessFactors response over `MAX_RESPONSE_BYTES`
+  (default 50 MiB), or an extract that gathers more than `MAX_EXTRACT_BYTES`
+  (500 MiB) or runs longer than `MAX_EXTRACT_SECONDS` (1800 s), fails with 413
+  or 504 instead of continuing. `extract-by-filter-in` with more than
+  `MAX_FILTER_VALUES` (10000) distinct values is rejected with 413. One
+  request including retries is cut off at 600 s, and `Retry-After` waits on
+  429 total at most 300 s, after which the 429 is returned.
+- A non-ASCII `X-API-Key` or `X-Admin-Key` header returns 401 instead of 500.
+
 ## [0.5.2] - 2026-09-29
 
 ### Security

@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from successfactors_toolkit.config import Settings
-from successfactors_toolkit.services.connection_policy import check_key_path
+from successfactors_toolkit.services.connection_policy import ConnectionPolicyError, check_key_path
 
 
 def load_key_pem(path_override: str | None, settings: Settings, company_id: str) -> bytes:
@@ -14,19 +14,19 @@ def load_key_pem(path_override: str | None, settings: Settings, company_id: str)
 
     Priority (highest first):
     1. Per-request path override (SFAPIConnectionConfig.private_key_path) —
-       restricted to files inside {tenant_keys_dir}, see connection_policy.
+       restricted to files inside {tenant_keys_dir}/{company_id}/, see connection_policy.
     2. Tenant store dir: {tenant_keys_dir}/{company_id}/sf_private_key_{company_id}.pem
        — populated via POST /api/tenants/{company_id}/keypair.
     3. SF_PRIVATE_KEY_PEM_<COMPANY_ID> env var  (per-company base64 PEM, for CI/CD)
     4. SF_PRIVATE_KEY_PEM env var               (fallback base64 PEM, single-tenant)
     5. SF_PRIVATE_KEY_PATH with {company_id} placeholder (Docker Secrets file path)
     """
-    if company_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}", company_id):
-        raise ValueError("Invalid company_id for credential resolution.")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}", company_id):
+        raise ConnectionPolicyError("Invalid company_id for credential resolution.")
     if path_override:
-        # Per-request overrides are attacker-controlled on the REST path: the
-        # server may only read keys out of the tenant store.
-        return check_key_path(path_override, settings).read_bytes()
+        # Per-request overrides are caller input on the REST path: the server
+        # may only read the key directory of the tenant the request names.
+        return check_key_path(path_override, settings, company_id).read_bytes()
     tenant_key = Path(settings.tenant_keys_dir) / company_id / f"sf_private_key_{company_id}.pem"
     if tenant_key.exists():
         return tenant_key.read_bytes()
