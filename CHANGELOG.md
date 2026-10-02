@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-30
+
 ### Security
 
 - **Behavior change:** on the REST API, `connection.private_key_path` must
