@@ -2,10 +2,13 @@
 
 import asyncio
 import base64
+import time
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from successfactors_toolkit.config import Settings
 from successfactors_toolkit.services import saml_bearer
@@ -107,3 +110,90 @@ def test_failed_sfapi_login_keeps_the_status_but_not_the_response_body(monkeypat
     assert "HTTP 401" in str(raised.value)
     assert "jane.doe" not in str(raised.value)
     assert "fault" not in str(raised.value)
+
+
+# ── token lifetime (#92) ──────────────────────────────────────────────────
+
+
+def _pem():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+
+
+def test_fetch_token_carries_expires_in():
+    token_response = {"access_token": "tok", "expires_in": 3600}
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=token_response))
+    )
+    token = asyncio.run(
+        saml_bearer.fetch_token(
+            http_client=http,
+            client_key="demo-key",
+            user_id="EXAMPLE001",
+            company_id="demo",
+            token_url="https://api.example.invalid/oauth/token",
+            private_key_pem=_pem(),
+            settings=_settings(),
+        )
+    )
+    assert token == "tok"
+    assert token.expires_in == 3600
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(3600, 3600), ("7200", 7200), (1.5, 1.5)]
+    + [(v, None) for v in (None, 0, -5, "soon", "nan", "inf", float("inf"), True, [], {})],
+)
+def test_expires_in_must_be_a_positive_finite_number(value, expected):
+    assert saml_bearer._lifetime(value) == expected
+
+
+def _cache_seconds(expires_in, monkeypatch):
+    """Seconds the OData client caches a token whose response said `expires_in`."""
+    client = ODataClient(_settings(), httpx.AsyncClient())
+    token = saml_bearer.AccessToken("tok")
+    token.expires_in = expires_in
+    monkeypatch.setattr(saml_bearer, "fetch_token", AsyncMock(return_value=token))
+    _, exp = asyncio.run(client._fetch_new_token(client._resolve(None)))
+    return exp - time.monotonic()
+
+
+@pytest.mark.parametrize(
+    ("expires_in", "cached"),
+    [
+        (86400, 82800),  # SAP default 24h: the 23h used before expires_in was read
+        (3600, 3240),  # a tenth held back
+        (600, 540),
+        (None, 82800),  # absent or invalid: the default
+    ],
+)
+def test_token_is_cached_for_its_own_lifetime_less_a_margin(expires_in, cached, monkeypatch):
+    assert _cache_seconds(expires_in, monkeypatch) == pytest.approx(cached, abs=5)
+
+
+def test_plain_string_token_gets_the_default_lifetime(monkeypatch):
+    client = ODataClient(_settings(), httpx.AsyncClient())
+    monkeypatch.setattr(saml_bearer, "fetch_token", AsyncMock(return_value="tok"))
+    _, exp = asyncio.run(client._fetch_new_token(client._resolve(None)))
+    assert exp - time.monotonic() == pytest.approx(23 * 3600, abs=5)
+
+
+def test_a_short_lived_token_is_minted_again_instead_of_reused(monkeypatch):
+    client = ODataClient(_settings(), httpx.AsyncClient())
+    token = saml_bearer.AccessToken("tok")
+    token.expires_in = 30  # inside the 60 s expiry slack from the start
+    mint = AsyncMock(return_value=token)
+    monkeypatch.setattr(saml_bearer, "fetch_token", mint)
+    r = client._resolve(None)
+
+    async def two():
+        await client._get_token(r)
+        await client._get_token(r)
+
+    asyncio.run(two())
+    assert mint.await_count == 2

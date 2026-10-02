@@ -7,8 +7,10 @@ credential type.
 """
 
 import base64
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 from cryptography.hazmat.primitives import serialization
@@ -24,6 +26,27 @@ _AUTHN_CTX = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"
 _NAMEID_FMT = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
 _BEARER_METHOD = "urn:oasis:names:tc:SAML:2.0:cm:bearer"
 _GRANT_TYPE = "urn:ietf:params:oauth:grant-type:saml2-bearer"
+
+
+class AccessToken(str):
+    """An access token that also carries the lifetime the token endpoint gave it.
+
+    A str so callers that only want the token keep working; ``expires_in`` is
+    seconds, or None when the response had none that is usable.
+    """
+
+    expires_in: float | None = None
+
+
+def _lifetime(value: Any) -> float | None:
+    """The response's ``expires_in`` as positive finite seconds, else None."""
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
 
 
 def _dt(dt: datetime) -> str:
@@ -80,7 +103,7 @@ async def fetch_token(
     private_key_pem: bytes,
     settings: Settings,
     timeout: int = 30,
-) -> str:
+) -> AccessToken:
     # The signed assertion is a bearer credential: never POST it to a host the
     # connection policy does not allow. The policy has to come from the caller's
     # own Settings — reading the process-global ones here would check an
@@ -115,4 +138,7 @@ async def fetch_token(
         timeout=timeout,
     )
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    body = resp.json()
+    token = AccessToken(body["access_token"])
+    token.expires_in = _lifetime(body.get("expires_in"))
+    return token

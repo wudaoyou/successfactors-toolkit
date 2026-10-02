@@ -51,6 +51,11 @@ _MUTATING = {"POST", "PATCH", "PUT", "DELETE"}
 _RESERVED_HEADERS = {"host", "authorization"}
 _IDEMPOTENT_FOR_5XX_RETRY = {"GET", "HEAD"}
 _TOKEN_EXPIRY_SLACK_SECONDS = 60
+# Cache lifetime of a token whose response has no usable expires_in, and the most
+# a token's own lifetime is cut by (a tenth of it, up to this) so a token about to
+# expire is never handed out.
+_TOKEN_DEFAULT_LIFETIME_SECONDS = 23 * 3600
+_TOKEN_MAX_MARGIN_SECONDS = 3600
 _MAX_RETRIES = 3
 _MAX_RETRY_AFTER_SECONDS = 300.0
 _ODATA_VERSIONS = {"v2", "v4"}
@@ -243,8 +248,9 @@ class ODataClient:
     async def _fetch_new_token(self, r: dict[str, Any]) -> tuple[str, float]:
         """Mint a fresh access token via SAML Bearer; returns (token, exp_epoch).
 
-        saml_bearer.fetch_token returns only the token string; SAP tokens default
-        to 24h, so we cache for 23h to leave a safety margin and absorb skew.
+        The cache lifetime is the token response's ``expires_in`` less a safety
+        margin to absorb skew; SAP tokens default to 24h, so when the response
+        has no usable value we cache for 23h.
         """
         token = await saml_bearer.fetch_token(
             http_client=self._client,
@@ -256,8 +262,13 @@ class ODataClient:
             settings=self._settings,
             timeout=self._settings.request_timeout,
         )
-        exp = time.monotonic() + (23 * 3600)
-        return token, exp
+        # getattr: a plain str (no expires_in) gets the default.
+        expires_in = getattr(token, "expires_in", None)
+        if expires_in:
+            lifetime = expires_in - min(_TOKEN_MAX_MARGIN_SECONDS, expires_in / 10)
+        else:
+            lifetime = _TOKEN_DEFAULT_LIFETIME_SECONDS
+        return token, time.monotonic() + lifetime
 
     async def _get_token(self, r: dict[str, Any], force_refresh: bool = False) -> str:
         key = self._token_key(r)

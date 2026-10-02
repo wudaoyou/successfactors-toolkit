@@ -37,6 +37,9 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 - A failed SFAPI login now reports the HTTP status only; the first 500
   characters of the SuccessFactors response body are no longer included in the
   error, which reached the model. (#92)
+- The OData client caches an access token for the `expires_in` the token
+  endpoint reports, less a tenth of it (at most one hour), instead of a fixed
+  23 hours; without a usable `expires_in` it still caches for 23 hours. (#92)
 
 ## [0.5.3] - 2026-09-30
 
