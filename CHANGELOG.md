@@ -4,14 +4,14 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
-### Added
-
-- `RESULTS_RETENTION_DAYS` (default `7`): MCP deletes files in
-  `{RESULTS_DIR}/mcp/` older than this many days whenever it writes a new
-  one, so the payload folder stops growing without bound. **On by default**:
-  set it to `0` to keep every file, as before.
+## [0.5.5] - 2026-10-02
 
 ### Changed
+
+- **Behavior change:** MCP deletes files in `{RESULTS_DIR}/mcp/` older than
+  `RESULTS_RETENTION_DAYS` (default `7`) whenever it writes a new one, so the
+  payload folder stops growing without bound. Set it to `0` to keep every
+  file, as before.
 
 - The release workflow lists each release in the MCP Registry itself, in a
   new `registry` job that signs in with GitHub Actions OIDC, so no registry
