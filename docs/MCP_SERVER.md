@@ -23,6 +23,10 @@ inspect the saved file locally. Counts outside 0–20 are rejected before queryi
 inline. Keep employee payloads on disk unless their values are needed in the
 conversation.
 
+Files in `{RESULTS_DIR}/mcp/` older than `RESULTS_RETENTION_DAYS` (default 7)
+are deleted when the next payload is written; `0` keeps them. Copy anything you
+need longer to another folder.
+
 ## Export formats and folders
 
 - **JSON:** `odata_query` writes records to JSON; metadata tools also write JSON.

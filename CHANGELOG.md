@@ -4,6 +4,13 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- `RESULTS_RETENTION_DAYS` (default `7`): MCP deletes files in
+  `{RESULTS_DIR}/mcp/` older than this many days whenever it writes a new
+  one, so the payload folder stops growing without bound. **On by default**:
+  set it to `0` to keep every file, as before.
+
 ### Changed
 
 - The release workflow lists each release in the MCP Registry itself, in a
