@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     # the working directory, so an MCP host that starts the server elsewhere
     # should set RESULTS_DIR to an absolute path.
     results_dir: Path = Path("results")
+    # Files under {results_dir}/mcp/ older than this many days are deleted
+    # when the next one is written. 0 keeps them forever.
+    results_retention_days: int = Field(default=7, ge=0)
 
     @model_validator(mode="after")
     def _vault_outside_results(self) -> "Settings":
