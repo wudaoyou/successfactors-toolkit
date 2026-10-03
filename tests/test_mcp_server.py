@@ -7,7 +7,9 @@ summary the model diffs across instances actually matches the metadata.
 
 import asyncio
 import json
+import os
 import stat
+import time
 from pathlib import Path
 from typing import Any
 
@@ -932,3 +934,28 @@ def test_instructions_and_tool_descriptions_fit_client_truncation_limit():
     assert len(mcp_server.mcp.instructions) <= 2048
     for tool in asyncio.run(mcp_server.mcp.list_tools()):
         assert len(tool.description or "") <= 2048, tool.name
+
+
+def test_write_deletes_payloads_older_than_the_retention(monkeypatch, tmp_path):
+    out_dir = tmp_path / "results" / "mcp"
+    out_dir.mkdir(parents=True)
+    old, recent = out_dir / "old.json", out_dir / "recent.json"
+    old.write_text("{}")
+    recent.write_text("{}")
+    eight_days_ago = time.time() - 8 * 86400
+    os.utime(old, (eight_days_ago, eight_days_ago))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    written = mcp_server._write("{}", "odata_query", "example-a", "json")
+
+    assert not old.exists()
+    assert recent.exists()
+    assert os.path.exists(written)
+
+    os.utime(recent, (eight_days_ago, eight_days_ago))
+    monkeypatch.setenv("RESULTS_RETENTION_DAYS", "0")
+    get_settings.cache_clear()
+    mcp_server._write("{}", "odata_query", "example-a", "json")
+
+    assert recent.exists(), "0 keeps payloads forever"

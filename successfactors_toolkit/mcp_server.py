@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -146,8 +147,11 @@ def _write(content: str, tool: str, company_id: str, suffix: str) -> str:
     """Write a payload under ``{results_dir}/mcp/`` and return its path."""
     # Resolved per call, not at import: the setting is only known once the
     # environment and .env have been read, and tests monkeypatch it.
-    out_dir = get_settings().results_dir / "mcp"
+    settings = get_settings()
+    out_dir = settings.results_dir / "mcp"
     out_dir.mkdir(parents=True, exist_ok=True)
+    if settings.results_retention_days:
+        _prune(out_dir, time.time() - settings.results_retention_days * 86400)
     # Microseconds keep two calls in the same second from overwriting each other.
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
     name = _SAFE_NAME.sub("_", company_id) or "default"
@@ -158,6 +162,17 @@ def _write(content: str, tool: str, company_id: str, suffix: str) -> str:
     with os.fdopen(descriptor, "w", encoding="utf-8") as output:
         output.write(content)
     return str(path)
+
+
+def _prune(out_dir: os.PathLike[str], cutoff: float) -> None:
+    """Delete regular files in `out_dir` last modified before `cutoff`."""
+    for entry in os.scandir(out_dir):
+        try:
+            if entry.is_file(follow_symlinks=False) and entry.stat().st_mtime < cutoff:
+                os.unlink(entry.path)
+        except OSError:
+            # Removed by a concurrent call, or not ours to delete: never fail the write.
+            pass
 
 
 def _attach_preview(out: dict[str, Any], records: list[Any], preview: int) -> None:
