@@ -138,7 +138,7 @@ def check_identity(field: str, override: str | None, configured: str, system: st
     """Return the `user_id`/`client_key` to sign in with.
 
     `configured` is the system file's value. A request may repeat it but not
-    replace it; it may only supply a value where nothing is configured.
+    replace it.
     """
     if override is None or override == configured:
         return configured

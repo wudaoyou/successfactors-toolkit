@@ -320,13 +320,20 @@ def test_key_rotation_keeps_the_system_file_and_other_files(store, keypair):
 
 
 def test_install_keeps_subdirectories_and_the_directory_mode(store, keypair):
+    # A read-only system directory (0o555) installs and keeps its mode.
     system_dir = store.system_dir("example-a")
     (system_dir / "extra").mkdir()
     (system_dir / "extra" / "note.txt").write_text("keep")
-    system_dir.chmod(0o755)
-    store.install("example-a", *keypair)
+    (system_dir / "extra" / "private-key.pem").write_text("old copy")
+    system_dir.chmod(0o555)
+    try:
+        store.install("example-a", *keypair)
+        assert stat.S_IMODE(system_dir.stat().st_mode) == 0o555
+    finally:
+        system_dir.chmod(0o755)
     assert (system_dir / "extra" / "note.txt").read_text() == "keep"
-    assert stat.S_IMODE(system_dir.stat().st_mode) == 0o755
+    assert (system_dir / "extra" / "private-key.pem").read_text() == "old copy"
+    assert (system_dir / "private-key.pem").read_text() != "old copy"
 
 
 def test_concurrent_installs_do_not_both_succeed(monkeypatch, store, keypair):

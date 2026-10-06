@@ -514,9 +514,11 @@ class SystemStore:
                     stage_path,
                     dirs_exist_ok=True,
                     symlinks=True,
-                    ignore=shutil.ignore_patterns(KEY_FILE, CERT_FILE),
+                    # Only the top-level pair is replaced; copies in subdirectories stay.
+                    ignore=lambda d, names: {KEY_FILE, CERT_FILE} if Path(d) == dest else set(),
                 )
-                os.chmod(stage_path, stat.S_IMODE(dest.stat().st_mode))
+                # copytree copied dest's mode, which may lack the write bit.
+                os.chmod(stage_path, 0o700)
                 (stage_path / KEY_FILE).write_bytes(
                     key.private_bytes(
                         serialization.Encoding.PEM,
@@ -527,6 +529,7 @@ class SystemStore:
                 (stage_path / CERT_FILE).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
                 os.chmod(stage_path / KEY_FILE, 0o600)
                 os.chmod(stage_path / CERT_FILE, 0o644)
+                os.chmod(stage_path, stat.S_IMODE(dest.stat().st_mode))
                 try:
                     # The stage then holds the old version, removed on exit.
                     _exchange(stage_path, dest)
