@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     #   sf_saml_signing_<company_id>.crt   (mode 644)
     # Populated via POST /api/tenants/{company_id}/keypair.
     tenant_keys_dir: str = "./tenants"
+    # One directory per system: SYSTEMS_DIR/<name>/<name>.json ("type",
+    # "production", ...) beside that system's secret files.
+    systems_dir: Path | None = None
 
     # API key required to call POST/DELETE on /api/tenants/*. Set to a strong
     # random value in production. Endpoints reject the request with 401 if the

@@ -38,3 +38,15 @@ def isolated_configuration(monkeypatch, tmp_path):
     monkeypatch.setattr(socket.socket, "connect", local_only)
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def widget_type(monkeypatch):
+    """tests.systems.Widget registered as "widget" for one test; the type
+    registry is a copy, so nothing a test registers outlives it."""
+    from successfactors_toolkit.services import system_store
+    from tests.systems import Widget
+
+    monkeypatch.setattr(system_store, "_TYPES", dict(system_store._TYPES))
+    system_store.register_type("widget", Widget)
+    return Widget
