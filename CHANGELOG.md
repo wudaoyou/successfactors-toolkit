@@ -4,6 +4,8 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-06
+
 ### Changed
 
 - **Breaking:** every system is configured by one directory,
