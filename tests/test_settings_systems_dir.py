@@ -28,3 +28,11 @@ def test_a_kept_variable_is_not_refused(monkeypatch, tmp_path):
     monkeypatch.setenv("SYSTEMS_DIR", str(tmp_path))
     monkeypatch.setenv("SF_ALLOWED_HOSTS", '["sf.example.invalid"]')
     assert Settings(_env_file=None).sf_allowed_hosts == ["sf.example.invalid"]
+
+
+def test_startup_refuses_a_removed_variable_in_the_env_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("SYSTEMS_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("PII_FILTER_TIER=3\n")
+    with pytest.raises(ValidationError, match="PII_FILTER_TIER"):
+        Settings()

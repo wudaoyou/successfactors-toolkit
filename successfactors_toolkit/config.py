@@ -2,6 +2,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -91,9 +92,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _no_removed_variables(self) -> "Settings":
+        # The environment and the env file(s) the settings are read from.
+        env_files = self.model_config.get("env_file") or ()
+        if isinstance(env_files, (str, os.PathLike)):
+            env_files = (env_files,)
+        names = {name.upper() for name in os.environ}
+        for env_file in env_files:
+            if Path(env_file).is_file():
+                names.update(name.upper() for name in dotenv_values(env_file))
         removed = sorted(
             name
-            for name in map(str.upper, os.environ)
+            for name in names
             if name in _REMOVED_VARIABLES or name.startswith("SF_PRIVATE_KEY_")
         )
         if removed:

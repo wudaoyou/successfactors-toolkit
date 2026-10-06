@@ -111,7 +111,7 @@ Connection settings live in the system files, not in the environment: the
 server does not start while a removed variable (`SF_HOST`, `SF_COMPANY_ID`,
 `SF_CLIENT_KEY`, `SF_USER_ID`, `SF_TOKEN_URL`, `SF_ODATA_VERSION`,
 `SF_PRIVATE_KEY_*`, `TENANT_KEYS_DIR`, `PII_FILTER_TIER`, `PII_EXTRA_FIELDS`)
-is set.
+is set in the environment or in `.env`.
 
 | Variable | Description |
 |---|---|

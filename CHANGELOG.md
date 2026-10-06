@@ -45,7 +45,7 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
   `SF_USER_ID`, `SF_TOKEN_URL`, `SF_ODATA_VERSION`, `SF_PRIVATE_KEY_PEM`,
   `SF_PRIVATE_KEY_PEM_<COMPANY_ID>`, `SF_PRIVATE_KEY_PATH`,
   `PII_FILTER_TIER` and `PII_EXTRA_FIELDS`. `SF_ALLOWED_HOSTS` stays. Startup
-  refuses while any of them is set; before, they were ignored.
+  refuses while any of them is set in the environment or `.env`; before, they were ignored.
 
 ## [0.5.5] - 2026-10-02
 
