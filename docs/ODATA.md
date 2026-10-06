@@ -9,7 +9,7 @@
 | `POST /api/odata/extract-by-filter-in` | Resolve N codes to records, auto-chunked under SF's `$filter` IN-list limit. |
 
 `$format=JSON` is auto-injected unless the path is `$metadata` (served as
-EDMX XML only), the caller already set `$format`, or the tenant uses OData v4
+EDMX XML only), the caller already set `$format`, or the system uses OData v4
 (see [OData v4](#odata-v4)). All three endpoints
 accept an optional `connection` override (host, OData version, credentials,
 `csrf_protected`) — see [Per-request connection override](#per-request-connection-override).
@@ -78,7 +78,7 @@ SuccessFactors' ~8 KB limit, returning `HTTP 414`. If you see `414`, lower
 
 ## OData v4
 
-With `odata_version` `v4` (`SF_ODATA_VERSION`, the tenant file, or a
+With `odata_version` `v4` (the system file, or a
 per-request `connection`), requests go to `https://{host}/odatav4/{path}`.
 SuccessFactors serves each v4 API as its own service, so `path` starts at
 the service root, e.g.
@@ -108,8 +108,8 @@ Onboarding and Succession services offer actions, not entity sets.
   "connection": {
     "host": "example.invalid",
     "odata_version": "v2",
-    "company_id": "demo",
-    "private_key_path": "/absolute/path/to/tenants/demo/sf_private_key_demo.pem",
+    "system": "demo",
+    "private_key_path": "/absolute/path/to/systems/demo/private-key.pem",
     "csrf_protected": false
   },
   "method": "GET",
@@ -118,18 +118,18 @@ Onboarding and Succession services offer actions, not entity sets.
 }
 ```
 
-`host` and `token_url` overrides are only accepted for the configured
-`SF_HOST`, a host listed in `SF_ALLOWED_HOSTS`, or a SAP SuccessFactors
-datacenter domain; anything else is rejected with `400`.
-`private_key_path` must resolve inside `TENANT_KEYS_DIR/<company_id>/`, the
-key directory of the tenant the request names, or the request is rejected with
-`400`. `user_id` and `client_key` are the tenant's configured identity
-(`{company_id}.json`, else `SF_USER_ID` / `SF_CLIENT_KEY`): a request may repeat
-them, or supply them where none is configured, but a different value is
-rejected with `400`. An empty `company_id` means the default tenant
-(`SF_COMPANY_ID`). `csrf_protected` defaults to `false` (CSRF is a
+`system` names the directory under `SYSTEMS_DIR` whose
+`<system>.json` and key the request uses; an empty `system` means the only
+`successfactors` system. A system that is unknown, ambiguous or invalid is
+rejected with `400`. `host` and `token_url` overrides are only accepted for a
+host listed in `SF_ALLOWED_HOSTS` or a SAP SuccessFactors datacenter domain;
+anything else is rejected with `400`. `private_key_path` must resolve inside
+`SYSTEMS_DIR/<system>/`, the directory of the system the request names, or the
+request is rejected with `400`. `user_id` and `client_key` are the system
+file's configured identity: a request may repeat them, but a different value
+is rejected with `400`. `csrf_protected` defaults to `false` (CSRF is a
 session-cookie defense, not needed under Bearer auth) — set it per request
-for tenants that enforce it.
+for systems that enforce it.
 
 ## Known SuccessFactors API footguns
 

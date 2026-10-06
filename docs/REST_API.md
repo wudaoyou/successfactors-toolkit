@@ -5,9 +5,9 @@
 ## Setup: it's fail-closed
 
 The REST API refuses every `/api/*` request with `503` until you set
-`API_KEY`, and refuses every `/api/tenants/*` request with `503` until you
+`API_KEY`, and refuses every `/api/systems/*` request with `503` until you
 also set `ADMIN_API_KEY`. There is no "works out of the box, insecure"
-mode — set `API_KEY` for REST calls and both keys for tenant-management calls:
+mode — set `API_KEY` for REST calls and both keys for system-management calls:
 
 ```sh
 cp .env.example .env
@@ -15,13 +15,14 @@ cp .env.example .env
 ```
 
 Requests then authenticate with an `X-API-Key` header (all `/api/*` routes)
-and, for `/api/tenants/*`, an additional `X-Admin-Key` header. `CORS_ORIGINS`
+and, for `/api/systems/*`, an additional `X-Admin-Key` header. `CORS_ORIGINS`
 is a JSON list of allowed browser origins and defaults to `[]` (closed).
 
-`API_KEY` is server-wide: it reaches every tenant the server holds a key for.
-The `connection` object of a data request may name the tenant's own key
-directory, but cannot change the tenant's configured `user_id` or `client_key`
-or use another tenant's key; see
+`API_KEY` is server-wide: it reaches every system under `SYSTEMS_DIR`.
+The `connection` object of a data request picks the system with `system` (empty
+= the only `successfactors` system) and may name a key inside that system's
+directory, but cannot change the system's configured `user_id` or `client_key`
+or use another system's key; see
 [What `API_KEY` grants](../SECURITY.md#what-api_key-grants).
 
 These two access keys apply to REST endpoints. They are not required by the
@@ -30,7 +31,9 @@ your SF credentials.
 
 The project ships no SuccessFactors credentials. See
 [Connect to SuccessFactors](CONNECT.md#connect-to-successfactors) to generate
-your own key pair and register it with your tenant.
+your own key pair and register it with your SuccessFactors instance.
+Every instance is a system under `SYSTEMS_DIR`: `.env` must set `SYSTEMS_DIR`,
+or the server does not start.
 
 ## Install
 
@@ -57,9 +60,10 @@ Interactive docs (Swagger UI): `http://127.0.0.1:8000/docs`.
 docker compose up --build
 ```
 
-Binds to `127.0.0.1:8000` by default (see `docker-compose.yml`). Tenant keys
-are stored in a named volume mounted at `TENANT_KEYS_DIR=/data/tenants`
-inside the container. The container's root filesystem is read-only and all
+Binds to `127.0.0.1:8000` by default (see `docker-compose.yml`). Systems
+are stored in a named volume mounted at `SYSTEMS_DIR=/data/systems`
+inside the container; a system's `<name>/<name>.json` must exist there before
+you upload its key. The container's root filesystem is read-only and all
 capabilities are dropped; only that volume and `/tmp` are writable. This
 Compose service runs the REST API, not the MCP server. For Docker MCP, use the client configuration in the [business user guide](DOCKER_MCP_GUIDE.md).
 
@@ -81,14 +85,14 @@ curl http://127.0.0.1:8000/health
 ```
 
 For MCP, verify initialization and discovery of the five tools in your AI
-client, then call `list_tenants`. A small metadata query verifies SF access;
-`list_tenants` alone only reads local configuration and keys.
+client, then call `list_systems`. A small metadata query verifies SF access;
+`list_systems` alone only reads local configuration and keys.
 
 ## Cheat sheet
 
 ```bash
-# Register a tenant's key+cert (one-time per company)
-curl -X POST http://127.0.0.1:8000/api/tenants/demo/keypair \
+# Install a successfactors system's key+cert (its demo/demo.json must exist)
+curl -X POST http://127.0.0.1:8000/api/systems/demo/keypair \
   -H "X-API-Key: $API_KEY" -H "X-Admin-Key: $ADMIN_API_KEY" \
   -F "private_key=@secrets/keypair_demo/private_key.pem" \
   -F "certificate=@secrets/keypair_demo/certificate.crt"
@@ -118,8 +122,8 @@ curl -X POST http://127.0.0.1:8000/api/odata/extract \
   -d '{"path": "EmpJob", "params": {"paging": "cursor", "$top": 1000,
         "fromDate": "1900-01-01", "toDate": "9999-12-31"}}'
 
-# List registered tenants (with cert expiry warnings)
-curl http://127.0.0.1:8000/api/tenants \
+# List systems (with cert expiry warnings)
+curl http://127.0.0.1:8000/api/systems \
   -H "X-API-Key: $API_KEY" -H "X-Admin-Key: $ADMIN_API_KEY"
 ```
 

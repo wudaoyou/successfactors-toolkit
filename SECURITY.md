@@ -30,34 +30,37 @@ In scope:
 - The REST API (`successfactors_toolkit.main:app`) and its routers, services,
   and models.
 - The MCP server (`successfactors-mcp`).
-- The tenant key/certificate store and per-request connection overrides.
+- The systems store (`SYSTEMS_DIR`: system files, keys and certificates) and per-request connection overrides.
 - The included `Dockerfile` and `docker-compose.yml`.
 
 Out of scope:
 
-- SAP SuccessFactors itself, or any tenant's configuration of it.
+- SAP SuccessFactors itself, or any instance's configuration of it.
 - Issues that require an already-compromised `API_KEY`, `ADMIN_API_KEY`, or
   host environment.
 
 ## What `API_KEY` grants
 
-`API_KEY` is a server-wide credential, not a per-tenant one. A caller that holds
-it can query every tenant on the server through the REST data routes
-(`/api/odata/*`, `/api/sfapi/*`) by naming a `company_id`, and sees whatever
-the tenant's configured SF technical user can see. The per-request `connection`
+`API_KEY` is a server-wide credential, not a per-system one. A caller that holds
+it can query every system under `SYSTEMS_DIR` through the REST data routes
+(`/api/odata/*`, `/api/sfapi/*`) by naming a `system`, and sees whatever
+the system's configured SF technical user can see. The per-request `connection`
 object is bounded as follows:
 
-- `private_key_path` must resolve inside the key directory of the tenant the
-  request names (`TENANT_KEYS_DIR/<company_id>/`); a key of another tenant, or
+- `private_key_path` must resolve inside the directory of the system the
+  request names (`SYSTEMS_DIR/<system>/`); a key of another system, or
   any other file, is rejected.
-- `user_id` and `client_key` must equal what the operator configured for that
-  tenant (`{company_id}.json`, else `SF_USER_ID` / `SF_CLIENT_KEY`). A request
-  can supply them only where nothing is configured.
-- `host` and `token_url` must pass the host allowlist.
+- `user_id` and `client_key` must equal what the operator configured in that
+  system's `<system>.json`. A request can supply them only where nothing is
+  configured.
+- `host` and `token_url` must pass the host allowlist: SAP datacenter domains
+  plus `SF_ALLOWED_HOSTS`. The same check applies to the values in the system
+  file.
 
-To keep a tenant's data away from holders of `API_KEY`, do not register it on a
+To keep a system's data away from holders of `API_KEY`, do not put it on a
 shared server. `API_KEY` does not apply to the MCP server, which accepts only a
-`company_id`. The tenant-management routes need `ADMIN_API_KEY` as well.
+`system` name. The system-management routes (`/api/systems/*`) need
+`ADMIN_API_KEY` as well.
 
 ## Audit log
 
@@ -70,19 +73,19 @@ handler in your logging config (for uvicorn, `--log-config`).
 
 | `event` | When |
 | --- | --- |
-| `key_install`, `key_delete` | A tenant keypair is installed/replaced (`force`) or deleted |
-| `production_flag` | A tenant's `production` flag is set (`previous` is `unset`, `true` or `false`) |
-| `connection_override` | A request's `connection` values are accepted (`fields` names them) or rejected by the policy (`field`), with the `company_id` the request targeted |
-| `connection_config` | A `host` or `token_url` from the tenant's `{company_id}.json` or `SF_*` settings fails the policy (`field`), so every request to that tenant is refused; fix the configuration. MCP mode has no per-request overrides, so it only logs this |
+| `key_install`, `key_delete` | A system's keypair is installed/replaced (`force`) or deleted |
+| `production_flag` | A system's `production` flag is set (`previous` is `unset`, `true` or `false`) |
+| `connection_override` | A request's `connection` values are accepted (`fields` names them) or rejected by the policy (`field`), with the `system` the request targeted |
+| `connection_config` | A `host` or `token_url` from the system's `<name>.json` fails the policy (`field`), so every request to that system is refused; fix the configuration. MCP mode has no per-request overrides, so it only logs this |
 | `auth` | `X-API-Key` or `X-Admin-Key` is missing, wrong or the API is disabled (`scope`, `reason`) |
 | `sf_token` | SuccessFactors refuses the OAuth token request (`status`) |
 
 `outcome` is `ok`, `denied` or `failed`; only `ok` lines are `INFO`. Lines carry
-identifiers and outcomes only: a `company_id`, field names, error codes and
+identifiers and outcomes only: a system name, field names, error codes and
 status codes — never keys, certificates, tokens, `connection` values, request
 bodies or employee data. A request's source address is not recorded; use the
 uvicorn access log, which shares timestamps with these lines. Edits to
-`{company_id}.json` made on disk are not audited.
+`<name>.json` made on disk are not audited.
 
 ## Deployment Guidance
 
@@ -94,13 +97,13 @@ records via Compound Employee and OData). Treat it accordingly:
   services. A local agent may still call a cloud model: prompts, tool responses,
   previews, and files it supplies can leave the machine. Use a locally hosted
   model and local file-processing tools when HR data must remain within your
-  controlled environment. The toolkit still contacts your configured SF tenant.
+  controlled environment. The toolkit still contacts your configured SuccessFactors instance.
 - **Bind to localhost or a private network.** The default Docker Compose
   file binds `127.0.0.1:8000`; don't expose the container port more widely
   without a reverse proxy in front of it.
 - **Set REST access keys when using the REST API.** The REST API is
   fail-closed: every `/api/*` route returns `503` while `API_KEY` is unset,
-  and all tenant-management routes (including list and get) return
+  and all system-management routes (including list and get) return
   `503` while `ADMIN_API_KEY` is unset. Leaving either unset is not a safe
   default to rely on in production — set strong, independent random values.
   These access keys do not apply to local stdio MCP; it uses your SF credentials
@@ -109,11 +112,15 @@ records via Compound Employee and OData). Treat it accordingly:
   `connection` credentials travel in plain headers/JSON; terminate TLS in
   front of the service (reverse proxy or load balancer) rather than serving
   plaintext HTTP beyond localhost.
-- **Keep private keys out of the image and out of Git.** Use the tenant
-  keypair API or the `SF_PRIVATE_KEY_PEM*` / `SF_PRIVATE_KEY_PATH` env vars
-  described in [Private key resolution order](docs/CONNECT.md#private-key-resolution-order);
-  never bake a key into a committed file.
-- **Restrict `TENANT_KEYS_DIR` and `RESULTS_DIR`** to storage only the
-  service account can read — the former holds private keys, the latter can
-  hold extracted employee payloads.
+- **Keep private keys out of the image and out of Git.** Put each key in its
+  system's directory (`private-key.pem`, mode 600) or install it with the
+  keypair API, as described in [Connect to SuccessFactors](docs/CONNECT.md#2-create-the-system);
+  never bake a key into a committed file. Under Docker, mount `SYSTEMS_DIR`
+  read-only for MCP.
+- **Restrict `SYSTEMS_DIR` and `RESULTS_DIR`** to storage only the
+  service account can read — the former holds private keys and OAuth client
+  keys, the latter can hold extracted employee payloads.
+- **Production systems are tier 3.** Declare `"production": true` in a
+  production system's file; its PII tokenization then cannot be lowered. Use
+  `SF_ALLOWED_HOSTS` only for hosts you control.
 </content>
