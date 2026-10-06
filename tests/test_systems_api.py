@@ -319,6 +319,16 @@ def test_key_rotation_keeps_the_system_file_and_other_files(store, keypair):
     assert (store.system_dir("example-a") / "notes.txt").read_text() == "keep"
 
 
+def test_install_keeps_subdirectories_and_the_directory_mode(store, keypair):
+    system_dir = store.system_dir("example-a")
+    (system_dir / "extra").mkdir()
+    (system_dir / "extra" / "note.txt").write_text("keep")
+    system_dir.chmod(0o755)
+    store.install("example-a", *keypair)
+    assert (system_dir / "extra" / "note.txt").read_text() == "keep"
+    assert stat.S_IMODE(system_dir.stat().st_mode) == 0o755
+
+
 def test_concurrent_installs_do_not_both_succeed(monkeypatch, store, keypair):
     check_pair = system_store._check_pair
     monkeypatch.setattr(system_store, "_check_pair", lambda *a: (time.sleep(0.2), check_pair(*a)))
@@ -378,9 +388,7 @@ def test_forced_reinstall_never_removes_the_system_directory(monkeypatch, store,
     assert sorted(p.name for p in store.base.iterdir()) == [".lock", "example-a"]
 
 
-def test_store_root_and_installed_directory_are_private(tmp_path, store, keypair):
-    store.install("example-a", *keypair)
-    assert stat.S_IMODE(store.system_dir("example-a").stat().st_mode) == 0o700
+def test_store_root_is_private(tmp_path, store, keypair):
     fresh = SystemStore(tmp_path / "fresh" / "systems")
     with pytest.raises(SystemNotFound):
         fresh.install("example-a", *keypair)  # no system there, but the root is made private

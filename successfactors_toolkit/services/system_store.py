@@ -509,9 +509,14 @@ class SystemStore:
             # files, comments, etc.).
             with tempfile.TemporaryDirectory(prefix=f".{name}-stage-", dir=self.base) as stage:
                 stage_path = Path(stage)
-                for entry in dest.iterdir():
-                    if entry.name not in (KEY_FILE, CERT_FILE) and entry.is_file():
-                        shutil.copy2(entry, stage_path / entry.name)
+                shutil.copytree(
+                    dest,
+                    stage_path,
+                    dirs_exist_ok=True,
+                    symlinks=True,
+                    ignore=shutil.ignore_patterns(KEY_FILE, CERT_FILE),
+                )
+                os.chmod(stage_path, stat.S_IMODE(dest.stat().st_mode))
                 (stage_path / KEY_FILE).write_bytes(
                     key.private_bytes(
                         serialization.Encoding.PEM,
