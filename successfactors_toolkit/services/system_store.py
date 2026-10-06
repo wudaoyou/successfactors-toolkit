@@ -1,40 +1,23 @@
-"""Per-system configuration on disk.
+"""Per-system configuration on disk: SYSTEMS_DIR/<name>/.
 
-SystemStore (end of this module) reads SYSTEMS_DIR/<name>/<name>.json, whose
-"type" picks the model it validates with (register_type). TenantStore below
-is the older per-tenant key+cert layout, kept until callers move over.
-
-Per-tenant key+cert storage on disk.
-
-Directory layout (one subdir per SF company):
-
-    ${tenant_keys_dir}/
+    ${SYSTEMS_DIR}/
     ├── example-dev/
-    │   ├── sf_private_key_example-dev.pem      (mode 600)
-    │   ├── sf_saml_signing_example-dev.crt     (mode 644)
-    │   └── example-dev.json                    (mode 644)
-    ├── example-test/
-    │   ├── sf_private_key_example-test.pem
-    │   ├── sf_saml_signing_example-test.crt
-    │   └── example-test.json
+    │   ├── example-dev.json    (mode 644)  "type", "production" and the type's keys
+    │   ├── private-key.pem     (mode 600)  SuccessFactors systems: SAML signing key
+    │   └── signing-cert.crt    (mode 644)  and its certificate
     └── ...
 
-Filenames are derived from company_id; the API rejects uploads that
-contain a key/cert that don't pair, or where the cert is expired.
+The name is the directory name and the <name>.json basename, spelled exactly
+(see exact_case_path). "type" picks the model that validates the file
+(register_type); an unknown key is an error. A system exists once its
+<name>.json does; the REST API installs a SuccessFactors system's key and
+certificate, flips "production" and deletes systems, but never creates one.
 
-{company_id}.json holds the tenant's settings (TenantConfig): "production"
-(required; sets the MCP PII tier, see services/pii_filter.for_tenant), optional
-PII settings, and optional connection settings that override the SF_*
-environment. It may exist without a key+cert pair (a default tenant keyed from
-the environment); such a directory is not listed as a tenant.
-
-Writes are atomic: contents go to a temp directory, which is then exchanged
-with the tenant directory in one rename (see _exchange). A half-written tenant
-directory is never visible, and the tenant directory never disappears. Writers
-hold an flock on ${tenant_keys_dir}/.lock, so they serialize across threads
-and processes. Directories are created mode 0700.
-
-Lookups match company_id case exactly (see exact_case_path).
+Writes are atomic: a key rotation stages the directory's new contents in a temp
+directory, which is then exchanged with the system directory in one rename (see
+_exchange), so a half-written pair is never visible and the directory never
+disappears. Writers hold an flock on ${SYSTEMS_DIR}/.lock, so they serialize
+across threads and processes.
 """
 
 from __future__ import annotations
@@ -64,53 +47,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError
 
-# company_id allowed chars — also enforced at the URL routing layer.
-_COMPANY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
-# Ids the flag is read for: the ones credentials.load_key_pem resolves keys
-# for, so a mixed-case SF_COMPANY_ID keyed from the environment has one too.
-_FLAG_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}")
-_LEGACY_FLAG_FILE = "tenant.json"  # the 0.3.3 name; no longer read
+# System names: also enforced at the URL routing layer.
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 # A certificate minted seconds ago on a clock slightly ahead of ours is valid.
 _CLOCK_SKEW = timedelta(minutes=5)
 
 
-class TenantConnection(BaseModel):
-    """The connection keys of {company_id}.json; each overrides its SF_* setting."""
-
-    model_config = ConfigDict(strict=True, extra="ignore")
-
-    host: str | None = None
-    token_url: str | None = None
-    client_key: str | None = None
-    user_id: str | None = None
-    odata_version: Literal["v2", "v4"] | None = None
-
-    @model_validator(mode="after")
-    def _host_with_token_url(self):
-        # A host with the environment's token URL would mint tokens elsewhere.
-        if (self.host is None) != (self.token_url is None):
-            raise ValueError("host and token_url must be set together")
-        return self
-
-
-class TenantConfig(TenantConnection):
-    """The whole {company_id}.json. An unknown key is an error, not ignored."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    production: bool
-    pii_filter_tier: int | None = Field(default=None, ge=0, le=3)
-    pii_extra_fields: dict[str, dict[str, Annotated[int, Field(ge=1, le=3)]]] = {}
-
-    @model_validator(mode="after")
-    def _production_is_tier_three(self):
-        if self.production and self.pii_filter_tier not in (None, 3):
-            raise ValueError("pii_filter_tier must be 3 or absent for a production tenant")
-        return self
-
-
-class TenantStoreError(Exception):
-    """Base class for all tenant store failures."""
+class SystemStoreError(Exception):
+    """Base class for all system store failures."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -118,46 +62,40 @@ class TenantStoreError(Exception):
         self.message = message
 
 
-class InvalidCompanyId(TenantStoreError):
+class InvalidSystemName(SystemStoreError):
     pass
 
 
-class InvalidKeyOrCert(TenantStoreError):
+class InvalidKeyOrCert(SystemStoreError):
     pass
 
 
-class KeyCertMismatch(TenantStoreError):
+class KeyCertMismatch(SystemStoreError):
     pass
 
 
-class CertExpired(TenantStoreError):
+class CertExpired(SystemStoreError):
     pass
 
 
-class CertNotYetValid(TenantStoreError):
+class CertNotYetValid(SystemStoreError):
     pass
 
 
-class TenantNotFound(TenantStoreError):
+class SystemNotFound(SystemStoreError):
     pass
 
 
-class TenantAlreadyExists(TenantStoreError):
+class KeypairAlreadyExists(SystemStoreError):
     pass
 
 
-class TenantConfigError(ConnectionPolicyError):
-    """{company_id}.json has a value that fails validation. A policy error: on
-    the connection path, falling back to SF_* would reach the wrong tenant."""
+class WrongSystemType(SystemStoreError):
+    pass
 
-    def __init__(self, company_id: str, error: ValidationError) -> None:
-        self.company_id = company_id
-        parts = []
-        for e in error.errors():
-            where, msg = ".".join(map(str, e["loc"])), e["msg"].removeprefix("Value error, ")
-            parts.append(f"{where}: {msg}" if where else msg)
-        self.detail = "; ".join(parts)
-        super().__init__(f"Invalid {company_id}/{company_id}.json: {self.detail}")
+
+class InvalidSystemFile(SystemStoreError):
+    """<name>.json can't be read as a JSON object."""
 
 
 @dataclass(frozen=True)
@@ -193,23 +131,12 @@ class KeyMetadata:
     size_bits: int
 
 
-@dataclass(frozen=True)
-class TenantInfo:
-    company_id: str
-    directory: str
-    private_key_path: str
-    certificate_path: str
-    certificate: CertMetadata
-    private_key: KeyMetadata
-    production: bool | None
-
-
-def validate_company_id(company_id: str) -> None:
-    if not _COMPANY_ID_RE.match(company_id):
-        raise InvalidCompanyId(
-            "invalid_company_id",
-            f"company_id must match {_COMPANY_ID_RE.pattern!r} (lowercase, "
-            "alphanumeric, underscore, hyphen; up to 63 chars)",
+def validate_system_name(name: str) -> None:
+    if not NAME_RE.fullmatch(name):
+        raise InvalidSystemName(
+            "invalid_system_name",
+            f"System names must match {NAME_RE.pattern!r} (lowercase letters, digits, "
+            "underscore, hyphen; up to 63 chars).",
         )
 
 
@@ -217,8 +144,8 @@ def exact_case_path(base: Path, *parts: str) -> Path | None:
     """base/parts if each part exists in its parent spelled exactly so, else None.
 
     A case-insensitive filesystem (macOS, Docker Desktop bind mounts) opens
-    tenants/demo/ for "DEMO". SF company IDs are sent as given, so "DEMO" and
-    "demo" are different tenants and one must never read the other's files.
+    systems/demo/ for "DEMO". System names are exact, so "DEMO" and "demo" are
+    different systems and one must never read the other's files.
     """
     path = base
     for part in parts:
@@ -302,242 +229,10 @@ def _check_expiry(cert: x509.Certificate) -> None:
         )
 
 
-class TenantStore:
-    """File-backed registry of per-tenant key+cert pairs."""
-
-    def __init__(self, base_dir: str) -> None:
-        self._base = Path(base_dir)
-
-    # ── path helpers ──────────────────────────────────────────────────────
-    def tenant_dir(self, company_id: str) -> Path:
-        return self._base / company_id
-
-    def key_path(self, company_id: str) -> Path:
-        return self.tenant_dir(company_id) / f"sf_private_key_{company_id}.pem"
-
-    def cert_path(self, company_id: str) -> Path:
-        return self.tenant_dir(company_id) / f"sf_saml_signing_{company_id}.crt"
-
-    def config_path(self, company_id: str) -> Path:
-        return self.tenant_dir(company_id) / f"{company_id}.json"
-
-    @contextlib.contextmanager
-    def _locked(self):
-        """Hold the store's write lock. flock on a fresh descriptor conflicts
-        with every other descriptor, so threads of one process exclude each other too."""
-        self._base.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd = os.open(self._base / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            os.close(fd)  # releases the lock
-
-    # ── queries ───────────────────────────────────────────────────────────
-    def exists(self, company_id: str) -> bool:
-        validate_company_id(company_id)
-        return all(
-            exact_case_path(self._base, company_id, path.name) is not None
-            for path in (self.key_path(company_id), self.cert_path(company_id))
-        )
-
-    def list_tenants(self) -> list[TenantInfo]:
-        if not self._base.exists():
-            return []
-        out: list[TenantInfo] = []
-        for entry in sorted(self._base.iterdir()):
-            if not entry.is_dir():
-                continue
-            cid = entry.name
-            if not _COMPANY_ID_RE.match(cid):
-                # Stray directories are ignored, not an error — operators may
-                # use the same volume for other purposes.
-                continue
-            if self.exists(cid):
-                out.append(self.get(cid))
-        return out
-
-    def get(self, company_id: str) -> TenantInfo:
-        validate_company_id(company_id)
-        if not self.exists(company_id):
-            raise TenantNotFound("tenant_not_found", f"No tenant registered for {company_id!r}.")
-        key_bytes = self.key_path(company_id).read_bytes()
-        cert_bytes = self.cert_path(company_id).read_bytes()
-        key = _parse_key(key_bytes)
-        cert = _parse_cert(cert_bytes)
-        return TenantInfo(
-            company_id=company_id,
-            directory=str(self.tenant_dir(company_id)),
-            private_key_path=str(self.key_path(company_id)),
-            certificate_path=str(self.cert_path(company_id)),
-            certificate=CertMetadata.from_cert(cert),
-            private_key=KeyMetadata(
-                algorithm=type(key).__name__.replace("PrivateKey", ""), size_bits=key.key_size
-            ),
-            production=self.production(company_id),
-        )
-
-    def _read(self, company_id: str) -> dict:
-        """{company_id}.json as a dict; {} if missing, unreadable or not an object."""
-        if not _FLAG_ID_RE.fullmatch(company_id):
-            return {}
-        path = exact_case_path(self._base, company_id, f"{company_id}.json")
-        if path is None:
-            return {}
-        try:
-            data = json.loads(path.read_text("utf-8"))
-        except (OSError, ValueError):
-            return {}
-        return data if isinstance(data, dict) else {}
-
-    def production(self, company_id: str) -> bool | None:
-        """The declared environment: True = production, False = test, None =
-        unset (no file, unreadable, not JSON, or no boolean "production")."""
-        value = self._read(company_id).get("production")
-        return value if isinstance(value, bool) else None
-
-    def config(self, company_id: str) -> TenantConfig | None:
-        """The validated file, or None when unset (see production). Raises
-        TenantConfigError when production is declared but another value is invalid."""
-        data = self._read(company_id)
-        if not isinstance(data.get("production"), bool):
-            return None
-        try:
-            return TenantConfig.model_validate(data)
-        except ValidationError as exc:
-            raise TenantConfigError(company_id, exc) from exc
-
-    def connection(self, company_id: str) -> dict[str, str]:
-        """The connection keys the file sets, whatever the rest of it says.
-        Raises TenantConfigError when one of them is invalid."""
-        try:
-            conn = TenantConnection.model_validate(self._read(company_id))
-        except ValidationError as exc:
-            raise TenantConfigError(company_id, exc) from exc
-        return conn.model_dump(exclude_none=True)
-
-    def has_legacy_flag(self, company_id: str) -> bool:
-        """A 0.3.3 tenant.json is still there; it is no longer read."""
-        return bool(_FLAG_ID_RE.fullmatch(company_id)) and (
-            (self.tenant_dir(company_id) / _LEGACY_FLAG_FILE).exists()
-        )
-
-    # ── mutations ─────────────────────────────────────────────────────────
-    def install(
-        self,
-        company_id: str,
-        key_bytes: bytes,
-        cert_bytes: bytes,
-        *,
-        force: bool = False,
-    ) -> TenantInfo:
-        """Validate and atomically install a key+cert pair for a company.
-
-        Raises TenantAlreadyExists if the tenant is already registered and
-        ``force=False``. Raises various validation errors otherwise.
-        """
-        validate_company_id(company_id)
-        with self._locked():
-            # Checked under the lock: concurrent POSTs cannot both see no tenant.
-            if self.exists(company_id) and not force:
-                raise TenantAlreadyExists(
-                    "tenant_already_exists",
-                    f"Tenant {company_id!r} already exists. Re-POST with ?force=true to overwrite.",
-                )
-            dest = self.tenant_dir(company_id)
-            if dest.exists() and exact_case_path(self._base, company_id) is None:
-                raise TenantAlreadyExists(
-                    "tenant_already_exists",
-                    f"A tenant directory differing from {company_id!r} only in case exists.",
-                )
-
-            key = _parse_key(key_bytes)
-            cert = _parse_cert(cert_bytes)
-            _check_key(key)
-            _check_pair(key, cert)
-            _check_expiry(cert)
-
-            # Normalize: write the key + cert from the parsed objects so we always
-            # store standard, single-block PEM (rejects SailPoint-style combined
-            # files, comments, etc.).
-            normalized_key = key.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.TraditionalOpenSSL,
-                serialization.NoEncryption(),
-            )
-            normalized_cert = cert.public_bytes(serialization.Encoding.PEM)
-
-            # Stage in a sibling temp dir (mode 0700), then swap it into place.
-            with tempfile.TemporaryDirectory(
-                prefix=f".{company_id}-stage-", dir=self._base
-            ) as stage:
-                stage_path = Path(stage)
-                tmp_key = stage_path / self.key_path(company_id).name
-                tmp_cert = stage_path / self.cert_path(company_id).name
-                tmp_key.write_bytes(normalized_key)
-                tmp_cert.write_bytes(normalized_cert)
-                os.chmod(tmp_key, 0o600)
-                os.chmod(tmp_cert, 0o644)
-
-                if not dest.exists():
-                    os.rename(stage, dest)
-                    # The cleanup on exit expects the stage directory to exist.
-                    stage_path.mkdir()
-                else:
-                    # A key rotation keeps the tenant's settings.
-                    config = self.config_path(company_id)
-                    if config.exists():
-                        shutil.copy2(config, stage_path / config.name)
-                    try:
-                        # The stage then holds the old version, removed on exit.
-                        _exchange(stage_path, dest)
-                    except (AttributeError, OSError):
-                        # ponytail: no exchange on this filesystem (some FUSE or network
-                        # mounts): replace the files in place, so the directory never
-                        # disappears, but the pair changes one file at a time.
-                        for name in (tmp_cert.name, tmp_key.name):
-                            os.replace(stage_path / name, dest / name)
-
-        return self.get(company_id)
-
-    def set_production(self, company_id: str, production: bool) -> None:
-        """Set "production" in {company_id}.json, keeping its other keys and its
-        file mode (new file: 0644), atomically (temp file, then os.replace)."""
-        validate_company_id(company_id)
-        with self._locked():
-            dest = self.tenant_dir(company_id)
-            dest.mkdir(mode=0o700, exist_ok=True)
-            path = self.config_path(company_id)
-            data = {**self._read(company_id), "production": production}
-            try:
-                mode = stat.S_IMODE(path.stat().st_mode)
-            except OSError:
-                mode = 0o644
-            descriptor, tmp = tempfile.mkstemp(prefix=f".{path.name}-", dir=dest)
-            try:
-                with os.fdopen(descriptor, "w", encoding="utf-8") as out:
-                    json.dump(data, out, indent=2)
-                os.chmod(tmp, mode)
-                os.replace(tmp, path)
-            except BaseException:
-                os.unlink(tmp)
-                raise
-
-    def delete(self, company_id: str) -> None:
-        validate_company_id(company_id)
-        with self._locked():
-            if not self.exists(company_id):
-                raise TenantNotFound(
-                    "tenant_not_found", f"No tenant registered for {company_id!r}."
-                )
-            shutil.rmtree(self.tenant_dir(company_id))
-
-
 # ── Systems: SYSTEMS_DIR/<name>/<name>.json ───────────────────────────────
 SF_TYPE = "successfactors"
 KEY_FILE = "private-key.pem"
 CERT_FILE = "signing-cert.crt"
-NAME_RE = _COMPANY_ID_RE  # lowercase letters, digits, "_" and "-", up to 63 chars
 _TYPE_RE = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 
 
@@ -632,6 +327,18 @@ class SystemStore:
 
     def system_dir(self, name: str) -> Path:
         return self.base / name
+
+    @contextlib.contextmanager
+    def _locked(self):
+        """Hold the store's write lock. flock on a fresh descriptor conflicts
+        with every other descriptor, so threads of one process exclude each other too."""
+        self.base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(self.base / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)  # releases the lock
 
     def config_path(self, name: str) -> Path:
         return self.system_dir(name) / f"{name}.json"
@@ -754,3 +461,97 @@ class SystemStore:
                 algorithm=type(key).__name__.replace("PrivateKey", ""), size_bits=key.key_size
             ),
         )
+
+    # ── mutations ─────────────────────────────────────────────────────────
+    def _exists(self, name: str) -> None:
+        """Raises InvalidSystemName, or SystemNotFound without a <name>.json."""
+        validate_system_name(name)
+        if exact_case_path(self.base, name, f"{name}.json") is None:
+            raise SystemNotFound(
+                "system_not_found", f"No system {name!r}: create {name}/{name}.json first."
+            )
+
+    def _existing(self, name: str) -> dict:
+        """The raw file of a system that exists. Raises InvalidSystemFile when
+        it can't be read, so a mutation never rewrites a file it doesn't understand."""
+        self._exists(name)
+        try:
+            return self._load(name)
+        except SystemUnavailable as exc:
+            raise InvalidSystemFile("system_invalid", exc.detail) from None
+
+    def install(
+        self, name: str, key_bytes: bytes, cert_bytes: bytes, *, force: bool = False
+    ) -> KeypairInfo:
+        """Validate and atomically install an SF system's key + certificate,
+        keeping every other file in its directory."""
+        with self._locked():
+            # Checked under the lock: concurrent POSTs cannot both see no keypair.
+            if self._existing(name).get("type") != SF_TYPE:
+                raise WrongSystemType(
+                    "wrong_system_type", f"System {name!r} is not a {SF_TYPE} system."
+                )
+            dest = self.system_dir(name)
+            if not force and all(
+                exact_case_path(self.base, name, f) for f in (KEY_FILE, CERT_FILE)
+            ):
+                raise KeypairAlreadyExists(
+                    "keypair_already_exists",
+                    f"System {name!r} already has a keypair. Re-POST with ?force=true to replace it.",
+                )
+            key = _parse_key(key_bytes)
+            cert = _parse_cert(cert_bytes)
+            _check_key(key)
+            _check_pair(key, cert)
+            _check_expiry(cert)
+            # Normalize: write the key + cert from the parsed objects so we always
+            # store standard, single-block PEM (rejects SailPoint-style combined
+            # files, comments, etc.).
+            with tempfile.TemporaryDirectory(prefix=f".{name}-stage-", dir=self.base) as stage:
+                stage_path = Path(stage)
+                for entry in dest.iterdir():
+                    if entry.name not in (KEY_FILE, CERT_FILE) and entry.is_file():
+                        shutil.copy2(entry, stage_path / entry.name)
+                (stage_path / KEY_FILE).write_bytes(
+                    key.private_bytes(
+                        serialization.Encoding.PEM,
+                        serialization.PrivateFormat.TraditionalOpenSSL,
+                        serialization.NoEncryption(),
+                    )
+                )
+                (stage_path / CERT_FILE).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+                os.chmod(stage_path / KEY_FILE, 0o600)
+                os.chmod(stage_path / CERT_FILE, 0o644)
+                try:
+                    # The stage then holds the old version, removed on exit.
+                    _exchange(stage_path, dest)
+                except (AttributeError, OSError):
+                    # ponytail: no exchange on this filesystem (some FUSE or network
+                    # mounts): replace the files in place, so the directory never
+                    # disappears, but the pair changes one file at a time.
+                    for file_name in (CERT_FILE, KEY_FILE):
+                        os.replace(stage_path / file_name, dest / file_name)
+        return self.keypair(name)
+
+    def set_production(self, name: str, production: bool) -> None:
+        """Set "production" in <name>.json, keeping its other keys and its file
+        mode, atomically (temp file, then os.replace)."""
+        with self._locked():
+            data = {**self._existing(name), "production": production}
+            path = self.config_path(name)
+            mode = stat.S_IMODE(path.stat().st_mode)
+            descriptor, tmp = tempfile.mkstemp(prefix=f".{path.name}-", dir=self.system_dir(name))
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as out:
+                    json.dump(data, out, indent=2)
+                os.chmod(tmp, mode)
+                os.replace(tmp, path)
+            except BaseException:
+                os.unlink(tmp)
+                raise
+
+    def delete(self, name: str) -> None:
+        """Remove the system's directory, readable file or not."""
+        with self._locked():
+            self._exists(name)
+            shutil.rmtree(self.system_dir(name))

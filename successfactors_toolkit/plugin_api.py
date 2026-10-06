@@ -82,7 +82,9 @@ def set_status(name: str, fn: Callable[[], dict[str, Any]]) -> None:
 
 def register_system_type(type_: str, model: type[SystemBase]) -> None:
     """Validate SYSTEMS_DIR files whose "type" is `type_` with `model`, a
-    SystemBase subclass. Call it from register(mcp)."""
+    SystemBase subclass. Call it from register(mcp). list_systems shows a
+    plugin's validated config in full (minus client_key and pii_extra_fields),
+    so secrets belong in separate files, never in <name>.json."""
     _systems.register_type(type_, model)
 
 
@@ -98,8 +100,10 @@ def system_config(system: str) -> SystemBase:
 
 
 def system_dir(system: str) -> Path:
-    """The directory of a system select_system or system_config accepted."""
-    return _server._store().system_dir(system)
+    """The directory of a valid system. Raises SystemUnavailable."""
+    store = _server._store()
+    store.config(system)  # fails closed: the name is validated before it is a path
+    return store.system_dir(system)
 
 
 def _load_plugins(mcp) -> None:

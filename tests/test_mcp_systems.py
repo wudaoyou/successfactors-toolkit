@@ -2,9 +2,14 @@
 
 import asyncio
 import re
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from successfactors_toolkit import mcp_server, plugin_api
 from successfactors_toolkit.config import get_settings
@@ -16,6 +21,42 @@ from tests.systems import Widget, write_system
 
 def _dir():
     return get_settings().systems_dir
+
+
+def _pem_pair(key=None, not_before=timedelta(minutes=-1), valid_for=timedelta(days=7)):
+    key = key or rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "synthetic-test-user")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now + not_before)
+        .not_valid_after(now + valid_for)
+        .sign(key, hashes.SHA256())
+    )
+    return (
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ),
+        cert.public_bytes(serialization.Encoding.PEM),
+    )
+
+
+@pytest.fixture
+def keypair():
+    return _pem_pair()
+
+
+def _system_with_keypair(name, keypair, **fields):
+    directory = write_system(_dir(), name, **fields)
+    (directory / "private-key.pem").write_bytes(keypair[0])
+    (directory / "signing-cert.crt").write_bytes(keypair[1])
+    return directory
 
 
 def test_list_systems_lists_each_file_without_the_client_key(widget_type):
@@ -186,3 +227,49 @@ def test_one_server_serves_two_systems_with_their_own_key_and_tier(monkeypatch, 
         assert "error" not in asyncio.run(mcp_server.ce_query(system=system))
     assert minted == [("example-a", "key-a"), ("example-b", "key-b")]
     assert bearers == ["Bearer tok-key-a", "Bearer tok-key-b"]
+
+
+def test_list_systems_reports_environment_tier_and_errors(keypair):
+    _system_with_keypair("example-a", keypair, production=True)
+    (_system_with_keypair("example-b", keypair) / "example-b.json").write_text(
+        '{"type": "successfactors"}'
+    )
+    _system_with_keypair("example-c", keypair, pii_filter_tier=2)
+    result = mcp_server.list_systems()
+    a, b, c = result["systems"]
+    assert (a["production"], a["pii_filter_tier"]) == (True, 3)
+    assert (b["production"], b["error"]) == (None, "system_invalid")
+    assert (c["production"], c["pii_filter_tier"]) == (False, 2)
+    [warning] = result["warnings"]
+    assert warning.startswith("example-b: system_invalid:") and "production" in warning
+
+    write_system(_dir(), "example-b")
+    result = mcp_server.list_systems()
+    assert result["systems"][1]["pii_filter_tier"] == 1
+    assert "warnings" not in result
+
+
+def test_list_systems_reports_each_files_settings_and_cert(keypair):
+    _system_with_keypair(
+        "example-a",
+        keypair,
+        pii_filter_tier=2,
+        host="api4preview.sapsf.com",
+        token_url="https://api4preview.sapsf.com/oauth/token",
+        user_id="FILEUSER",
+        odata_version="v4",
+    )
+    write_system(_dir(), "example-b", host=1)
+    result = mcp_server.list_systems()
+    a, b = result["systems"]
+    assert (a["host"], a["user_id"], a["odata_version"], a["pii_filter_tier"]) == (
+        "api4preview.sapsf.com",
+        "FILEUSER",
+        "v4",
+        2,
+    )
+    assert a["cert_days_left"] > 0 and a["cert_expires"]
+    assert "client_key" not in a and "synthetic-client-key" not in str(result)
+    assert (b["error"], b["type"]) == ("system_invalid", "successfactors")
+    assert "cert_expires" not in b
+    assert any(w.startswith("example-b:") and "host" in w for w in result["warnings"])

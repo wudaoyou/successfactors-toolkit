@@ -25,7 +25,7 @@ from successfactors_toolkit.services.connection_policy import (
 from successfactors_toolkit.services.odata_client import ODataClient
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
 from tests.systems import write_system
-from tests.test_tenants import _pem_pair
+from tests.test_mcp_systems import _pem_pair
 
 LOGGER = "successfactors_toolkit.audit"
 
@@ -77,8 +77,8 @@ def test_api_key_failures_are_logged_without_the_key(monkeypatch, lines):
     monkeypatch.setenv("API_KEY", "test-api-key")
     get_settings.cache_clear()
     with TestClient(app) as client:
-        assert client.get("/api/tenants").status_code == 401
-        assert client.get("/api/tenants", headers={"X-API-Key": "guess-123"}).status_code == 401
+        assert client.get("/api/systems").status_code == 401
+        assert client.get("/api/systems", headers={"X-API-Key": "guess-123"}).status_code == 401
     assert lines() == [
         "event=auth outcome=denied scope=api reason=missing",
         "event=auth outcome=denied scope=api reason=invalid",
@@ -87,17 +87,17 @@ def test_api_key_failures_are_logged_without_the_key(monkeypatch, lines):
 
 def test_disabled_rest_api_is_logged(lines):
     with TestClient(app) as client:
-        assert client.get("/api/tenants", headers={"X-API-Key": "x"}).status_code == 503
+        assert client.get("/api/systems", headers={"X-API-Key": "x"}).status_code == 503
     assert lines() == ["event=auth outcome=denied scope=api reason=disabled"]
 
 
 def test_admin_key_failures_are_logged_without_the_key(admin, lines):
     api_only = {"X-API-Key": admin["X-API-Key"]}
     with TestClient(app) as client:
-        assert client.get("/api/tenants", headers=api_only).status_code == 401
+        assert client.get("/api/systems", headers=api_only).status_code == 401
         wrong = {**api_only, "X-Admin-Key": "guess-456"}
-        assert client.get("/api/tenants", headers=wrong).status_code == 401
-        assert client.get("/api/tenants", headers=admin).status_code == 200
+        assert client.get("/api/systems", headers=wrong).status_code == 401
+        assert client.get("/api/systems", headers=admin).status_code == 200
     assert lines() == [
         "event=auth outcome=denied scope=admin reason=missing",
         "event=auth outcome=denied scope=admin reason=invalid",
@@ -108,14 +108,14 @@ def test_disabled_admin_api_is_logged(monkeypatch, lines):
     monkeypatch.setenv("API_KEY", "test-api-key")
     get_settings.cache_clear()
     with TestClient(app) as client:
-        assert client.get("/api/tenants", headers={"X-API-Key": "test-api-key"}).status_code == 503
+        assert client.get("/api/systems", headers={"X-API-Key": "test-api-key"}).status_code == 503
     assert lines() == ["event=auth outcome=denied scope=admin reason=disabled"]
 
 
 def test_key_install_and_delete_are_logged_without_key_material(admin, lines):
     pair = _pem_pair()
     with TestClient(app) as client:
-        url = "/api/tenants/example-a"
+        url = "/api/systems/example-a"
         assert client.post(f"{url}/keypair", headers=admin, files=_upload(pair)).status_code == 201
         assert client.post(f"{url}/keypair", headers=admin, files=_upload(pair)).status_code == 409
         forced = client.post(f"{url}/keypair?force=true", headers=admin, files=_upload(pair))
@@ -125,32 +125,31 @@ def test_key_install_and_delete_are_logged_without_key_material(admin, lines):
         assert client.delete(url, headers=admin).status_code == 204
         assert client.delete(url, headers=admin).status_code == 404
     assert lines() == [
-        "event=key_install outcome=ok company_id=example-a force=false",
-        "event=key_install outcome=failed company_id=example-a code=tenant_already_exists",
-        "event=key_install outcome=ok company_id=example-a force=true",
-        "event=key_install outcome=failed company_id=example-a code=invalid_private_key",
-        "event=key_delete outcome=ok company_id=example-a",
-        "event=key_delete outcome=failed company_id=example-a code=tenant_not_found",
+        "event=key_install outcome=ok system=example-a force=false",
+        "event=key_install outcome=failed system=example-a code=keypair_already_exists",
+        "event=key_install outcome=ok system=example-a force=true",
+        "event=key_install outcome=failed system=example-a code=invalid_private_key",
+        "event=key_delete outcome=ok system=example-a",
+        "event=key_delete outcome=failed system=example-a code=system_not_found",
     ]
     assert not any("PRIVATE KEY" in line or "CERTIFICATE" in line for line in lines())
 
 
 def test_production_flag_changes_are_logged_with_the_previous_value(admin, lines):
     with TestClient(app) as client:
-        client.post("/api/tenants/example-a/keypair", headers=admin, files=_upload(_pem_pair()))
-        url = "/api/tenants/example-a/environment"
+        url = "/api/systems/example-a/environment"
         assert client.put(url, headers=admin, json={"production": True}).status_code == 200
         assert client.put(url, headers=admin, json={"production": False}).status_code == 200
         assert (
             client.put(
-                "/api/tenants/nope/environment", headers=admin, json={"production": True}
+                "/api/systems/nope/environment", headers=admin, json={"production": True}
             ).status_code
             == 404
         )
-    assert lines()[1:] == [
-        "event=production_flag outcome=ok company_id=example-a previous=unset production=true",
-        "event=production_flag outcome=ok company_id=example-a previous=true production=false",
-        "event=production_flag outcome=failed company_id=nope code=tenant_not_found",
+    assert lines() == [
+        "event=production_flag outcome=ok system=example-a previous=false production=true",
+        "event=production_flag outcome=ok system=example-a previous=true production=false",
+        "event=production_flag outcome=failed system=nope code=system_not_found",
     ]
 
 

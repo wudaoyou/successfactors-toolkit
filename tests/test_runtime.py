@@ -17,24 +17,24 @@ def test_rest_startup_health_openapi_and_shutdown():
 
 def test_api_access_fails_closed_and_admin_needs_both_keys(monkeypatch):
     with TestClient(app) as client:
-        assert client.get("/api/tenants").status_code == 503
+        assert client.get("/api/systems").status_code == 503
     from successfactors_toolkit.config import get_settings
 
     monkeypatch.setenv("API_KEY", "test-api-key")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key")
     get_settings.cache_clear()
     with TestClient(app) as client:
-        assert client.get("/api/tenants").status_code == 401
-        assert client.get("/api/tenants", headers={"X-API-Key": "wrong"}).status_code == 401
-        assert client.get("/api/tenants", headers={"X-API-Key": "test-api-key"}).status_code == 401
+        assert client.get("/api/systems").status_code == 401
+        assert client.get("/api/systems", headers={"X-API-Key": "wrong"}).status_code == 401
+        assert client.get("/api/systems", headers={"X-API-Key": "test-api-key"}).status_code == 401
         both = {"X-API-Key": "test-api-key", "X-Admin-Key": "test-admin-key"}
-        assert client.get("/api/tenants", headers=both).status_code == 200
+        assert client.get("/api/systems", headers=both).status_code == 200
         assert (
-            client.delete("/api/tenants/example", headers={"X-API-Key": "test-api-key"}).status_code
+            client.delete("/api/systems/example", headers={"X-API-Key": "test-api-key"}).status_code
             == 401
         )
         response = client.options(
-            "/api/tenants",
+            "/api/systems",
             headers={"Origin": "https://other.invalid", "Access-Control-Request-Method": "GET"},
         )
         assert "access-control-allow-origin" not in response.headers

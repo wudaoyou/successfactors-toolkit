@@ -211,3 +211,10 @@ def test_plugin_requests_keep_the_permissive_defaults(monkeypatch, tmp_path):
     assert params == {"$orderby": "dateOfBirth", "$search": "x"}
     records, count = pii.tokenize_records([unknown])
     assert count == 0 and records == [unknown]
+
+
+def test_system_dir_fails_closed_for_names_that_are_not_valid_systems():
+    assert plugin_api.system_dir("example-a") == get_settings().systems_dir / "example-a"
+    for name in ("../x", "nope", "EXAMPLE-A", ""):
+        with pytest.raises(plugin_api.SystemUnavailable):
+            plugin_api.system_dir(name)

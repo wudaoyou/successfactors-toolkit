@@ -199,7 +199,7 @@ def test_non_ascii_access_keys_are_401_not_500(header, monkeypatch):
     headers = {"X-API-Key": "test-api-key"}
     headers[header] = "k\u00e9y".encode("utf-8")
     with TestClient(app) as client:
-        assert client.get("/api/tenants", headers=headers).status_code == 401
+        assert client.get("/api/systems", headers=headers).status_code == 401
 
 
 def test_identity_may_be_repeated_or_set_where_unconfigured_but_not_replaced():

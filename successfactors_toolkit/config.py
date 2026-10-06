@@ -40,13 +40,13 @@ class Settings(BaseSettings):
     # is named by company_id and contains exactly:
     #   sf_private_key_<company_id>.pem    (mode 600)
     #   sf_saml_signing_<company_id>.crt   (mode 644)
-    # Populated via POST /api/tenants/{company_id}/keypair.
+    # Populated via POST /api/systems/{name}/keypair.
     tenant_keys_dir: str = "./tenants"
     # One directory per system: SYSTEMS_DIR/<name>/<name>.json ("type",
     # "production", ...) beside that system's secret files.
     systems_dir: Path | None = None
 
-    # API key required to call POST/DELETE on /api/tenants/*. Set to a strong
+    # API key required to call POST/DELETE on /api/systems/*. Set to a strong
     # random value in production. Endpoints reject the request with 401 if the
     # X-Admin-Key header does not match. If left empty, admin endpoints refuse
     # all requests (safe default).
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     # the plaintext stays in the vault. See services/pii_filter.py.
     # The tier for test tenants: 0 = off; N = tokenize every field whose
     # tier <= N. Production tenants are always 3. A tenant's
-    # {tenant}/{tenant}.json can override both of these (tenant_store.TenantConfig).
+    # {tenant}/{tenant}.json can override both of these (system_store).
     pii_filter_tier: int = Field(default=1, ge=0, le=3)
     # Tenant-specific additions, e.g. {"PerPersonal": {"customString6": 2}}.
     pii_extra_fields: dict[str, dict[str, Annotated[int, Field(ge=1, le=3)]]] = {}
