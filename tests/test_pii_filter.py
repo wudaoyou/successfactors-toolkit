@@ -790,14 +790,6 @@ def test_for_system_keeps_an_empty_entry_from_the_system_file(monkeypatch, tmp_p
     assert count == 0 and out["externalCode"] == "E1"
 
 
-def test_for_system_ignores_the_pii_environment(monkeypatch, tmp_path):
-    monkeypatch.setenv("PII_FILTER_TIER", "0")
-    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"cust_Bar": {}}')
-    pii = for_system(_system_settings(monkeypatch, tmp_path, False), "example-a")
-    [out], count = _closed(pii, [{**_meta("cust_Bar"), "externalCode": "E1"}])
-    assert pii.tier == 1 and count == 1 and _TOKEN.fullmatch(out["externalCode"])
-
-
 def test_untyped_top_level_record_uses_the_entity_argument(tmp_path):
     pii = _filter(tmp_path)
     unknown, count = _closed(pii, [{"code": "C1"}, {"code": "C2"}], entity="cust_Foo")

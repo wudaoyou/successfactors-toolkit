@@ -1,15 +1,38 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Settings that moved into SYSTEMS_DIR/<name>/<name>.json. A removed variable
+# that is still set would be silently ignored (PII_FILTER_TIER=3 would drop a
+# system to tier 1), so startup refuses instead.
+_REMOVED_VARIABLES = frozenset(
+    {
+        "PII_FILTER_TIER",
+        "PII_EXTRA_FIELDS",
+        "TENANT_KEYS_DIR",
+        "SF_COMPANY_ID",
+        "SF_HOST",
+        "SF_TOKEN_URL",
+        "SF_CLIENT_KEY",
+        "SF_USER_ID",
+        "SF_ODATA_VERSION",
+    }
+)
+
 
 class Settings(BaseSettings):
     # hide_input_in_errors: a startup ValidationError (MCP prints it to stderr,
     # where the AI host can read it) must not echo the input values.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        hide_input_in_errors=True,
+        # SYSTEMS_DIR= (empty) is unset, not Path(".").
+        env_ignore_empty=True,
     )
 
     # Extra hosts a system file's "host" / "token_url" may name, on top of the
@@ -64,6 +87,21 @@ class Settings(BaseSettings):
         # Production systems always use the vault.
         if self.pii_vault_dir.resolve().is_relative_to(self.results_dir.resolve()):
             raise ValueError("PII_VAULT_DIR must not be inside RESULTS_DIR")
+        return self
+
+    @model_validator(mode="after")
+    def _no_removed_variables(self) -> "Settings":
+        removed = sorted(
+            name
+            for name in map(str.upper, os.environ)
+            if name in _REMOVED_VARIABLES or name.startswith("SF_PRIVATE_KEY_")
+        )
+        if removed:
+            raise ValueError(
+                f"{', '.join(removed)} no longer {'has' if len(removed) == 1 else 'have'} an "
+                "effect: the setting now lives in SYSTEMS_DIR/<name>/<name>.json "
+                "(docs/CONNECT.md). Unset the variable."
+            )
         return self
 
     @model_validator(mode="after")
