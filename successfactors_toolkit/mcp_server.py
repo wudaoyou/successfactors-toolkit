@@ -52,6 +52,7 @@ from successfactors_toolkit.services.pii_filter import (
     TenantEnvironmentUnset,
 )
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
+from successfactors_toolkit.services.system_store import SF_TYPE, SystemStore, SystemUnavailable
 from successfactors_toolkit.services.tenant_store import TenantConfigError, TenantStore
 
 # Below this size a metadata summary is small enough to hand the model directly
@@ -423,16 +424,17 @@ def _parse_edmx_navs(xml: str) -> _NavMap:
 _FieldMap = dict[str, dict[str, dict[str, str]]]
 
 
-def _v4(company_id: str) -> bool:
-    """Whether the tenant speaks OData v4 ({company_id}.json, else SF_ODATA_VERSION)."""
-    settings = get_settings()
+def _store() -> SystemStore:
+    return SystemStore(get_settings().systems_dir)
+
+
+def _v4(system: str) -> bool:
+    """Whether the system speaks OData v4 (its file's odata_version)."""
     try:
-        conn = TenantStore(settings.tenant_keys_dir).connection(
-            company_id or settings.sf_company_id
-        )
-    except TenantConfigError:
-        conn = {}  # the request itself reports the invalid file
-    return conn.get("odata_version", settings.sf_odata_version) == "v4"
+        store = _store()
+        return store.config(store.select(SF_TYPE, system)).odata_version == "v4"
+    except SystemUnavailable:
+        return False  # the request itself reports the system's error
 
 
 def _v4_entity_type(xml: str, entity: str) -> str:
@@ -474,7 +476,7 @@ async def _fetch_metadata_xml(company_id: str, entity: str) -> tuple[str, dict[s
             "detail": f"entity {entity!r} is not an entity set name or service path.",
         }
     r = await odata.request(
-        method="GET", path=path, conn=ODataConnectionConfig(company_id=company_id or None)
+        method="GET", path=path, conn=ODataConnectionConfig(system=company_id or None)
     )
     body = str(r["body"])
     if r["status_code"] >= 400:
@@ -898,7 +900,7 @@ async def odata_query(
     except (PiiVaultError, PiiUnknownTokenError) as exc:
         return _pii_error(exc)
     odata, _ = _clients()
-    conn = ODataConnectionConfig(company_id=company_id or None)
+    conn = ODataConnectionConfig(system=company_id or None)
 
     query_params = dict(params or {})
     _, path_params = split_path_query(path)
@@ -1134,7 +1136,7 @@ async def ce_query(
         return _pii_error(exc)
     pii_count = 0
     _, sfapi = _clients()
-    conn = SFAPIConnectionConfig(company_id=company_id or None)
+    conn = SFAPIConnectionConfig(system=company_id or None)
     query = build_query_string(
         CEQueryFilter(
             person_id_external=person_id_external,

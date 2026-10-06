@@ -109,7 +109,7 @@ class _FakeOData:
     """Serves _EDMX for every instance except "drifted"."""
 
     async def request(self, method, path, conn=None, params=None, body=None, extra_headers=None):
-        drifted = conn is not None and conn.company_id == "drifted"
+        drifted = conn is not None and conn.system == "drifted"
         return {"status_code": 200, "headers": {}, "body": _EDMX_DRIFTED if drifted else _EDMX}
 
 

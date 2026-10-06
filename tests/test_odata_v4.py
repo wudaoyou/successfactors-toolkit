@@ -2,7 +2,6 @@
 and PII tokenization of full-metadata records. No tenant is contacted."""
 
 import asyncio
-import base64
 import json
 import re
 from pathlib import Path
@@ -16,6 +15,7 @@ from successfactors_toolkit.config import Settings, get_settings
 from successfactors_toolkit.services.odata_client import ODataClient, v4_service_root
 from successfactors_toolkit.services.pii_filter import PiiFilter, Vault
 from successfactors_toolkit.services.tenant_store import TenantStore
+from tests.systems import write_system
 
 _ROOT = "talent/cdp/Learning.svc/v1"
 _BASE = f"https://api.example.invalid/odatav4/{_ROOT}"
@@ -24,13 +24,8 @@ _TOKEN = re.compile(r"\[PII-T(\d)-[0-9a-f]{16}\]")
 
 
 def _v4_client(handler, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        sf_host="api.example.invalid",
-        sf_company_id="example-a",
-        sf_odata_version="v4",
-        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
-    )
+    settings = Settings(_env_file=None)
+    write_system(settings.systems_dir, "example-a", odata_version="v4")
     client = ODataClient(settings, httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     monkeypatch.setattr(client, "_get_token", AsyncMock(return_value="synthetic-token"))
     return client
@@ -302,10 +297,10 @@ def v4_tenant(monkeypatch, tmp_path):
     mcp_server._key_cache.clear()
     mcp_server._nav_cache.clear()
     monkeypatch.setenv("SF_COMPANY_ID", "example-a")
-    monkeypatch.setenv("SF_ODATA_VERSION", "v4")
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
     get_settings.cache_clear()
+    write_system(get_settings().systems_dir, "example-a", odata_version="v4")
     TenantStore(get_settings().tenant_keys_dir).set_production("example-a", False)
 
     def install(odata):
@@ -354,11 +349,12 @@ def test_compare_metadata_on_v4_services(v4_tenant):
     class _Drifted(_V4OData):
         async def request(self, method, path, conn=None, **kwargs):
             body = self.csdl
-            if conn is not None and conn.company_id == "drifted":
+            if conn is not None and conn.system == "drifted":
                 body = body.replace(' MaxLength="90"', ' MaxLength="128"')
             return {"status_code": 200, "headers": {}, "body": body}
 
     v4_tenant(_Drifted())
+    write_system(get_settings().systems_dir, "drifted", odata_version="v4")
     result = asyncio.run(mcp_server.compare_metadata("example-a", "drifted", f"{_ROOT}/Items"))
     assert result["in_sync"] is False
     assert result["differences"]["Item"]["changed"] == {"itemId": {"MaxLength": ["90", "128"]}}

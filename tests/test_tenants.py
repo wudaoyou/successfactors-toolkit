@@ -1,4 +1,3 @@
-import base64
 import errno
 import fcntl
 import json
@@ -86,22 +85,16 @@ def test_failed_replacement_keeps_previous_keypair(tmp_path, keypair):
     assert store.cert_path("example-a").read_bytes() == keypair[1]
 
 
-def test_credential_resolution_precedence_and_traversal(monkeypatch, tmp_path):
-    settings = Settings(
-        _env_file=None,
-        tenant_keys_dir=str(tmp_path / "tenants"),
-        sf_private_key_pem=base64.b64encode(b"global").decode(),
-    )
-    monkeypatch.setenv("SF_PRIVATE_KEY_PEM_EXAMPLE", base64.b64encode(b"company").decode())
-    assert load_key_pem(None, settings, "example") == b"company"
-    tenant_key = tmp_path / "tenants" / "example" / "sf_private_key_example.pem"
-    tenant_key.parent.mkdir(parents=True)
-    tenant_key.write_bytes(b"tenant")
-    assert load_key_pem(None, settings, "example") == b"tenant"
-    override = tmp_path / "tenants" / "example" / "override.pem"
+def test_credential_resolution_and_traversal(tmp_path):
+    settings = Settings(_env_file=None)
+    system_key = settings.systems_dir / "example" / "private-key.pem"
+    system_key.parent.mkdir(parents=True)
+    system_key.write_bytes(b"system")
+    assert load_key_pem(None, settings, "example") == b"system"
+    override = settings.systems_dir / "example" / "override.pem"
     override.write_bytes(b"override")
     assert load_key_pem(str(override), settings, "example") == b"override"
-    # A path override may not escape the tenant store (connection_policy).
+    # A path override may not escape the system's directory (connection_policy).
     outside = tmp_path / "outside.pem"
     outside.write_bytes(b"outside")
     with pytest.raises(ConnectionPolicyError):
@@ -397,22 +390,22 @@ def test_tenant_store_directories_are_private(tmp_path, keypair):
 def test_company_id_case_variants_do_not_share_tenant_files(tmp_path, keypair):
     # On a case-insensitive filesystem (macOS, Docker Desktop) tenants/demo/
     # also opens as tenants/DEMO/; "DEMO" must still not read "demo"'s files.
-    settings = Settings(
-        _env_file=None,
-        tenant_keys_dir=str(tmp_path / "tenants"),
-        sf_private_key_pem=base64.b64encode(b"global").decode(),
-    )
+    settings = Settings(_env_file=None, tenant_keys_dir=str(tmp_path / "tenants"))
     store = TenantStore(settings.tenant_keys_dir)
     store.install("demo", *keypair)
     store.set_production("demo", False)
-    assert load_key_pem(None, settings, "demo") == keypair[0]
-    assert load_key_pem(None, settings, "DEMO") == b"global"
     assert store.production("DEMO") is None and store.connection("DEMO") == {}
-    variant = tmp_path / "tenants" / "DEMO" / "sf_private_key_demo.pem"
+    system_dir = settings.systems_dir / "demo"
+    system_dir.mkdir()
+    (system_dir / "private-key.pem").write_bytes(keypair[0])
+    assert load_key_pem(None, settings, "demo") == keypair[0]
+    with pytest.raises(ConnectionPolicyError):
+        load_key_pem(None, settings, "DEMO")
+    variant = settings.systems_dir / "DEMO" / "private-key.pem"
     with pytest.raises(ConnectionPolicyError):
         load_key_pem(str(variant), settings, "DEMO")
     with pytest.raises(ConnectionPolicyError):
-        load_key_pem(str(store.tenant_dir("demo") / "SF_PRIVATE_KEY_DEMO.pem"), settings, "demo")
+        load_key_pem(str(system_dir / "PRIVATE-KEY.PEM"), settings, "demo")
 
 
 def test_install_refuses_a_directory_differing_only_in_case(tmp_path, keypair):

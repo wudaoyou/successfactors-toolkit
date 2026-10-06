@@ -17,8 +17,8 @@ from tests.systems import Widget, write_system
 
 @pytest.fixture
 def store(tmp_path):
-    (tmp_path / "systems").mkdir()
-    return SystemStore(tmp_path / "systems")
+    (tmp_path / "store").mkdir()
+    return SystemStore(tmp_path / "store")
 
 
 def _code(fn) -> str:

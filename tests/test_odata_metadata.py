@@ -1,4 +1,3 @@
-import base64
 import unittest
 from contextlib import asynccontextmanager
 
@@ -25,13 +24,7 @@ class _RecordingHTTPClient:
 
 
 def _client() -> tuple[ODataClient, _RecordingHTTPClient]:
-    settings = Settings(
-        sf_host="api.example.invalid",
-        sf_company_id="example-a",
-        # Resolution step 4 (base64 PEM) so no key file has to exist here.
-        sf_private_key_pem=base64.b64encode(b"not-a-real-key").decode(),
-        tenant_keys_dir="/nonexistent",
-    )
+    settings = Settings(_env_file=None)  # SYSTEMS_DIR holds conftest's example-a
     http = _RecordingHTTPClient()
     client = ODataClient(settings, http)
     # Skip the SAML Bearer round trip; this test is about the request shape.

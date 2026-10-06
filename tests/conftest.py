@@ -16,10 +16,18 @@ def isolated_configuration(monkeypatch, tmp_path):
             "API_KEY",
             "ADMIN_API_KEY",
             "TENANT_KEYS_DIR",
+            "SYSTEMS_DIR",
         }:
             monkeypatch.delenv(name)
     monkeypatch.setenv("SF_HOST", "api.example.invalid")
     monkeypatch.setenv("TENANT_KEYS_DIR", str(tmp_path / "tenants"))
+    from tests.systems import write_system
+
+    monkeypatch.setenv("SYSTEMS_DIR", str(tmp_path / "systems"))
+    monkeypatch.setenv("SF_ALLOWED_HOSTS", '["api.example.invalid"]')
+    (write_system(tmp_path / "systems", "example-a") / "private-key.pem").write_bytes(
+        b"synthetic-key"
+    )
     from successfactors_toolkit.config import get_settings
 
     get_settings.cache_clear()

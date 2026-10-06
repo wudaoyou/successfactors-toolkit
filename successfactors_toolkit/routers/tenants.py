@@ -144,7 +144,7 @@ def _invalidate_session_cache(request: Request, company_id: str) -> None:
         client = getattr(request.app.state, client_name, None)
         cache = getattr(client, cache_name, {})
         for key in list(cache):
-            if key[1] == company_id:
+            if key[0] == company_id:
                 cache.pop(key, None)
 
 

@@ -2,10 +2,10 @@
 
 Per the SAP HCM OData API Developer Guide §2.3 (2H 2025), /oauth/token only
 documents `urn:ietf:params:oauth:grant-type:saml2-bearer` — the same flow used
-by SFAPI. OData uses the shared `SF_*` settings and per-request connection overrides.
-The REST API version is configured separately through `SF_ODATA_VERSION`.
+by SFAPI. OData reads the system file (SYSTEMS_DIR/<system>/<system>.json) and
+per-request connection overrides; the file's `odata_version` picks v2 or v4.
 
-Token caching mirrors `SFAPIClient`: keyed by (host, company_id, user_id,
+Token caching mirrors `SFAPIClient`: keyed by (system, host, user_id,
 client_key), with a per-key lock to coalesce concurrent first-call token storms.
 
 Retry policy (§12.7, p.228-229):
@@ -45,7 +45,7 @@ from successfactors_toolkit.services.connection_policy import (
 )
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.http_limits import ExtractBudget
-from successfactors_toolkit.services.tenant_store import TenantStore
+from successfactors_toolkit.services.system_store import SF_TYPE, SystemStore
 
 _MUTATING = {"POST", "PATCH", "PUT", "DELETE"}
 # Caller-supplied headers may tune the request, but not these two: httpx sends a
@@ -215,7 +215,7 @@ class ODataClient:
     def __init__(self, settings: Settings, client: httpx.AsyncClient) -> None:
         self._settings = settings
         self._client = client
-        # Token cache: (host, company_id, user_id, client_key) -> (token, exp_epoch)
+        # Token cache: (system, host, user_id, client_key) -> (token, exp_epoch)
         self._tokens: dict[tuple[str, str, str, str], tuple[str, float]] = {}
         # One lock per token key, so a slow token endpoint only holds up its own
         # tenant. Weak values: a lock goes away once nobody holds or awaits it.
@@ -224,44 +224,37 @@ class ODataClient:
         )
 
     def _resolve(self, conn: ODataConnectionConfig | None) -> dict[str, Any]:
-        # OData shares OAuth2 client + tenant key with SFAPI — both use the
-        # same /oauth/token endpoint with the same SAML assertion. Per-request
-        # overrides via ODataConnectionConfig take precedence, then the
-        # tenant's {company_id}.json, then the SF_* settings (NOT SF_ODATA_* —
-        # those don't exist anymore, only SF_ODATA_VERSION is OData-specific).
+        # OData shares OAuth2 client + key with SFAPI. Per-request overrides
+        # take precedence over the system file; there is no env fallback.
         s = self._settings
         c = conn or ODataConnectionConfig()
-        company_id = c.company_id or s.sf_company_id
-        t = TenantStore(s.tenant_keys_dir).connection(company_id)
+        store = SystemStore(s.systems_dir)
+        system = store.select(SF_TYPE, c.system or "")
+        cfg = store.config(system)
         resolved = {
+            "system": system,
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in the request base_url.
-            "host": check_host(
-                _eff(c.host, t.get("host", s.sf_host)), s, company_id, requested=c.host is not None
-            ),
-            "version": _eff(c.odata_version, t.get("odata_version", s.sf_odata_version)),
-            "client_key": check_identity(
-                "client_key", c.client_key, t.get("client_key", s.sf_client_key), company_id
-            ),
-            "user_id": check_identity(
-                "user_id", c.user_id, t.get("user_id", s.sf_user_id), company_id
-            ),
-            "company_id": company_id,
+            "host": check_host(_eff(c.host, cfg.host), s, system, requested=c.host is not None),
+            "version": _eff(c.odata_version, cfg.odata_version),
+            "client_key": check_identity("client_key", c.client_key, cfg.client_key, system),
+            "user_id": check_identity("user_id", c.user_id, cfg.user_id, system),
+            "company_id": cfg.company_id,
             # Checked here too, not only in fetch_token: a cached token skips that
             # call, and audit_overrides below must not log a denied URL as ok.
-            # An unset one is left for fetch_token to refuse.
-            "token_url": (token_url := _eff(c.token_url, t.get("token_url", s.sf_token_url)))
-            and check_token_url(token_url, s, company_id, requested=c.token_url is not None),
+            "token_url": check_token_url(
+                _eff(c.token_url, cfg.token_url), s, system, requested=c.token_url is not None
+            ),
             "token_url_requested": c.token_url is not None,
             "csrf_protected": c.csrf_protected,
-            "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
+            "private_key_pem": load_key_pem(c.private_key_path, s, system),
         }
-        audit_overrides(c, company_id, s, t)
+        audit_overrides(c, system, cfg)
         return resolved
 
     @staticmethod
     def _token_key(r: dict[str, Any]) -> tuple[str, str, str, str]:
-        return (r["host"], r["company_id"], r["user_id"], r["client_key"])
+        return (r["system"], r["host"], r["user_id"], r["client_key"])
 
     async def _fetch_new_token(self, r: dict[str, Any]) -> tuple[str, float]:
         """Mint a fresh access token via SAML Bearer; returns (token, exp_epoch).

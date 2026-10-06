@@ -48,13 +48,13 @@ def test_download_validates_and_saves_without_overwrite(monkeypatch, tmp_path, c
         base_url="http://localhost:8000",
         api_key="synthetic-api-key",
         output_dir=tmp_path,
-        company_id="example",
+        system="example",
     )
     assert path.is_file()
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert requests[0][1]["headers"] == {"X-API-Key": "synthetic-api-key"}
     assert requests[0][1]["json"]["include_contingent_workers"] is True
-    assert requests[0][1]["json"]["connection"] == {"company_id": "example"}
+    assert requests[0][1]["json"]["connection"] == {"system": "example"}
     with pytest.raises(FileExistsError):
         cli.download_employee(
             "EXAMPLE001",
