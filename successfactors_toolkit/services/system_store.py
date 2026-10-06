@@ -150,11 +150,15 @@ def exact_case_path(base: Path, *parts: str) -> Path | None:
     path = base
     for part in parts:
         try:
-            if part not in os.listdir(path):
-                return None
+            entries = os.listdir(path)
         except OSError:
             return None
-        path = path / part
+        # Join the directory's own entry, so the path is built only from names
+        # that exist on disk, never from the caller's string.
+        entry = next((e for e in entries if e == part), None)
+        if entry is None:
+            return None
+        path = path / entry
     return path
 
 
