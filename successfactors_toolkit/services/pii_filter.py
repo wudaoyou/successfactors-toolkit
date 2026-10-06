@@ -26,10 +26,10 @@ from urllib.parse import quote, quote_plus
 
 from lxml import etree
 
-from successfactors_toolkit.services.tenant_store import (
-    TenantConfig,
-    TenantConfigError,
-    TenantStore,
+from successfactors_toolkit.services.system_store import (
+    SystemBase,
+    SystemStore,
+    SystemUnavailable,
 )
 
 _KEY_BYTES = 32
@@ -50,34 +50,16 @@ class PiiUnknownTokenError(Exception):
         self.tokens = tokens
 
 
-class TenantEnvironmentUnset(PiiVaultError):
-    """The tenant has not declared production or test, so it has no PII tier.
+class SystemRefused(PiiVaultError):
+    """The system can't be served (see SystemUnavailable). A PiiVaultError
+    subclass: every `except PiiVaultError` site that answers with pii_error,
+    plugins included, refuses the call without changes."""
 
-    A PiiVaultError subclass: every `except PiiVaultError` site that answers
-    with pii_error, plugins included, refuses the call without changes."""
-
-    def __init__(self, company_id: str, legacy_flag: bool = False):
-        super().__init__(
-            f"Declare whether this tenant is production: create {company_id}/{company_id}.json "
-            'under TENANT_KEYS_DIR containing {"production": true} or {"production": false}, '
-            f"or PUT that body to /api/tenants/{company_id}/environment."
-            + (
-                f" {company_id}/tenant.json is no longer read: rename it to {company_id}.json."
-                if legacy_flag
-                else ""
-            )
-        )
-        self.company_id = company_id
-
-
-class TenantConfigInvalid(PiiVaultError):
-    """The tenant's {company_id}.json declares production but another value is
-    invalid. A PiiVaultError subclass, refused like TenantEnvironmentUnset."""
-
-    def __init__(self, company_id: str, detail: str):
-        super().__init__(f"Invalid {company_id}/{company_id}.json: {detail}")
-        self.company_id = company_id
-        self.detail = detail
+    def __init__(self, exc: SystemUnavailable):
+        super().__init__(exc.detail)
+        self.code = exc.code
+        self.system = exc.system
+        self.detail = exc.detail
 
 
 def _secure(path: Path, mode: int, *, regular_file: bool) -> None:
@@ -126,12 +108,12 @@ def _load_or_create_key(path: Path) -> bytes:
 class Vault:
     """HMAC key plus a hex -> plaintext table, both owner-only on disk.
 
-    A vault opened for a tenant issues and resolves only that tenant's tokens:
-    the tenant is mixed into the digest and stored with each row. Rows written
-    before tokens were tenant-bound have no tenant and resolve only in a
-    vault opened without one, which is reveal-only (the reveal CLI).
-    Tier is deliberately not part of the binding: it is tenant-wide, and a
-    resolved value only goes back to the tenant it came from."""
+    A vault opened for a system issues and resolves only that system's tokens:
+    the system name is mixed into the digest and stored with each row (column
+    "tenant"). Rows written before tokens were bound have none and resolve only
+    in a vault opened without one, which is reveal-only (the reveal CLI).
+    Tier is deliberately not part of the binding: it is system-wide, and a
+    resolved value only goes back to the system it came from."""
 
     def __init__(self, directory: Path, tenant: str | None = None):
         self._tenant = tenant
@@ -575,35 +557,25 @@ class PiiFilter:
         return etree.tostring(root, encoding="unicode"), count
 
 
-def tier_for(settings, config: TenantConfig | None) -> int | None:
-    """Production is tier 3 whatever PII_FILTER_TIER says; test is the file's
-    pii_filter_tier, else PII_FILTER_TIER; unset (None) has no tier."""
-    if config is None:
-        return None
+def tier_for(config: SystemBase) -> int:
+    """Production is tier 3; a test system's pii_filter_tier, default 1."""
     if config.production:
         return 3
-    return settings.pii_filter_tier if config.pii_filter_tier is None else config.pii_filter_tier
+    return 1 if config.pii_filter_tier is None else config.pii_filter_tier
 
 
-def for_tenant(settings, company_id: str) -> PiiFilter | None:
-    """The filter for a tenant ("" = SF_COMPANY_ID), or None for a test tenant
-    at tier 0. Raises TenantEnvironmentUnset when the tenant has not declared
-    production or test, TenantConfigInvalid when its file is invalid."""
-    company_id = company_id or settings.sf_company_id
-    store = TenantStore(settings.tenant_keys_dir)
+def for_system(settings, system: str) -> PiiFilter | None:
+    """The filter for a system (a name SystemStore.select returned), or None
+    for a test system at tier 0. Raises SystemRefused."""
     try:
-        config = store.config(company_id)
-    except TenantConfigError as exc:
-        raise TenantConfigInvalid(company_id, exc.detail) from exc
-    if config is None:
-        raise TenantEnvironmentUnset(company_id, store.has_legacy_flag(company_id))
-    tier = tier_for(settings, config)
+        config = SystemStore(settings.systems_dir).config(system)
+    except SystemUnavailable as exc:
+        raise SystemRefused(exc) from None
+    tier = tier_for(config)
     if not tier:
         return None
-    extra = {entity: dict(fields) for entity, fields in settings.pii_extra_fields.items()}
-    for entity, fields in config.pii_extra_fields.items():
-        extra.setdefault(entity, {}).update(fields)
-    return PiiFilter(tier, extra, Vault(settings.pii_vault_dir, company_id))
+    extra = {entity: dict(fields) for entity, fields in config.pii_extra_fields.items()}
+    return PiiFilter(tier, extra, Vault(settings.pii_vault_dir, system))
 
 
 # A token as the model may write it: literal brackets or percent-encoded.

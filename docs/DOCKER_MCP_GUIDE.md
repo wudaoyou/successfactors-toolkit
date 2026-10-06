@@ -26,7 +26,7 @@ For first-time setup, give IT the **One-time setup** section below. Once configu
 
 ## 2. Confirm the connection files are in place
 
-Ask IT to confirm that the supplied files are in the `credentials` folder inside `sf-toolkit`, using the correct names and company ID. You do not need to open or edit these files.
+Ask IT to confirm that the supplied files are in the `credentials` folder inside `sf-toolkit`, using the correct system name. You do not need to open or edit these files.
 
 - `credentials`: connection settings and security files. Keep these private.
 - `data`: your query results and exports. This is the folder you use for daily work.
@@ -78,8 +78,8 @@ The AI application needs permission to write to that folder. Original query file
 
 ### Revealing PII in a saved report
 
-Fields in tiers 1 through `PII_FILTER_TIER` (all three tiers for a production
-tenant) are tokenized before the AI ever sees them, so a report it writes under `sf-toolkit/data/mcp` contains tokens, not
+Fields in tiers 1 through the system's `pii_filter_tier` (default 1; all three tiers for a production
+system) are tokenized before the AI ever sees them, so a report it writes under `sf-toolkit/data/mcp` contains tokens, not
 plaintext. To restore plaintext, run the reveal command from `~/sf-toolkit`
 (where `compose.yaml` lives) against the file inside the container, and send
 the output to a folder AI tools don't read:
@@ -98,8 +98,8 @@ docker compose run --rm -T mcp \
 | No matching records | Confirm the environment, employee identifier, effective date, and permitted data scope. |
 | CSV or custom-folder save unavailable | Ask IT to enable approved local file tools and access to the destination folder in your AI application. |
 | The AI reports a file but you cannot find it | Ask: “Give me the file path on my computer, not the path inside Docker.” Check `sf-toolkit/data/mcp`. |
-| Results say `tenant_environment_unset` | The environment has not been declared as production or test, so queries are refused. Ask IT to create `<company ID>.json` for that company ID (setup step B). |
-| Results say `tenant_config_invalid` | The environment's settings file has a wrong or misspelled entry, so queries are refused. Ask IT to fix the field named in the message (setup step B). |
+| Results say `system_invalid` | The environment's settings file is missing `type` or `production`, or has a wrong or misspelled entry, so queries are refused. Ask IT to fix the field named in the message (setup step B). |
+| Results say `system_unknown`, `system_required` or `system_unsupported` | The system name is not one of the folders under `credentials/systems`, several systems exist and none was named, or the file's `type` is not supported. Ask the AI to call `list_systems` and name one of the systems it lists. |
 | Results say `pii_vault_unavailable` | Ask IT to check the PII vault volume. If no report has been revealed from it yet, IT can remove it with `docker volume rm sf-toolkit-pii-vault` and reopen the AI application; Docker recreates it with the right permissions. Don't remove a vault that has been used — its tokens can't be revealed afterwards. If the detail says the vault is owned by another user, the vault is a host folder mounted into the container, which Docker Desktop reports as root-owned; use the named volume from the setup section instead. |
 
 ## Three-minute walkthrough
@@ -142,17 +142,14 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    env_file:
-      - path: ./credentials/sf.env
-        format: raw
     environment:
-      TENANT_KEYS_DIR: /credentials/tenants
+      SYSTEMS_DIR: /credentials/systems
       RESULTS_DIR: /data
       PII_VAULT_DIR: /vault/store
     volumes:
       - type: bind
-        source: ./credentials/tenants
-        target: /credentials/tenants
+        source: ./credentials/systems
+        target: /credentials/systems
         read_only: true
         bind:
           create_host_path: false
@@ -172,6 +169,8 @@ volumes:
     name: sf-toolkit-pii-vault
 ```
 
+Settings such as `SF_ALLOWED_HOSTS`, `REQUEST_TIMEOUT` or `RESULTS_RETENTION_DAYS` reach the container only through the service's `environment:` block; there is no env file. Connection settings do not go there: they live in each system's `<name>.json` (step B).
+
 The AI client starts this service with Docker Compose using the AI client connection settings below. Compose automatically obtains the pinned release image when needed. No separate image download, source checkout, Python installation, or local build is required. No network port is exposed.
 
 The image digest pins the exact release used by this configuration. PII
@@ -184,22 +183,21 @@ image ignores the PII settings and returns plaintext; check that
 Create a working directory outside the repository:
 
 ```sh
-mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
+mkdir -p "$HOME/sf-toolkit/credentials/systems/demo" "$HOME/sf-toolkit/data"
 chmod 700 "$HOME/sf-toolkit/credentials"
 ```
 
-Use this layout. Replace `demo` with your actual company ID consistently in folder names, filenames, and configuration.
+Each SuccessFactors environment is a system: one folder under `credentials/systems`. Use this layout. Replace `demo` with a name of your choice (lowercase letters, digits, `_` and `-`) consistently in the folder name and file name.
 
 ```text
 ~/sf-toolkit/
 ├── compose.yaml
 ├── credentials/
-│   ├── sf.env
-│   └── tenants/
+│   └── systems/
 │       └── demo/
-│           ├── sf_private_key_demo.pem
-│           ├── sf_saml_signing_demo.crt
-│           └── demo.json
+│           ├── demo.json
+│           ├── private-key.pem
+│           └── signing-cert.crt
 └── data/
     └── mcp/                      # Created on the first export
 ```
@@ -208,70 +206,49 @@ Place your matching PEM private key and X.509 certificate in this folder using t
 
 If you need a key pair, see [Connect to SuccessFactors](CONNECT.md#connect-to-successfactors). Use `scripts/generate-keypair.sh`, then register the certificate in SF. Placing files manually does not run the REST upload endpoint's key-pair and expiry validation; verify that the files match and the certificate is valid.
 
-Declare whether the environment is production. The container mounts
-`tenants` read-only, so create the file on the host, with `true` for
-production or `false` for a test environment:
+Create `demo.json` with the connection settings. The container mounts
+`systems` read-only, so create the file on the host. Set `production` to
+`true` for a production environment or `false` for a test environment (without
+quotes):
 
 ```sh
-printf '{"production": true}\n' > "$HOME/sf-toolkit/credentials/tenants/demo/demo.json"
+cat > "$HOME/sf-toolkit/credentials/systems/demo/demo.json" <<'EOF'
+{
+  "type": "successfactors",
+  "production": false,
+  "company_id": "demo",
+  "host": "your-api-host.sapsf.com",
+  "token_url": "https://your-api-host.sapsf.com/oauth/token",
+  "client_key": "REPLACE_WITH_OAUTH_CLIENT_API_KEY",
+  "user_id": "APIUSER"
+}
+EOF
 ```
+
+`company_id` is the SuccessFactors company ID. `host` excludes `https://`; `token_url` includes the scheme and `/oauth/token`. Follow the project's convention that the technical user matches the certificate CN. Optional keys are `odata_version` (`v2` by default, or `v4`), `pii_filter_tier` and `pii_extra_fields`; see [Connect to SuccessFactors](CONNECT.md#2-create-the-system) for the full list. A file without a valid `type` or `production`, or with a misspelled entry, makes the queries refuse the environment with `system_invalid`, naming the field.
 
 A production environment always gets the strictest PII tokenization (tier 3,
-names included), whatever `PII_FILTER_TIER` says. A test environment uses
-`PII_FILTER_TIER`. Without this file, `odata_query` and `ce_query` refuse the
-environment with `tenant_environment_unset`. The value must be `true` or
-`false` without quotes. Version 0.3.3 called this file `tenant.json`; rename
-an existing one to `demo.json`, since the old name is no longer read.
-
-The same file can also hold settings that differ per environment:
-`client_key`, `user_id`, `host` with `token_url`, `odata_version`,
-`pii_filter_tier` (test environments only) and `pii_extra_fields`. Each one
-replaces the matching `sf.env` value for that company ID only. A misspelled
-or wrong entry makes the queries refuse the environment with
-`tenant_config_invalid`, naming the field. See
-[Per-tenant settings](CONNECT.md#per-tenant-settings) for the full list.
+names included). A test environment uses its `pii_filter_tier`, default 1
+(0 off to 3 most aggressive).
 
 One MCP server can serve several environments this way. For a second
-environment `demo2` that uses its own OAuth client and tier 2, add a folder
-next to `demo` with its key, certificate and settings file; no second
-compose service is needed:
+environment `demo2` with its own OAuth client and tier 2, add a folder next to
+`demo` with its key, certificate and settings file; no second compose service
+is needed:
 
 ```sh
-mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo2"
-# Add sf_private_key_demo2.pem and sf_saml_signing_demo2.crt, then:
-printf '{"production": false, "client_key": "DEMO2_OAUTH_CLIENT_API_KEY", "pii_filter_tier": 2}\n' \
-  > "$HOME/sf-toolkit/credentials/tenants/demo2/demo2.json"
+mkdir -p "$HOME/sf-toolkit/credentials/systems/demo2"
+# Add private-key.pem and signing-cert.crt, then create demo2.json like demo.json,
+# with "client_key": "DEMO2_OAUTH_CLIENT_API_KEY" and "pii_filter_tier": 2.
 ```
 
-The AI then passes `company_id="demo2"` to reach it; `list_tenants` shows
-both environments with their effective settings.
-
-Create `~/sf-toolkit/credentials/sf.env` with your connection settings:
-
-```dotenv
-SF_HOST=your-api-host.sapsf.com
-SF_CLIENT_KEY=REPLACE_WITH_OAUTH_CLIENT_API_KEY
-SF_USER_ID=APIUSER
-SF_COMPANY_ID=demo
-SF_TOKEN_URL=https://your-api-host.sapsf.com/oauth/token
-SF_ODATA_VERSION=v2
-TENANT_KEYS_DIR=/credentials/tenants
-RESULTS_DIR=/data
-PII_VAULT_DIR=/vault/store
-# Optional: raise or lower PII tokenization for test environments
-# (0 off - 3 most aggressive); default 1. Production is always 3.
-# PII_FILTER_TIER=1
-# Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
-# PII_EXTRA_FIELDS={"PerPersonal": {"customString6": 2}}
-```
-
-`SF_HOST` excludes `https://`; `SF_TOKEN_URL` includes the scheme and `/oauth/token`. Follow the project's convention that the technical user matches the certificate CN. Enter literal values in the environment file; do not rely on `$VARIABLE` expansion.
+The AI then passes `system="demo2"` to reach it; `list_systems` shows both
+environments. With one SuccessFactors system, `system` can stay empty.
 
 Set file permissions:
 
 ```sh
-chmod 600 "$HOME/sf-toolkit/credentials/sf.env" \
-  "$HOME/sf-toolkit/credentials/tenants/demo/sf_private_key_demo.pem"
+chmod 600 "$HOME/sf-toolkit/credentials/systems/demo/private-key.pem"
 ```
 
 This workflow starts MCP directly over stdio. `API_KEY` and `ADMIN_API_KEY` control REST access and are not required here.
@@ -301,7 +278,7 @@ Replace `/Users/YOUR_NAME/sf-toolkit` below with your actual absolute path (usua
 
 Reload the client's MCP configuration. It starts `docker compose run --rm -T mcp` and communicates over stdin/stdout. Keep `-T` to disable a terminal; do not add `-d`. Do not start this stdio service with `docker compose up`. If Docker cannot be found, use the absolute executable path from `command -v docker`.
 
-The UID/GID in `compose.yaml` lets the container read the key and write exports as their owner. Create the credential and data directories first and allow Docker Desktop to share them. The client should discover `list_tenants`, `odata_metadata`, `compare_metadata`, `odata_query`, and `ce_query`.
+The UID/GID in `compose.yaml` lets the container read the key and write exports as their owner. Create the credential and data directories first and allow Docker Desktop to share them. The client should discover `list_systems`, `odata_metadata`, `compare_metadata`, `odata_query`, and `ce_query`.
 
 
 </details>

@@ -6,10 +6,10 @@ services:
     env_file:
       - .env
     environment:
-      TENANT_KEYS_DIR: /data/tenants
+      SYSTEMS_DIR: /data/systems
     volumes:
-      - tenant_keys:/data/tenants
-    # Locked down: read-only root filesystem, no capabilities. Writable: /data/tenants, /tmp.
+      - systems:/data/systems
+    # Locked down: read-only root filesystem, no capabilities. Writable: /data/systems, /tmp.
     read_only: true
     tmpfs:
       - /tmp
@@ -21,4 +21,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  tenant_keys:
+  systems:

@@ -1,7 +1,6 @@
 """Response headers, login errors, token lifetime and locking in the SF HTTP clients."""
 
 import asyncio
-import base64
 import gc
 import time
 from unittest.mock import AsyncMock
@@ -17,16 +16,16 @@ from successfactors_toolkit.services import saml_bearer
 from successfactors_toolkit.services.http_limits import passthrough_headers
 from successfactors_toolkit.services.odata_client import ODataClient
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
+from tests.systems import write_system
 
 
-def _settings(**overrides):
-    return Settings(
-        _env_file=None,
-        sf_host="api.example.invalid",
-        sf_company_id="example-a",
-        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
-        **overrides,
-    )
+def _settings():
+    return Settings(_env_file=None)  # SYSTEMS_DIR holds conftest's example-a
+
+
+def _add_system(name):
+    directory = write_system(_settings().systems_dir, name)
+    (directory / "private-key.pem").write_bytes(b"synthetic-key")
 
 
 def _odata(handler, monkeypatch):
@@ -218,9 +217,10 @@ def _two_tenant_fetch(release: asyncio.Event, started: list[str]):
 
 
 def test_a_slow_token_endpoint_does_not_block_another_tenant(monkeypatch):
+    _add_system("example-b")
     client = ODataClient(_settings(), httpx.AsyncClient())
-    a = client._resolve(ODataConnectionConfig(company_id="example-a"))
-    b = client._resolve(ODataConnectionConfig(company_id="example-b"))
+    a = client._resolve(ODataConnectionConfig(system="example-a"))
+    b = client._resolve(ODataConnectionConfig(system="example-b"))
 
     async def scenario():
         release, started = asyncio.Event(), []
@@ -237,7 +237,7 @@ def test_a_slow_token_endpoint_does_not_block_another_tenant(monkeypatch):
 
 def test_concurrent_token_requests_for_one_tenant_mint_once(monkeypatch):
     client = ODataClient(_settings(), httpx.AsyncClient())
-    a = client._resolve(ODataConnectionConfig(company_id="example-a"))
+    a = client._resolve(ODataConnectionConfig(system="example-a"))
 
     async def scenario():
         release, started = asyncio.Event(), []
@@ -260,9 +260,10 @@ def test_token_locks_do_not_pile_up_once_idle(monkeypatch):
 
 
 def test_a_slow_sfapi_login_does_not_block_another_tenant(monkeypatch):
+    _add_system("example-b")
     client = SFAPIClient(_settings(), httpx.AsyncClient())
-    a = client._resolve(SFAPIConnectionConfig(company_id="example-a"))
-    b = client._resolve(SFAPIConnectionConfig(company_id="example-b"))
+    a = client._resolve(SFAPIConnectionConfig(system="example-a"))
+    b = client._resolve(SFAPIConnectionConfig(system="example-b"))
 
     async def scenario():
         release, started = asyncio.Event(), []

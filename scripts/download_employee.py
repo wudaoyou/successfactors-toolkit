@@ -46,7 +46,7 @@ def download_employee(
     base_url: str,
     api_key: str,
     output_dir: Path,
-    company_id: str | None = None,
+    system: str | None = None,
 ) -> Path:
     validate_person_id(person_id)
     if not api_key:
@@ -55,8 +55,8 @@ def download_employee(
         "person_id_external": [person_id],
         "include_contingent_workers": True,
     }
-    if company_id:
-        payload["connection"] = {"company_id": company_id}
+    if system:
+        payload["connection"] = {"system": system}
     response = httpx.post(
         f"{base_url.rstrip('/')}/api/sfapi/ce/query-by-person-id",
         headers={"X-API-Key": api_key},
@@ -90,7 +90,7 @@ def download_employee(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("person_id", type=validate_person_id)
-    parser.add_argument("--company-id", help="Override the default SuccessFactors company ID.")
+    parser.add_argument("--system", help="System name under SYSTEMS_DIR (default: the only one).")
     parser.add_argument(
         "--base-url", default=os.getenv("SAP_SF_PAYLOAD_BASE_URL", "http://127.0.0.1:8000")
     )
@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             base_url=args.base_url,
             api_key=os.getenv("API_KEY", ""),
             output_dir=args.output_dir,
-            company_id=args.company_id,
+            system=args.system,
         )
     except httpx.HTTPStatusError as exc:
         print(f"Download failed: HTTP {exc.response.status_code}.", file=sys.stderr)

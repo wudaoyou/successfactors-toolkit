@@ -1,7 +1,6 @@
 """Response size, request duration, retry waits and extract size are bounded."""
 
 import asyncio
-import base64
 from unittest.mock import AsyncMock
 
 import httpx
@@ -17,13 +16,7 @@ from successfactors_toolkit.services.sfapi_client import SFAPIClient
 
 
 def _settings(**overrides):
-    return Settings(
-        _env_file=None,
-        sf_host="api.example.invalid",
-        sf_company_id="example-a",
-        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
-        **overrides,
-    )
+    return Settings(_env_file=None, **overrides)  # SYSTEMS_DIR holds conftest's example-a
 
 
 def odata_client(handler, monkeypatch, **overrides):

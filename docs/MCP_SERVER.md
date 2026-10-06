@@ -3,15 +3,20 @@
 [← README](../README.md)
 
 `successfactors-mcp` exposes five tools over stdio, reusing the same OAuth2
-SAML Bearer flow, tenant key store, and pagination logic as the REST API:
+SAML Bearer flow, system store, and pagination logic as the REST API. Each
+SuccessFactors instance is a system under `SYSTEMS_DIR` (see
+[Connect to SuccessFactors](CONNECT.md#2-create-the-system)); every tool except
+`list_systems` takes a `system` argument, the system's directory name. An
+empty `system` means the only `successfactors` system; with several, the call
+is refused with `system_required`.
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `list_tenants` | — | Registered tenants (cert expiry) plus the `.env` default. |
-| `odata_metadata` | `company_id`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. When `entity` is given, its navigation properties (name, target entity, filterable) are included too — resolved from the full service `$metadata` (cached per `company_id`) since entity-scoped `$metadata` omits them. On a v4 tenant `entity` is a service root (`talent/cdp/Learning.svc/v1`) or root plus entity set; both read that service's `$metadata`. v4 CSDL has no `sap:` attributes: navigations report `filterable` `"true"` and keys count as sortable. |
-| `compare_metadata` | `company_a`, `company_b`, `entity` | `in_sync`, a summary, and the per-entity drift, diffed server-side. |
-| `odata_query` | `path`, `company_id`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview` accepts 0-20 and values above zero inline only when at most 16 KiB. Query options may be passed in `path` (`"EmpJob?$select=..."`) or `params` — both are merged, `params` wins on conflict. When paging and no `$orderby` is given, one is added automatically from the entity's key properties (reported as `orderby_added`); `duplicate_records` and `warnings` (missing keys, suspected silent truncation) are surfaced when relevant. On a v4 tenant `path` starts at the service root (`talent/cdp/Learning.svc/v1/Items`) and `paging=snapshot` is never added. `max_pages` is 1-1000; responses and extracts are bounded, see [Limits](CONNECT.md#limits). |
-| `ce_query` | `company_id`, `person_id_external`, `user_id`, `last_modified_on`, `include_contingent_workers`, `select_segments`, `max_rows`, `max_pages` | Counts and one XML file path per page. `select_segments` takes only documented segment names; ID filters take letters, digits, space and `_ . @ : / + -`. |
+| `list_systems` | — | Every system under `SYSTEMS_DIR` with its `type`, `production`, `pii_filter_tier` and, for SuccessFactors systems, certificate expiry; a system whose file is refused carries `error` and `detail`. Also `plugins`. |
+| `odata_metadata` | `system`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. When `entity` is given, its navigation properties (name, target entity, filterable) are included too — resolved from the full service `$metadata` (cached per system) since entity-scoped `$metadata` omits them. On a v4 system `entity` is a service root (`talent/cdp/Learning.svc/v1`) or root plus entity set; both read that service's `$metadata`. v4 CSDL has no `sap:` attributes: navigations report `filterable` `"true"` and keys count as sortable. |
+| `compare_metadata` | `system_a`, `system_b`, `entity` | `in_sync`, a summary, and the per-entity drift, diffed server-side. |
+| `odata_query` | `path`, `system`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview` accepts 0-20 and values above zero inline only when at most 16 KiB. Query options may be passed in `path` (`"EmpJob?$select=..."`) or `params` — both are merged, `params` wins on conflict. When paging and no `$orderby` is given, one is added automatically from the entity's key properties (reported as `orderby_added`); `duplicate_records` and `warnings` (missing keys, suspected silent truncation) are surfaced when relevant. On a v4 system `path` starts at the service root (`talent/cdp/Learning.svc/v1/Items`) and `paging=snapshot` is never added. `max_pages` is 1-1000; responses and extracts are bounded, see [Limits](CONNECT.md#limits). |
+| `ce_query` | `system`, `person_id_external`, `user_id`, `last_modified_on`, `include_contingent_workers`, `select_segments`, `max_rows`, `max_pages` | Counts and one XML file path per page. `select_segments` takes only documented segment names; ID filters take letters, digits, space and `_ . @ : / + -`. |
 
 ## Payloads stay on disk
 
@@ -56,39 +61,44 @@ PII values in MCP results — files and previews from `odata_query` and
 before anything is written. The plaintext stays in a local vault under
 `PII_VAULT_DIR`.
 
-How far tokenization goes depends on whether the tenant is production, which
-you declare per tenant in `{TENANT_KEYS_DIR}/{company_id}/{company_id}.json`
-(see [Production or test](CONNECT.md#production-or-test)):
+How far tokenization goes depends on whether the system is production, which
+you declare per system with `production` in its
+`SYSTEMS_DIR/<name>/<name>.json` (see
+[Production or test](CONNECT.md#production-or-test)):
 
-| `{company_id}.json` | Tier |
+| `<name>.json` | Tier |
 |---|---|
-| `{"production": true}` | 3, always. Nothing can lower it. |
-| `{"production": false}` | The file's `pii_filter_tier`, else `PII_FILTER_TIER` (`0`–`3`, default `1`; `0` = off). |
-| missing, or no boolean `production` | The call is refused: `tenant_environment_unset`. |
-| `production` set, another key invalid | The call is refused: `tenant_config_invalid`. |
+| `"production": true` | 3, always. `pii_filter_tier` must be `3` or absent. |
+| `"production": false` | The file's `pii_filter_tier` (`0`-`3`; `0` = off), default `1`. |
 
-A refused call returns `{"error": "tenant_environment_unset" or
-"tenant_config_invalid", "company_id": ..., "detail": ...}` before anything
-is sent to SuccessFactors; `detail` says where to put the file, or which
-field is wrong. An empty `company_id` means `SF_COMPANY_ID`, whose file is
-read the same way. `list_tenants` reports the effective `host`,
-`technical_user`, `production` and `pii_filter_tier` for each tenant and the
-default, adds `config_error` for an invalid file, and warns about tenants
-without a flag or with an invalid file. `odata_metadata` and
-`compare_metadata` return schema only and do not check the flag.
+A file with no boolean `production` (or no `type`, or any other invalid
+value) is refused before anything is sent to SuccessFactors:
 
-The same file can also set the tenant's `client_key`, `user_id`, `host` with
-`token_url`, `odata_version` and `pii_extra_fields`, so one MCP server serves
-several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
+```json
+{"error": "system_invalid", "system": "demo", "detail": "production: Field required"}
+```
 
-- Within a tenant the same value always gets the same token, so the model can
-  still compare, group, count and join. Tokens are bound to the tenant that
-  issued them: the same value gets a different token on another tenant, and a
-  token only resolves in queries to the tenant whose results it came from
-  (otherwise `pii_unknown_token`). Tokens from earlier versions no longer
-  resolve in queries; re-run the query. `successfactors-pii-reveal` reveals
+The codes are `system_unknown` (no such system), `system_required` (several
+`successfactors` systems and no `system` given), `system_unsupported` (a
+`type` no installed plugin handles) and `system_invalid` (the file is not
+valid; `detail` names the field). `list_systems` reports each system's
+`type`, `production` and effective `pii_filter_tier`, and its `error` when the
+file is refused. `odata_metadata` and `compare_metadata` return schema only
+and do not tokenize.
+
+The same file can also set the system's connection (`company_id`, `host`,
+`token_url`, `client_key`, `user_id`, `odata_version`) and `pii_extra_fields`,
+so one MCP server serves several systems: see
+[Connect to SuccessFactors](CONNECT.md#2-create-the-system).
+
+- Within a system the same value always gets the same token, so the model can
+  still compare, group, count and join. Tokens are bound to the system name:
+  the same value gets a different token on another system, and a token only
+  resolves in queries to the system whose results it came from
+  (otherwise `pii_unknown_token`). Tokens issued by earlier versions no
+  longer resolve in queries; re-run the query. `successfactors-pii-reveal` reveals
   old and new tokens from the same vault.
-- Where tokenization is on (a production tenant, or a test tenant at tier 1
+- Where tokenization is on (a production system, or a test system at tier 1
   or above), the model can pass a token back only as `field eq|ne '<token>'`,
   `field eq|ne null` or `field in '<token>',...` in `$filter`; the server
   resolves it before calling SuccessFactors. `odata_query` refuses anything
@@ -111,7 +121,7 @@ several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
   and picklists, and the Compound Employee employment, job, compensation,
   pay, deduction, global assignment, cost distribution and payment segments.
   To keep an entity or segment you have reviewed in plaintext, list it in
-  `PII_EXTRA_FIELDS` (or the tenant file's `pii_extra_fields`) with the
+  the system file's `pii_extra_fields` with the
   fields that should still be tokenized, or `{}` for none, e.g.
   `{"cust_Badge": {}}`. Custom fields on known entities (`customString*`,
   `cust_*`, User `custom01`-`custom15`) stay plaintext unless listed there.
@@ -132,7 +142,7 @@ several tenants: see [Per-tenant settings](CONNECT.md#per-tenant-settings).
   marital status, photos and User-entity contact fields (email, business
   phone, cell phone). The full map is in
   `successfactors_toolkit/services/pii_filter.py`. Relabeled custom fields go
-  in `PII_EXTRA_FIELDS`.
+  in `pii_extra_fields`.
 - To restore plaintext in a report the model wrote, run it locally:
   `successfactors-pii-reveal report.md`. With no `-o`, it prints to stdout,
   so redirect it to a path the AI can't read, e.g.
@@ -148,7 +158,7 @@ the query forms it can recognize as probing. It is not an access-control
 boundary: a model can still learn which records share a value and whether a
 value is empty, and, through navigation into entities the map doesn't cover or
 custom fields nobody listed, values it wasn't meant to see. Don't give a model
-access to a tenant whose PII it must not be able to infer. Nor is it a sandbox
+access to a system whose PII it must not be able to infer. Nor is it a sandbox
 against an agent that deliberately reads the vault or runs the reveal
 command. With a local (non-Docker) server, deny both in Claude Code, e.g. in
 `.claude/settings.json`:
@@ -182,12 +192,7 @@ agent; use its MCP settings or configuration file:
     "successfactors": {
       "command": "successfactors-mcp",
       "env": {
-        "SF_HOST": "example.invalid",
-        "SF_CLIENT_KEY": "...",
-        "SF_USER_ID": "APIUSER",
-        "SF_COMPANY_ID": "demo",
-        "SF_TOKEN_URL": "https://example.invalid/oauth/token",
-        "TENANT_KEYS_DIR": "/absolute/path/to/tenants",
+        "SYSTEMS_DIR": "/absolute/path/to/systems",
         "RESULTS_DIR": "/absolute/path/to/data",
         "PII_VAULT_DIR": "/absolute/path/to/pii_vault"
       }
@@ -209,7 +214,7 @@ these equivalent settings:
 
 The agent must support launching a local stdio MCP process; an HTTP-only MCP
 connector cannot use this configuration directly. After reloading the agent's
-MCP configuration, verify discovery of the five tools and call `list_tenants`.
+MCP configuration, verify discovery of the five tools and call `list_systems`.
 
 `Settings` reads `.env` from the current working directory, which an MCP
 host does not reliably set to the repo root — pass everything needed as an
@@ -238,6 +243,11 @@ Import only from `successfactors_toolkit.plugin_api`, which holds the
 supported helpers: settings, the shared HTTP pool, URL building that
 caller input can't escape, result-file writing, previews, and PII
 tokenization. Call `set_status("<entry point name>", fn)`
-to report a status block in `list_tenants`. A plugin that fails to load is
+to report a status block in `list_systems`. A plugin can register its own
+system type with `register_system_type`, so `<name>.json` files of that
+`type` validate against its model and live in `SYSTEMS_DIR` beside the
+SuccessFactors systems; `select_system`, `system_config` and `system_dir`
+read them. Keep secrets in separate files in the system's directory, never in
+`<name>.json`: `list_systems` shows a plugin's file in full. A plugin that fails to load is
 skipped: it is logged to stderr and listed as `loaded: false`. Plugins run
 with the server's full privileges, so install only packages you trust.

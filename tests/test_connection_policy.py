@@ -1,7 +1,6 @@
 """Per-request connection overrides may not point the server anywhere it likes."""
 
 import asyncio
-import base64
 from contextlib import asynccontextmanager
 
 import httpx
@@ -21,17 +20,14 @@ from successfactors_toolkit.services.connection_policy import (
 )
 from successfactors_toolkit.services.credentials import load_key_pem
 from successfactors_toolkit.services.odata_client import ODataClient, api_url
+from tests.systems import write_system
 
 
 @pytest.fixture
-def settings(tmp_path):
+def settings():
+    # SYSTEMS_DIR comes from the environment (conftest's system example-a).
     return Settings(
-        _env_file=None,
-        sf_host="api.example.invalid",
-        sf_allowed_hosts=["partner.example.invalid"],
-        sf_company_id="demo",
-        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
-        tenant_keys_dir=str(tmp_path / "tenants"),
+        _env_file=None, sf_allowed_hosts=["api.example.invalid", "partner.example.invalid"]
     )
 
 
@@ -46,7 +42,7 @@ def api_client(monkeypatch):
 @pytest.mark.parametrize(
     "host",
     [
-        "api.example.invalid",  # the configured SF_HOST
+        "api.example.invalid",  # SF_ALLOWED_HOSTS entry
         "partner.example.invalid",  # SF_ALLOWED_HOSTS entry
         "api4preview.sapsf.com",  # SAP datacenter suffix
         "API.SUCCESSFACTORS.EU",  # suffix match is case-insensitive
@@ -88,10 +84,10 @@ def test_token_url_must_be_https_on_an_allowed_host(settings):
             check_token_url(bad, settings, "demo")
 
 
-def test_key_path_must_stay_inside_the_tenants_own_directory(settings, tmp_path):
-    keys_dir = tmp_path / "tenants"
+def test_key_path_must_stay_inside_the_systems_own_directory(settings, tmp_path):
+    keys_dir = settings.systems_dir
     (keys_dir / "demo").mkdir(parents=True)
-    inside = keys_dir / "demo" / "sf_private_key_demo.pem"
+    inside = keys_dir / "demo" / "private-key.pem"
     inside.write_bytes(b"synthetic-key")
     assert check_key_path(str(inside), settings, "demo") == inside.resolve()
 
@@ -101,38 +97,38 @@ def test_key_path_must_stay_inside_the_tenants_own_directory(settings, tmp_path)
         check_key_path(str(outside), settings, "demo")
     with pytest.raises(ConnectionPolicyError):
         check_key_path(str(keys_dir / ".." / "elsewhere.pem"), settings, "demo")
-    # The store's root is not the tenant's directory.
+    # The store's root is not the system's directory.
     root_level = keys_dir / "stray.pem"
     root_level.write_bytes(b"synthetic-key")
     with pytest.raises(ConnectionPolicyError):
         check_key_path(str(root_level), settings, "demo")
 
 
-def test_key_path_into_another_tenants_directory_is_rejected(settings, tmp_path):
-    other = tmp_path / "tenants" / "other"
+def test_key_path_into_another_systems_directory_is_rejected(settings):
+    other = settings.systems_dir / "other"
     other.mkdir(parents=True)
-    foreign = other / "sf_private_key_other.pem"
+    foreign = other / "private-key.pem"
     foreign.write_bytes(b"synthetic-key")
     assert check_key_path(str(foreign), settings, "other") == foreign.resolve()
-    with pytest.raises(ConnectionPolicyError, match="tenant 'demo'"):
+    with pytest.raises(ConnectionPolicyError, match="system 'demo'"):
         check_key_path(str(foreign), settings, "demo")
 
 
-def test_load_key_pem_rejects_another_tenants_key_and_an_empty_company_id(settings, tmp_path):
-    other = tmp_path / "tenants" / "other"
+def test_load_key_pem_rejects_another_systems_key_and_an_empty_system(settings):
+    other = settings.systems_dir / "other"
     other.mkdir(parents=True)
-    foreign = other / "sf_private_key_other.pem"
-    foreign.write_bytes(b"other-tenant-key")
+    foreign = other / "private-key.pem"
+    foreign.write_bytes(b"other-system-key")
     with pytest.raises(ConnectionPolicyError):
         load_key_pem(str(foreign), settings, "demo")
-    assert load_key_pem(str(foreign), settings, "other") == b"other-tenant-key"
+    assert load_key_pem(str(foreign), settings, "other") == b"other-system-key"
     for bad in ("", "../other"):
         with pytest.raises(ConnectionPolicyError):
             load_key_pem(None, settings, bad)
 
 
-def test_symlink_out_of_the_tenant_store_is_rejected(settings, tmp_path):
-    keys_dir = tmp_path / "tenants"
+def test_symlink_out_of_the_system_directory_is_rejected(settings, tmp_path):
+    keys_dir = settings.systems_dir
     (keys_dir / "demo").mkdir(parents=True)
     outside = tmp_path / "elsewhere.pem"
     outside.write_bytes(b"synthetic-key")
@@ -160,42 +156,39 @@ def test_rest_rejects_a_private_key_path_outside_the_store_with_400(api_client, 
         headers={"X-API-Key": "test-api-key"},
         json={
             "path": "User",
-            "connection": {"company_id": "demo", "private_key_path": str(outside)},
+            "connection": {"system": "example-a", "private_key_path": str(outside)},
         },
     )
     assert response.status_code == 400
-    assert "key directory of tenant" in response.json()["detail"]
+    assert "directory of system" in response.json()["detail"]
 
 
-def test_rest_rejects_another_tenants_private_key_with_400(api_client, tmp_path, monkeypatch):
-    monkeypatch.setenv("TENANT_KEYS_DIR", str(tmp_path / "tenants"))
-    get_settings.cache_clear()
-    other = tmp_path / "tenants" / "other"
+def test_rest_rejects_another_systems_private_key_with_400(api_client):
+    other = get_settings().systems_dir / "other"
     other.mkdir(parents=True)
-    foreign = other / "sf_private_key_other.pem"
+    foreign = other / "private-key.pem"
     foreign.write_bytes(b"synthetic-key")
     response = api_client.post(
         "/api/odata/execute",
         headers={"X-API-Key": "test-api-key"},
         json={
             "path": "User",
-            "connection": {"company_id": "demo", "private_key_path": str(foreign)},
+            "connection": {"system": "example-a", "private_key_path": str(foreign)},
         },
     )
     assert response.status_code == 400
-    assert "key directory of tenant" in response.json()["detail"]
+    assert "directory of system" in response.json()["detail"]
 
 
-def test_rest_rejects_an_empty_company_id_with_no_default_tenant(api_client, monkeypatch):
-    monkeypatch.setenv("SF_COMPANY_ID", "")
-    get_settings.cache_clear()
+def test_rest_rejects_an_empty_system_when_it_is_ambiguous(api_client):
+    write_system(get_settings().systems_dir, "example-b")
     response = api_client.post(
         "/api/odata/execute",
         headers={"X-API-Key": "test-api-key"},
-        json={"path": "User", "connection": {"company_id": ""}},
+        json={"path": "User", "connection": {"system": ""}},
     )
     assert response.status_code == 400
-    assert "company_id" in response.json()["detail"]
+    assert "Pass system" in response.json()["detail"]
 
 
 @pytest.mark.parametrize("header", ["X-API-Key", "X-Admin-Key"])
@@ -206,7 +199,7 @@ def test_non_ascii_access_keys_are_401_not_500(header, monkeypatch):
     headers = {"X-API-Key": "test-api-key"}
     headers[header] = "k\u00e9y".encode("utf-8")
     with TestClient(app) as client:
-        assert client.get("/api/tenants", headers=headers).status_code == 401
+        assert client.get("/api/systems", headers=headers).status_code == 401
 
 
 def test_identity_may_be_repeated_or_set_where_unconfigured_but_not_replaced():
@@ -219,25 +212,6 @@ def test_identity_may_be_repeated_or_set_where_unconfigured_but_not_replaced():
 
 
 # ── Adversarial review follow-ups ─────────────────────────────────────────────
-
-
-def test_configured_settings_are_trusted_even_when_unusual():
-    """SF_HOST/SF_TOKEN_URL are operator input, not caller input.
-
-    An internal hostname with an underscore, or a token endpoint on a
-    non-default port, is a legal deployment; running the caller allowlist over
-    the server's own configuration rejects every request instead.
-    """
-    settings = Settings(
-        _env_file=None,
-        sf_host="sf_internal.corp.invalid",
-        sf_token_url="https://sf_internal.corp.invalid:8443/oauth/token",
-    )
-    assert check_host(settings.sf_host, settings, "demo") == settings.sf_host
-    assert check_token_url(settings.sf_token_url, settings, "demo") == settings.sf_token_url
-    # A per-request override still has to earn it.
-    with pytest.raises(ConnectionPolicyError):
-        check_host("other_internal.corp.invalid", settings, "demo")
 
 
 def test_unparseable_overrides_are_policy_errors_not_crashes(settings):
@@ -254,7 +228,7 @@ def test_rest_rejects_an_unparseable_private_key_path_with_400(api_client):
         headers={"X-API-Key": "test-api-key"},
         json={
             "path": "User",
-            "connection": {"company_id": "demo", "private_key_path": "\x00"},
+            "connection": {"system": "example-a", "private_key_path": "\x00"},
         },
     )
     assert response.status_code == 400
@@ -305,13 +279,7 @@ def test_caller_headers_cannot_retarget_or_reauthorize_the_request():
     """`headers` on /api/odata/execute is caller input. httpx sends a supplied
     Host verbatim, so letting it through makes the allowlisted hostname not the
     host the request actually addresses."""
-    settings = Settings(
-        _env_file=None,
-        sf_host="api.example.invalid",
-        sf_company_id="demo",
-        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
-        tenant_keys_dir="/nonexistent",
-    )
+    settings = Settings(_env_file=None)
     http = _RecordingHTTPClient()
     client = ODataClient(settings, http)
     client._tokens[client._token_key(client._resolve(None))] = ("tok", float("inf"))

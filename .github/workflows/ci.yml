@@ -67,6 +67,7 @@ jobs:
           container_id=$(docker run -d -p 127.0.0.1:8000:8000 \
             --read-only --tmpfs /tmp --cap-drop ALL \
             --security-opt no-new-privileges:true --pids-limit 256 \
+            --tmpfs /systems -e SYSTEMS_DIR=/systems \
             successfactors-toolkit:ci)
           trap 'docker stop "$container_id"' EXIT
 

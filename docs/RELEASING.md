@@ -64,7 +64,7 @@
 The `publish` job publishes
 `wudaoyou/successfactors-toolkit:<release-tag>` (including the `v` prefix)
 for `linux/amd64` and `linux/arm64`. It builds and loads both platforms once,
-then checks MCP initialization, tool discovery, and a local tenant-list call
+then checks MCP initialization, tool discovery, and a local system-list call
 on each platform using the existing stdio test. The arm64 check uses QEMU.
 These smoke tests make no live SuccessFactors requests. The workflow pushes
 the same tested images without rebuilding, verifies both published platforms,

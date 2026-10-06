@@ -13,19 +13,19 @@ import pytest
 from lxml import etree
 from pydantic import ValidationError
 
-from successfactors_toolkit.config import Settings
+from successfactors_toolkit.config import Settings, get_settings
 from successfactors_toolkit.services.pii_filter import (
     PiiFilter,
     PiiUnknownTokenError,
     PiiVaultError,
-    TenantEnvironmentUnset,
+    SystemRefused,
     Vault,
     detokenize,
-    for_tenant,
+    for_system,
     retokenize,
     reveal,
 )
-from successfactors_toolkit.services.tenant_store import TenantStore
+from tests.systems import write_system
 
 _TOKEN = re.compile(r"\[PII-T([1-3])-([0-9a-f]{16})\]")
 
@@ -195,40 +195,7 @@ def test_vault_a_fresh_vault_still_works_after_the_ownership_checks(tmp_path):
     assert vault.load(["aaaaaaaaaaaaaaaa"]) == {"aaaaaaaaaaaaaaaa": "value"}
 
 
-def test_settings_default_to_tier_one(monkeypatch):
-    settings = Settings()
-    assert settings.pii_filter_tier == 1
-    assert settings.pii_extra_fields == {}
-
-
-@pytest.mark.parametrize("tier", ["-1", "4"])
-def test_settings_reject_out_of_range_tier(monkeypatch, tier):
-    monkeypatch.setenv("PII_FILTER_TIER", tier)
-    with pytest.raises(ValidationError):
-        Settings()
-
-
-def test_settings_parse_extra_fields_json(monkeypatch):
-    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"PerPersonal": {"customString6": 2}}')
-    assert Settings().pii_extra_fields == {"PerPersonal": {"customString6": 2}}
-
-
-def test_settings_reject_extra_field_tier_outside_one_to_three(monkeypatch):
-    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"PerPersonal": {"customString6": 0}}')
-    with pytest.raises(ValidationError):
-        Settings()
-
-
 def test_settings_reject_vault_inside_results_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
-    monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "results" / "vault"))
-    with pytest.raises(ValidationError, match="PII_VAULT_DIR"):
-        Settings()
-
-
-def test_settings_reject_vault_inside_results_dir_even_at_tier_zero(monkeypatch, tmp_path):
-    # Production tenants are tier 3 whatever PII_FILTER_TIER says.
-    monkeypatch.setenv("PII_FILTER_TIER", "0")
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "results" / "vault"))
     with pytest.raises(ValidationError, match="PII_VAULT_DIR"):
@@ -372,49 +339,61 @@ def test_non_string_values_are_tokenized_as_text(tmp_path):
     assert pii.vault.load([hex_]) == {hex_: "123456789"}
 
 
-def _tenant_settings(monkeypatch, tmp_path, production, tier=None):
+def _system_settings(monkeypatch, tmp_path, production, tier=None):
+    """example-a declared production/test (None: no "production" key) at `tier`."""
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
-    if tier is not None:
-        monkeypatch.setenv("PII_FILTER_TIER", tier)
-    settings = Settings()
-    if production is not None:
-        TenantStore(settings.tenant_keys_dir).set_production("example-a", production)
+    get_settings.cache_clear()
+    settings = get_settings()
+    fields = {} if tier is None else {"pii_filter_tier": tier}
+    write_system(settings.systems_dir, "example-a", production=production, **fields)
+    if production is None:
+        (settings.systems_dir / "example-a" / "example-a.json").write_text(
+            '{"type": "successfactors"}', encoding="utf-8"
+        )
     return settings
 
 
-@pytest.mark.parametrize("tier", [None, "0", "1"])
-def test_for_tenant_production_is_always_tier_three(monkeypatch, tmp_path, tier):
-    pii = for_tenant(_tenant_settings(monkeypatch, tmp_path, True, tier), "example-a")
+@pytest.mark.parametrize("tier", [None, 3])
+def test_for_system_production_is_tier_three(monkeypatch, tmp_path, tier):
+    pii = for_system(_system_settings(monkeypatch, tmp_path, True, tier), "example-a")
     assert pii.tier == 3 and (tmp_path / "vault" / "key").exists()
 
 
-@pytest.mark.parametrize(("tier", "expected"), [(None, 1), ("2", 2), ("3", 3)])
-def test_for_tenant_test_uses_pii_filter_tier_or_one(monkeypatch, tmp_path, tier, expected):
-    pii = for_tenant(_tenant_settings(monkeypatch, tmp_path, False, tier), "example-a")
+@pytest.mark.parametrize("tier", [0, 1, 2])
+def test_for_system_production_below_tier_three_is_refused(monkeypatch, tmp_path, tier):
+    settings = _system_settings(monkeypatch, tmp_path, True, tier)
+    with pytest.raises(SystemRefused) as caught:
+        for_system(settings, "example-a")
+    assert caught.value.code == "system_invalid"
+    assert not (tmp_path / "vault").exists()
+
+
+@pytest.mark.parametrize(("tier", "expected"), [(None, 1), (2, 2), (3, 3)])
+def test_for_system_test_uses_pii_filter_tier_or_one(monkeypatch, tmp_path, tier, expected):
+    pii = for_system(_system_settings(monkeypatch, tmp_path, False, tier), "example-a")
     assert pii.tier == expected
 
 
-def test_for_tenant_test_at_tier_zero_is_none(monkeypatch, tmp_path):
-    assert for_tenant(_tenant_settings(monkeypatch, tmp_path, False, "0"), "example-a") is None
+def test_for_system_test_at_tier_zero_is_none(monkeypatch, tmp_path):
+    assert for_system(_system_settings(monkeypatch, tmp_path, False, 0), "example-a") is None
     assert not (tmp_path / "vault").exists()
 
 
-@pytest.mark.parametrize("tier", ["0", "3"])
-def test_for_tenant_unset_raises_before_touching_the_vault(monkeypatch, tmp_path, tier):
-    settings = _tenant_settings(monkeypatch, tmp_path, None, tier)
-    with pytest.raises(TenantEnvironmentUnset) as caught:
-        for_tenant(settings, "example-a")
-    assert caught.value.company_id == "example-a"
-    assert "example-a/example-a.json" in str(caught.value)
+def test_for_system_unset_raises_before_touching_the_vault(monkeypatch, tmp_path):
+    settings = _system_settings(monkeypatch, tmp_path, None)
+    with pytest.raises(SystemRefused) as caught:
+        for_system(settings, "example-a")
+    assert (caught.value.code, caught.value.system) == ("system_invalid", "example-a")
+    assert "production" in caught.value.detail
     assert not (tmp_path / "vault").exists()
 
 
-def test_for_tenant_empty_company_id_reads_the_default_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
-    assert for_tenant(_tenant_settings(monkeypatch, tmp_path, True), "").tier == 3
-    monkeypatch.delenv("SF_COMPANY_ID")
-    with pytest.raises(TenantEnvironmentUnset):
-        for_tenant(Settings(), "")
+@pytest.mark.parametrize("name", ["", "example-b", "EXAMPLE-A"])
+def test_for_system_unknown_name_is_refused(monkeypatch, tmp_path, name):
+    settings = _system_settings(monkeypatch, tmp_path, True)
+    with pytest.raises(SystemRefused) as caught:
+        for_system(settings, name)
+    assert caught.value.code == "system_unknown"
 
 
 def _ce(inner):
@@ -684,18 +663,18 @@ def test_expanded_collections_next_link_is_dropped(tmp_path):
     assert out["permissionRoleNav"]["results"][0]["id"] == "1"
 
 
-# --- tokens are bound to the tenant that issued them ---------------------
+# --- tokens are bound to the system that issued them ---------------------
 
 
-def _two_tenants(monkeypatch, tmp_path):
+def _two_systems(monkeypatch, tmp_path):
     """One shared vault directory: example-a is production (tier 3), example-b test (tier 1)."""
-    settings = _tenant_settings(monkeypatch, tmp_path, True)
-    TenantStore(settings.tenant_keys_dir).set_production("example-b", False)
-    return for_tenant(settings, "example-a"), for_tenant(settings, "example-b")
+    settings = _system_settings(monkeypatch, tmp_path, True)
+    write_system(settings.systems_dir, "example-b")
+    return for_system(settings, "example-a"), for_system(settings, "example-b")
 
 
-def test_a_token_only_resolves_on_the_tenant_that_issued_it(monkeypatch, tmp_path):
-    prod, test = _two_tenants(monkeypatch, tmp_path)
+def test_a_token_only_resolves_on_the_system_that_issued_it(monkeypatch, tmp_path):
+    prod, test = _two_systems(monkeypatch, tmp_path)
     record = {**_meta("PerPersonal"), "gender": "F", "nationalId": "123-45-6789"}
     [out], count = prod.tokenize_records([record])
     assert count == 2
@@ -707,25 +686,16 @@ def test_a_token_only_resolves_on_the_tenant_that_issued_it(monkeypatch, tmp_pat
             detokenize(f"{field} eq '{token}'", test.vault)
 
 
-def test_the_same_value_gets_a_different_token_per_tenant(monkeypatch, tmp_path):
-    prod, test = _two_tenants(monkeypatch, tmp_path)
+def test_the_same_value_gets_a_different_token_per_system(monkeypatch, tmp_path):
+    prod, test = _two_systems(monkeypatch, tmp_path)
     record = {**_meta("PerNationalId"), "nationalId": "123-45-6789"}
     [a1], _ = prod.tokenize_records([record])
     [a2], _ = prod.tokenize_records([record])
     [b], _ = test.tokenize_records([record])
     assert a1["nationalId"] == a2["nationalId"] != b["nationalId"]
-    # Both stay resolvable, each on its own tenant.
+    # Both stay resolvable, each on its own system.
     assert detokenize(a1["nationalId"], prod.vault)[0] == "123-45-6789"
     assert detokenize(b["nationalId"], test.vault)[0] == "123-45-6789"
-
-
-def test_for_tenant_binds_the_default_tenant_when_company_id_is_empty(monkeypatch, tmp_path):
-    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
-    settings = _tenant_settings(monkeypatch, tmp_path, True)
-    record = {**_meta("PerNationalId"), "nationalId": "123-45-6789"}
-    [implicit], _ = for_tenant(settings, "").tokenize_records([record])
-    [explicit], _ = for_tenant(settings, "example-a").tokenize_records([record])
-    assert implicit["nationalId"] == explicit["nationalId"]
 
 
 def test_a_vault_without_a_tenant_cannot_issue_tokens(tmp_path):
@@ -811,21 +781,11 @@ def test_an_empty_extra_entry_marks_an_entity_as_reviewed(tmp_path):
     assert masked["externalCode"] == "E1", "listed for other fields: known, so plaintext"
 
 
-def test_for_tenant_keeps_empty_extra_entries(monkeypatch, tmp_path):
-    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"cust_Foo": {}}')
-    settings = _tenant_settings(monkeypatch, tmp_path, False)
-    pii = for_tenant(settings, "example-a")
-    [out], count = _closed(pii, [{**_meta("cust_Foo"), "externalCode": "E1"}])
-    assert count == 0 and out["externalCode"] == "E1"
-
-
-def test_for_tenant_keeps_an_empty_entry_from_the_tenant_file(monkeypatch, tmp_path):
-    settings = _tenant_settings(monkeypatch, tmp_path, False)
-    tenant_file = tmp_path / "tenants" / "example-a" / "example-a.json"
-    tenant_file.parent.mkdir(parents=True, exist_ok=True)
-    tenant_file.write_text(json.dumps({"production": False, "pii_extra_fields": {"cust_Bar": {}}}))
+def test_for_system_keeps_an_empty_entry_from_the_system_file(monkeypatch, tmp_path):
+    settings = _system_settings(monkeypatch, tmp_path, False)
+    write_system(settings.systems_dir, "example-a", pii_extra_fields={"cust_Bar": {}})
     [out], count = _closed(
-        for_tenant(settings, "example-a"), [{**_meta("cust_Bar"), "externalCode": "E1"}]
+        for_system(settings, "example-a"), [{**_meta("cust_Bar"), "externalCode": "E1"}]
     )
     assert count == 0 and out["externalCode"] == "E1"
 
