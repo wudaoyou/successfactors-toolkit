@@ -29,6 +29,7 @@ from successfactors_toolkit.services.tenant_store import (
     TenantAlreadyExists,
     TenantStore,
 )
+from tests.systems import write_system
 
 
 def _pem_pair(key=None, not_before=timedelta(minutes=-1)):
@@ -60,14 +61,10 @@ def keypair():
     return _pem_pair()
 
 
-def test_registered_tenants_are_listed_without_loading_connection_attribute(
-    monkeypatch, tmp_path, keypair
-):
+def test_registered_tenants_are_listed(tmp_path, keypair):
     store = TenantStore(str(tmp_path / "tenants"))
     store.install("example-a", *keypair)
-    result = mcp_server.list_tenants()
-    assert [tenant["company_id"] for tenant in result["tenants"]] == ["example-a"]
-    assert "synthetic-test-user" not in str(result)
+    assert [tenant.company_id for tenant in store.list_tenants()] == ["example-a"]
     assert stat.S_IMODE(store.key_path("example-a").stat().st_mode) == 0o600
 
 
@@ -161,32 +158,32 @@ def test_a_dir_holding_only_the_flag_is_not_a_tenant(tmp_path):
     store = TenantStore(str(tmp_path / "tenants"))
     store.set_production("example-a", False)
     assert store.list_tenants() == []
-    assert mcp_server.list_tenants()["tenants"] == []
 
 
-def test_mcp_list_tenants_reports_environment_tier_and_unset_warning(
-    monkeypatch, tmp_path, keypair
-):
-    monkeypatch.setenv("SF_COMPANY_ID", "example-c")
-    monkeypatch.setenv("PII_FILTER_TIER", "2")
-    get_settings.cache_clear()
-    store = TenantStore(str(tmp_path / "tenants"))
-    store.install("example-a", *keypair)
-    store.install("example-b", *keypair)
-    store.set_production("example-a", True)
-    result = mcp_server.list_tenants()
-    a, b = result["tenants"]
+def _system_with_keypair(name, keypair, **fields):
+    directory = write_system(get_settings().systems_dir, name, **fields)
+    (directory / "private-key.pem").write_bytes(keypair[0])
+    (directory / "signing-cert.crt").write_bytes(keypair[1])
+    return directory
+
+
+def test_mcp_list_systems_reports_environment_tier_and_errors(keypair):
+    _system_with_keypair("example-a", keypair, production=True)
+    (_system_with_keypair("example-b", keypair) / "example-b.json").write_text(
+        '{"type": "successfactors"}'
+    )
+    _system_with_keypair("example-c", keypair, pii_filter_tier=2)
+    result = mcp_server.list_systems()
+    a, b, c = result["systems"]
     assert (a["production"], a["pii_filter_tier"]) == (True, 3)
-    assert (b["production"], b["pii_filter_tier"]) == (None, None)
-    assert (result["default"]["production"], result["default"]["pii_filter_tier"]) == (None, None)
+    assert (b["production"], b["error"]) == (None, "system_invalid")
+    assert (c["production"], c["pii_filter_tier"]) == (False, 2)
     [warning] = result["warnings"]
-    assert "example-b, example-c" in warning and "example-a" not in warning
+    assert warning.startswith("example-b: system_invalid:") and "production" in warning
 
-    store.set_production("example-b", False)
-    store.set_production("example-c", False)
-    result = mcp_server.list_tenants()
-    assert result["tenants"][1]["pii_filter_tier"] == 2
-    assert (result["default"]["production"], result["default"]["pii_filter_tier"]) == (False, 2)
+    write_system(get_settings().systems_dir, "example-b")
+    result = mcp_server.list_systems()
+    assert result["systems"][1]["pii_filter_tier"] == 1
     assert "warnings" not in result
 
 
@@ -246,45 +243,30 @@ def test_environment_route_keeps_other_keys_and_the_file_mode(monkeypatch, tmp_p
     assert stat.S_IMODE(flag.stat().st_mode) == 0o600
 
 
-def test_mcp_list_tenants_reports_effective_settings_and_config_errors(
-    monkeypatch, tmp_path, keypair
-):
-    monkeypatch.setenv("SF_USER_ID", "ENVUSER")
-    get_settings.cache_clear()
-    store = TenantStore(str(tmp_path / "tenants"))
-    for company_id in ("example-a", "example-b", "example-c"):
-        store.install(company_id, *keypair)
-    (store.tenant_dir("example-a") / "example-a.json").write_text(
-        json.dumps(
-            {
-                "production": False,
-                "pii_filter_tier": 2,
-                "host": "api4preview.sapsf.com",
-                "token_url": "https://api4preview.sapsf.com/oauth/token",
-                "user_id": "FILEUSER",
-            }
-        )
+def test_mcp_list_systems_reports_each_files_settings_and_cert(keypair):
+    _system_with_keypair(
+        "example-a",
+        keypair,
+        pii_filter_tier=2,
+        host="api4preview.sapsf.com",
+        token_url="https://api4preview.sapsf.com/oauth/token",
+        user_id="FILEUSER",
+        odata_version="v4",
     )
-    store.set_production("example-b", True)
-    (store.tenant_dir("example-c") / "example-c.json").write_text(
-        '{"production": false, "host": "api4preview.sapsf.com"}'
-    )
-    result = mcp_server.list_tenants()
-    a, b, c = result["tenants"]
-    assert (a["host"], a["technical_user"], a["production"], a["pii_filter_tier"]) == (
+    write_system(get_settings().systems_dir, "example-b", host=1)
+    result = mcp_server.list_systems()
+    a, b = result["systems"]
+    assert (a["host"], a["user_id"], a["odata_version"], a["pii_filter_tier"]) == (
         "api4preview.sapsf.com",
         "FILEUSER",
-        False,
+        "v4",
         2,
     )
-    assert (b["host"], b["technical_user"], b["pii_filter_tier"]) == (
-        "api.example.invalid",
-        "ENVUSER",
-        3,
-    )
-    assert "config_error" not in a and "config_error" not in b
-    assert "token_url" in c["config_error"] and c["pii_filter_tier"] is None
-    assert any("example-c" in w and "token_url" in w for w in result["warnings"])
+    assert a["cert_days_left"] > 0 and a["cert_expires"]
+    assert "client_key" not in a and "synthetic-client-key" not in str(result)
+    assert (b["error"], b["type"]) == ("system_invalid", "successfactors")
+    assert "cert_expires" not in b
+    assert any(w.startswith("example-b:") and "host" in w for w in result["warnings"])
 
 
 @pytest.mark.parametrize(

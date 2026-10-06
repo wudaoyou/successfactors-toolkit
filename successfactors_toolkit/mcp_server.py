@@ -1,11 +1,11 @@
 """MCP (stdio) front end for this repo's SuccessFactors clients.
 
-Exposes five tools — tenant listing, OData $metadata, cross-instance metadata
+Exposes five tools — system listing, OData $metadata, cross-instance metadata
 comparison, OData query, and Compound Employee query — to an MCP host such as
 Claude Desktop or Claude Code.
 
 Everything hard is reused from ``successfactors_toolkit.services``: OAuth2 SAML
-Bearer, per-tenant keys, ``queryMore`` paging, next-link following. This module
+Bearer, per-system keys, ``queryMore`` paging, next-link following. This module
 only maps tool arguments onto those clients and keeps payloads out of the
 model's context — results are written under ``{RESULTS_DIR}/mcp/`` and the tool
 returns a path plus counts. That matters twice over: a single Compound Employee
@@ -45,15 +45,9 @@ from successfactors_toolkit.services.odata_client import (
     split_path_query,
     v4_service_root,
 )
-from successfactors_toolkit.services.pii_filter import (
-    PiiUnknownTokenError,
-    PiiVaultError,
-    TenantConfigInvalid,
-    TenantEnvironmentUnset,
-)
+from successfactors_toolkit.services.pii_filter import PiiUnknownTokenError, PiiVaultError
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
 from successfactors_toolkit.services.system_store import SF_TYPE, SystemStore, SystemUnavailable
-from successfactors_toolkit.services.tenant_store import TenantConfigError, TenantStore
 
 # Below this size a metadata summary is small enough to hand the model directly
 # instead of making it open the file — the usual case for a single entity.
@@ -83,7 +77,7 @@ mcp = MCPServer(
     # 2048 chars — keep both under that; tests enforce it.
     instructions=(
         "SAP SuccessFactors: OData v2 (any entity set) or v4 services, and the "
-        "EC Compound Employee SOAP API. Call list_tenants first for company_id. "
+        "EC Compound Employee SOAP API. Call list_systems first for the system name. "
         "compare_metadata diffs two instances. Large results go to a "
         "file (container path; under Docker, the host dir bound to "
         "RESULTS_DIR) — read it for the records.\n\n"
@@ -144,7 +138,7 @@ def _clients() -> tuple[ODataClient, SFAPIClient]:
     return _odata, _sfapi  # type: ignore[return-value]
 
 
-def _write(content: str, tool: str, company_id: str, suffix: str) -> str:
+def _write(content: str, tool: str, system: str, suffix: str) -> str:
     """Write a payload under ``{results_dir}/mcp/`` and return its path."""
     # Resolved per call, not at import: the setting is only known once the
     # environment and .env have been read, and tests monkeypatch it.
@@ -155,7 +149,7 @@ def _write(content: str, tool: str, company_id: str, suffix: str) -> str:
         _prune(out_dir, time.time() - settings.results_retention_days * 86400)
     # Microseconds keep two calls in the same second from overwriting each other.
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-    name = _SAFE_NAME.sub("_", company_id) or "default"
+    name = _SAFE_NAME.sub("_", system) or "default"
     path = out_dir / f"{tool}_{name}_{stamp}.{suffix}"
     # O_EXCL plus mode 0o600: HR payloads are never world-readable, and an
     # existing name is an error rather than an overwrite.
@@ -191,8 +185,8 @@ def _attach_preview(out: dict[str, Any], records: list[Any], preview: int) -> No
 
 
 _PII_NOTE = (
-    "Values like [PII-T1-<hex>] are PII tokens, per tenant: the same value gives "
-    "the same token on the same tenant, so compare, group and count them freely. "
+    "Values like [PII-T1-<hex>] are PII tokens, per system: the same value gives "
+    "the same token on the same system, so compare, group and count them freely. "
     "In $filter a tokenized field can only be compared with eq, ne or in against "
     "such tokens (the server resolves them); it can't be sorted, searched or "
     "passed to functions. Records of entities the PII map doesn't cover have "
@@ -202,26 +196,16 @@ _PII_NOTE = (
 
 
 def _pii_error(exc: Exception) -> dict[str, Any]:
-    if isinstance(exc, TenantEnvironmentUnset):
-        return {
-            "error": "tenant_environment_unset",
-            "company_id": exc.company_id,
-            "detail": str(exc),
-        }
-    if isinstance(exc, TenantConfigInvalid):
-        return {
-            "error": "tenant_config_invalid",
-            "company_id": exc.company_id,
-            "detail": exc.detail,
-        }
+    if isinstance(exc, pii_filter.SystemRefused):
+        return _system_error(exc)
     if isinstance(exc, PiiUnknownTokenError):
         return {
             "error": "pii_unknown_token",
             "tokens": exc.tokens,
             "detail": (
-                "Tokens only resolve on the tenant whose results they came from, and "
+                "Tokens only resolve on the system whose results they came from, and "
                 "tokens from an older server version must be refreshed by re-running "
-                "the query on this tenant."
+                "the query on this system."
             ),
         }
     if isinstance(exc, pii_query_guard.PiiQueryRefused):
@@ -230,13 +214,13 @@ def _pii_error(exc: Exception) -> dict[str, Any]:
 
 
 def _pii_request(
-    path: str, params: dict[str, Any] | None, company_id: str = ""
+    path: str, params: dict[str, Any] | None, system: str
 ) -> tuple[pii_filter.PiiFilter | None, str, dict[str, Any] | None, dict[str, str]]:
-    """The tenant's filter, plus path/params with any tokens resolved to
+    """The system's filter, plus path/params with any tokens resolved to
     plaintext and the substitutions made (for retokenizing error bodies).
-    Raises PiiVaultError (TenantEnvironmentUnset included) /
-    PiiUnknownTokenError."""
-    pii = pii_filter.for_tenant(get_settings(), company_id)
+    `system` is a name `_select` (or plugin_api.select_system) returned.
+    Raises PiiVaultError (SystemRefused included) / PiiUnknownTokenError."""
+    pii = pii_filter.for_system(get_settings(), system)
     if pii is None:
         return None, path, params, {}
     # The query half is parsed (and URL-decoded) later, so values put there
@@ -428,6 +412,15 @@ def _store() -> SystemStore:
     return SystemStore(get_settings().systems_dir)
 
 
+def _select(system: str) -> str:
+    """The successfactors system a tool serves. Raises SystemUnavailable."""
+    return _store().select(SF_TYPE, system)
+
+
+def _system_error(exc: SystemUnavailable | pii_filter.SystemRefused) -> dict[str, Any]:
+    return {"error": exc.code, "system": exc.system, "detail": exc.detail}
+
+
 def _v4(system: str) -> bool:
     """Whether the system speaks OData v4 (its file's odata_version)."""
     try:
@@ -456,15 +449,15 @@ def _v4_entity_type(xml: str, entity: str) -> str:
 _METADATA_PATH = re.compile(r"(?:[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/)*\$metadata")
 
 
-async def _fetch_metadata_xml(company_id: str, entity: str) -> tuple[str, dict[str, Any] | None]:
+async def _fetch_metadata_xml(system: str, entity: str) -> tuple[str, dict[str, Any] | None]:
     """Fetch one instance's raw $metadata (EDMX). entity="" fetches the whole
     service. Returns (xml, error); shared by every metadata consumer below so
-    the request shape (path, company override) stays in one place. v4 serves
+    the request shape (path, system) stays in one place. v4 serves
     $metadata per service only, so there `entity` (a service root, optionally
     followed by an entity set) fetches its service root's document."""
     odata, _ = _clients()
     path = f"{entity}/$metadata" if entity else "$metadata"
-    if entity and _v4(company_id):
+    if entity and _v4(system):
         path = f"{v4_service_root(entity)[0]}/$metadata"
     # Metadata output is never PII-tokenized, so the path must not be able to
     # reach anything but a $metadata document: an entity like "EmpJob?x=" would
@@ -472,31 +465,29 @@ async def _fetch_metadata_xml(company_id: str, entity: str) -> tuple[str, dict[s
     if not _METADATA_PATH.fullmatch(path):
         return "", {
             "error": "invalid_entity",
-            "company_id": company_id,
+            "system": system,
             "detail": f"entity {entity!r} is not an entity set name or service path.",
         }
-    r = await odata.request(
-        method="GET", path=path, conn=ODataConnectionConfig(system=company_id or None)
-    )
+    r = await odata.request(method="GET", path=path, conn=ODataConnectionConfig(system=system))
     body = str(r["body"])
     if r["status_code"] >= 400:
         return "", {
             "error": "http_error",
-            "company_id": company_id,
+            "system": system,
             "status_code": r["status_code"],
             "body": body[:2000],
         }
     return body, None
 
 
-async def _field_map(company_id: str, entity: str) -> tuple[_FieldMap, dict[str, Any] | None]:
+async def _field_map(system: str, entity: str) -> tuple[_FieldMap, dict[str, Any] | None]:
     """Fetch one instance's $metadata and reduce it. Returns (fields, error)."""
-    xml, error = await _fetch_metadata_xml(company_id, entity)
+    xml, error = await _fetch_metadata_xml(system, entity)
     if error is not None:
         return {}, error
     try:
         fields = _parse_edmx(xml)
-        if entity and _v4(company_id):
+        if entity and _v4(system):
             # The service document holds every entity type; narrow it to the
             # entity set's type, as v2's entity-scoped $metadata does.
             type_ = _v4_entity_type(xml, entity)
@@ -506,18 +497,18 @@ async def _field_map(company_id: str, entity: str) -> tuple[_FieldMap, dict[str,
     except etree.XMLSyntaxError as exc:
         return {}, {
             "error": "parse_error",
-            "company_id": company_id,
+            "system": system,
             "detail": str(exc),
         }
 
 
-# Entity key lookups are cached per (company_id, entity) for the life of the
+# Entity key lookups are cached per (system, entity) for the life of the
 # process — $metadata rarely changes and re-fetching it on every paged query
 # would double the request count for no benefit.
 _key_cache: dict[tuple[str, str], list[str] | None] = {}
 
 
-async def _entity_key_properties(company_id: str, entity: str) -> list[str] | None:
+async def _entity_key_properties(system: str, entity: str) -> list[str] | None:
     """Best-effort $metadata lookup of an entity's key properties, for
     auto-$orderby. Only an exact EntityType-name match is used — guessing at
     an arbitrary entity in the document would hand back the wrong keys.
@@ -528,14 +519,14 @@ async def _entity_key_properties(company_id: str, entity: str) -> list[str] | No
     query. Returns [] if the entity's key is known but unusable for
     $orderby (see _parse_edmx_keys). Both cases are cached.
     """
-    cache_key = (company_id, entity)
+    cache_key = (system, entity)
     if cache_key in _key_cache:
         return _key_cache[cache_key]
     keys: list[str] | None = None
     try:
-        xml, error = await _fetch_metadata_xml(company_id, entity)
+        xml, error = await _fetch_metadata_xml(system, entity)
         if error is None:
-            type_ = _v4_entity_type(xml, entity) if _v4(company_id) else entity
+            type_ = _v4_entity_type(xml, entity) if _v4(system) else entity
             keys = _parse_edmx_keys(xml).get(type_)
     except Exception:
         keys = None
@@ -546,15 +537,13 @@ async def _entity_key_properties(company_id: str, entity: str) -> list[str] | No
 # Navigation properties only appear in the *full* service $metadata (entity-
 # scoped $metadata omits NavigationProperty entirely), and on a real tenant
 # that document can run to ~11 MB — so it's fetched at most once per
-# company_id (v4: per company_id and service root) per process. Only the
+# system (v4: per system and service root) per process. Only the
 # parsed nav map is cached, never the raw XML, per the same rationale as
 # _key_cache.
 _nav_cache: dict[tuple[str, str], tuple[_NavMap, dict[str, Any] | None]] = {}
 
 
-async def _nav_properties(
-    company_id: str, entity: str = ""
-) -> tuple[_NavMap, dict[str, Any] | None]:
+async def _nav_properties(system: str, entity: str = "") -> tuple[_NavMap, dict[str, Any] | None]:
     """Best-effort {EntityType: [nav, ...]} for the whole service, for
     odata_metadata to enrich its per-entity output with. Never raises: a
     failure (or an unreachable/oversized full $metadata) is returned as a
@@ -562,17 +551,17 @@ async def _nav_properties(
     existing field output and isn't retried on every call. entity="" is the
     v2 service; a v4 entity path selects its service's document.
     """
-    cache_key = (company_id, v4_service_root(entity)[0] if entity else "")
+    cache_key = (system, v4_service_root(entity)[0] if entity else "")
     if cache_key in _nav_cache:
         return _nav_cache[cache_key]
     navs: _NavMap = {}
     error: dict[str, Any] | None = None
     try:
-        xml, error = await _fetch_metadata_xml(company_id, entity)
+        xml, error = await _fetch_metadata_xml(system, entity)
         if error is None:
             navs = _parse_edmx_navs(xml)
     except Exception as exc:
-        error = {"error": "nav_parse_error", "company_id": company_id, "detail": str(exc)}
+        error = {"error": "nav_parse_error", "system": system, "detail": str(exc)}
     result = (navs, error)
     _nav_cache[cache_key] = result
     return result
@@ -661,77 +650,64 @@ def _plugin_statuses() -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_tenants() -> dict[str, Any]:
-    """List the SuccessFactors instances this server can reach.
+def list_systems() -> dict[str, Any]:
+    """List the systems this server can reach, one per SYSTEMS_DIR/<name>/<name>.json.
 
-    Call this first: the company_id values it returns are what the other tools
-    take as their `company_id` argument. An empty company_id always means the
-    instance configured in the server's own .env, reported here as "default".
-    "plugins" reports each installed plugin and whether it loaded.
-    "production" is the tenant's declared environment; odata_query and
-    ce_query refuse a tenant where it is null or "config_error" is set.
+    Call this first: pass a successfactors system's "name" as the other tools'
+    `system` argument (it may be empty when there is only one). "production"
+    is the declared environment and sets "pii_filter_tier"; a system with
+    "error" is refused until its file is fixed. "plugins" reports each
+    installed plugin and whether it loaded.
     """
-    settings = get_settings()
-    store = TenantStore(settings.tenant_keys_dir)
-    tenants = [
-        {
-            "company_id": t.company_id,
-            **_tenant_settings(settings, store, t.company_id),
-            "cert_expires": t.certificate.not_after.isoformat(),
-            "cert_days_left": t.certificate.days_until_expiry,
-        }
-        for t in store.list_tenants()
-    ]
-    default = {
-        "company_id": settings.sf_company_id,
-        **_tenant_settings(settings, store, settings.sf_company_id),
-    }
+    store = _store()
+    systems = [_system_entry(store, name) for name in store.names()]
     out: dict[str, Any] = {
-        "tenants": tenants,
-        "default": default,
-        "keys_dir": settings.tenant_keys_dir,
+        "systems": systems,
+        "systems_dir": str(store.base),
         "plugins": _plugin_statuses(),
     }
-    listed = [*tenants, default] if settings.sf_company_id else tenants
-    unset = {t["company_id"] for t in listed if t["production"] is None}
-    errors = {t["company_id"]: t["config_error"] for t in listed if "config_error" in t}
-    warnings = [f"Invalid {cid}/{cid}.json: {error}" for cid, error in sorted(errors.items())]
-    if unset:
-        warnings.insert(
-            0,
-            f"No production/test environment declared for {', '.join(sorted(unset))}: "
-            "odata_query and ce_query refuse them until the admin creates "
-            "<company_id>/<company_id>.json under keys_dir.",
-        )
+    warnings = [
+        f"{row['name']}: {row['error']}: {row['detail']}" for row in systems if "error" in row
+    ]
     if warnings:
         out["warnings"] = warnings
     return out
 
 
-def _tenant_settings(settings, store: TenantStore, company_id: str) -> dict[str, Any]:
-    """A tenant's effective connection and PII settings ({company_id}.json, else SF_*)."""
-    out: dict[str, Any] = {"production": store.production(company_id), "pii_filter_tier": None}
+def _system_entry(store: SystemStore, name: str) -> dict[str, Any]:
+    """One list_systems row: the validated file without secrets, or its error."""
     try:
-        conn = store.connection(company_id)
-    except TenantConfigError as exc:
-        conn, out["config_error"] = {}, exc.detail
-    try:  # a file whose connection is invalid fails here too, with the full detail
-        out["pii_filter_tier"] = pii_filter.tier_for(settings, store.config(company_id))
-    except TenantConfigError as exc:
-        out["config_error"] = exc.detail
-    return {
-        "host": conn.get("host", settings.sf_host),
-        "odata_version": conn.get("odata_version", settings.sf_odata_version),
-        "technical_user": conn.get("user_id", settings.sf_user_id),
-        **out,
+        config = store.config(name)
+    except SystemUnavailable as exc:
+        info = store.info(name)
+        return {
+            "name": name,
+            "type": info.type,
+            "production": info.production,
+            "error": exc.code,
+            "detail": exc.detail,
+        }
+    row = {
+        "name": name,
+        **config.model_dump(exclude={"client_key", "pii_extra_fields"}),
+        "pii_filter_tier": pii_filter.tier_for(config),
     }
+    if config.type == SF_TYPE:
+        try:
+            keypair = store.keypair(name)
+        except Exception:  # an unparseable cert must not sink the listing
+            keypair = None
+        if keypair is not None:
+            row["cert_expires"] = keypair.certificate.not_after.isoformat()
+            row["cert_days_left"] = keypair.certificate.days_until_expiry
+    return row
 
 
 _NAV_INLINE_CAP = 50
 
 
 @mcp.tool()
-async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, Any]:
+async def odata_metadata(system: str = "", entity: str = "") -> dict[str, Any]:
     """Fetch OData $metadata (EDMX) and reduce it to a compact field map.
 
     entity="" pulls the whole service metadata (large — hundreds of entity
@@ -741,18 +717,22 @@ async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, An
     ever loading raw EDMX into the conversation. When entity is given, its
     navigation properties (name, target entity type, filterable) are listed
     too — entity-scoped $metadata doesn't carry them, so this resolves them
-    from the full service $metadata instead (fetched once per company_id per
+    from the full service $metadata instead (fetched once per system per
     process, then cached); a lookup failure is reported as a warning and
     never blocks the field output above. Use the navigation names to scope
     filters into other entities via $filter (see the server's "Scope with
     EmpJob first" guidance and odata_query's docstring) instead of pulling
     whole entity sets and joining locally.
 
-    On a v4 tenant, entity is a service path: its root for the whole service
+    On a v4 system, entity is a service path: its root for the whole service
     ("talent/cdp/Learning.svc/v1"), or root plus entity set for one
     (".../Learning.svc/v1/Items"); both read that service's $metadata.
     """
-    fields, error = await _field_map(company_id, entity)
+    try:
+        system = _select(system)
+    except SystemUnavailable as exc:
+        return _system_error(exc)
+    fields, error = await _field_map(system, entity)
     if error is not None:
         return error
 
@@ -760,8 +740,8 @@ async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, An
     navigation: list[dict[str, str]] = []
     nav_warning: str | None = None
     if entity:
-        v4 = _v4(company_id)
-        nav_map, nav_error = await _nav_properties(company_id, entity if v4 else "")
+        v4 = _v4(system)
+        nav_map, nav_error = await _nav_properties(system, entity if v4 else "")
         if nav_error is not None:
             nav_warning = (
                 f"navigation properties unavailable: {nav_error.get('error', 'unknown error')}"
@@ -776,7 +756,7 @@ async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, An
     out: dict[str, Any] = {
         "entity_count": len(fields),
         "field_count": sum(len(v) for v in fields.values()),
-        "file": _write(file_doc, "odata_metadata", company_id, "json"),
+        "file": _write(file_doc, "odata_metadata", system, "json"),
     }
     if len(fields_doc) <= _INLINE_LIMIT:
         out["fields"] = fields
@@ -796,7 +776,7 @@ async def odata_metadata(company_id: str = "", entity: str = "") -> dict[str, An
 
 
 @mcp.tool()
-async def compare_metadata(company_a: str, company_b: str, entity: str = "") -> dict[str, Any]:
+async def compare_metadata(system_a: str, system_b: str, entity: str = "") -> dict[str, Any]:
     """Compare the OData configuration of two instances and return the drift.
 
     entity="EmpJob" compares one entity set; entity="" compares the whole
@@ -811,8 +791,16 @@ async def compare_metadata(company_a: str, company_b: str, entity: str = "") -> 
     picklist, MaxLength — so a changed picklist or a field that never left the
     dev instance shows up here.
     """
+    try:
+        system_a = _select(system_a)
+    except SystemUnavailable as exc:
+        return _system_error(exc)
+    try:
+        system_b = _select(system_b)
+    except SystemUnavailable as exc:
+        return _system_error(exc)
     (fields_a, error_a), (fields_b, error_b) = await asyncio.gather(
-        _field_map(company_a, entity), _field_map(company_b, entity)
+        _field_map(system_a, entity), _field_map(system_b, entity)
     )
     if error_a is not None or error_b is not None:
         return {"error": "fetch_failed", "a": error_a, "b": error_b}
@@ -822,8 +810,8 @@ async def compare_metadata(company_a: str, company_b: str, entity: str = "") -> 
     entities_only_in_b = sorted(set(fields_b) - set(fields_a))
     result: dict[str, Any] = {
         "entity": entity or "(whole service)",
-        "company_a": company_a,
-        "company_b": company_b,
+        "system_a": system_a,
+        "system_b": system_b,
         "in_sync": not (differences or entities_only_in_a or entities_only_in_b),
         "summary": {
             "entities_compared": len(set(fields_a) & set(fields_b)),
@@ -839,7 +827,7 @@ async def compare_metadata(company_a: str, company_b: str, entity: str = "") -> 
         "differences": differences,
     }
     doc = json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False)
-    result["file"] = _write(doc, "compare_metadata", f"{company_a}_vs_{company_b}", "json")
+    result["file"] = _write(doc, "compare_metadata", f"{system_a}_vs_{system_b}", "json")
     if len(doc) > _INLINE_LIMIT:
         # Two instances far enough apart can out-grow the context this tool
         # exists to save. Keep the summary, point at the file for the detail.
@@ -854,7 +842,7 @@ async def compare_metadata(company_a: str, company_b: str, entity: str = "") -> 
 @mcp.tool()
 async def odata_query(
     path: str,
-    company_id: str = "",
+    system: str = "",
     params: dict[str, Any] | None = None,
     max_pages: int = 10,
     preview: Annotated[int, Field(ge=0, le=20, description="Inline records; maximum 20.")] = 0,
@@ -862,7 +850,7 @@ async def odata_query(
     """Run an OData query, following next links until exhausted or max_pages.
 
     path is the entity set and may carry query options, e.g. "FOCompany" or
-    "EmpJob?$select=userId,jobCode" (v4 tenant: service root first,
+    "EmpJob?$select=userId,jobCode" (v4 system: service root first,
     "talent/cdp/Learning.svc/v1/Items") — those are parsed out of path and merged
     into the request; pass options either way, but prefer `params` (params win
     on conflicts). Always $select only the fields you need. Effective-dated
@@ -889,24 +877,28 @@ async def odata_query(
     return that many records inline only when their serialized UTF-8 size is at
     most 16 KiB. Otherwise, inspect the saved file locally.
     """
+    try:
+        system = _select(system)
+    except SystemUnavailable as exc:
+        return _system_error(exc)
     if not 1 <= max_pages <= 1000 or not 0 <= preview <= 20:
         raise ValueError("max_pages must be 1-1000 and preview must be 0-20.")
     raw_path, raw_params = path, params
     entity = _query_entity(path)
     try:
-        pii, path, params, pii_subs = _pii_request(path, params, company_id)
+        pii, path, params, pii_subs = _pii_request(path, params, system)
         if pii is not None:
             pii_query_guard.check_query(_query_options(raw_path, raw_params), entity, pii.protects)
     except (PiiVaultError, PiiUnknownTokenError) as exc:
         return _pii_error(exc)
     odata, _ = _clients()
-    conn = ODataConnectionConfig(system=company_id or None)
+    conn = ODataConnectionConfig(system=system)
 
     query_params = dict(params or {})
     _, path_params = split_path_query(path)
     merged_view = {**path_params, **query_params}  # what will actually be sent, for peeking
     warnings: list[str] = []
-    v4 = _v4(company_id)
+    v4 = _v4(system)
     orderby_added: str | None = None
     paging_added: str | None = None
     keys: list[str] | None = None
@@ -914,12 +906,12 @@ async def odata_query(
     # produce cross-page duplicates/gaps, so there's nothing to order or dedupe.
     paged = max_pages > 1
     if paged:
-        keys = await _entity_key_properties(company_id, _entity_from_path(path))
+        keys = await _entity_key_properties(system, _entity_from_path(path))
         if "$orderby" not in merged_view:
             if keys and pii is not None and any(pii.protects(entity, key) for key in keys):
                 warnings.append(
                     "No $orderby was given and this entity's key properties hold "
-                    "tokenized PII on this tenant, so the server doesn't sort by them; "
+                    "tokenized PII on this system, so the server doesn't sort by them; "
                     "paged results may contain duplicated or skipped rows. Pass "
                     "$orderby on a non-PII field to avoid this."
                 )
@@ -1064,7 +1056,7 @@ async def odata_query(
         "file": _write(
             json.dumps(results, indent=2, ensure_ascii=False, default=str),
             "odata_query",
-            company_id,
+            system,
             "json",
         ),
     }
@@ -1088,7 +1080,7 @@ async def odata_query(
 
 @mcp.tool()
 async def ce_query(
-    company_id: str = "",
+    system: str = "",
     person_id_external: str = "",
     user_id: str = "",
     last_modified_on: str = "",
@@ -1128,15 +1120,19 @@ async def ce_query(
     Each queryMore page is written as its own XML file. The tool returns counts
     and paths only: one employee's payload is ~80 KB of HR data.
     """
+    try:
+        system = _select(system)
+    except SystemUnavailable as exc:
+        return _system_error(exc)
     if not 1 <= max_pages <= 500:
         raise ValueError("max_pages must be 1-500.")
     try:
-        pii = pii_filter.for_tenant(get_settings(), company_id)
+        pii = pii_filter.for_system(get_settings(), system)
     except PiiVaultError as exc:
         return _pii_error(exc)
     pii_count = 0
     _, sfapi = _clients()
-    conn = SFAPIConnectionConfig(system=company_id or None)
+    conn = SFAPIConnectionConfig(system=system)
     query = build_query_string(
         CEQueryFilter(
             person_id_external=person_id_external,
@@ -1196,7 +1192,7 @@ async def ce_query(
             except PiiVaultError as exc:
                 return {**_pii_error(exc), "files": files}
             pii_count += tokenized
-        files.append(_write(body, f"ce_query_p{pages}", company_id, "xml"))
+        files.append(_write(body, f"ce_query_p{pages}", system, "xml"))
         if not (has_more and session and pages < max_pages):
             break
         budget.check_time()
@@ -1217,8 +1213,8 @@ def main() -> None:
     """Console-script entry point: serve MCP over stdio."""
     get_settings()  # bad PII (or other) settings stop the server here
     # httpx logs every request URL at INFO; with tokens resolved, that URL can
-    # hold plaintext PII. Whatever PII_FILTER_TIER says: production tenants
-    # always tokenize.
+    # hold plaintext PII. Whatever a system's pii_filter_tier says, production
+    # always tokenizes.
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     from successfactors_toolkit import plugin_api

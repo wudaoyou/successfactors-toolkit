@@ -336,7 +336,7 @@ def test_mcp_stdio_keeps_audit_lines_off_the_protocol_stream(tmp_path):
             async with stdio_client(server, errlog=err) as (read, write):
                 async with ClientSession(read, write, read_timeout_seconds=15) as session:
                     await session.initialize()
-                    result = await session.call_tool("odata_metadata", {"company_id": "demo"})
+                    result = await session.call_tool("odata_metadata", {"system": "demo"})
                     assert result.is_error
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=60))

@@ -14,7 +14,7 @@ from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import get_settings
 from successfactors_toolkit.services.odata_client import split_path_query
 from successfactors_toolkit.services.pii_filter import PiiFilter, PiiVaultError, Vault
-from successfactors_toolkit.services.tenant_store import TenantStore
+from tests.systems import write_system
 
 _SSN = "123-45-6789"
 _TOKEN = re.compile(r"\[PII-T1-[0-9a-f]{16}\]")
@@ -61,18 +61,27 @@ class _SFAPI:
 
 
 def _install(
-    monkeypatch, tmp_path, odata=None, sfapi=None, tier="1", vault_dir=None, production=False
+    monkeypatch,
+    tmp_path,
+    odata=None,
+    sfapi=None,
+    tier=None,
+    vault_dir=None,
+    production=False,
+    **file,
 ):
-    """Fake clients; the default tenant (SF_COMPANY_ID=example-a) declared
-    test unless production is True, or left unset when it is None."""
+    """Fake clients; the only system, example-a, declared test at `tier`
+    (absent: 1) unless production is True, or undeclared when it is None.
+    `file` adds keys to example-a.json."""
     monkeypatch.setattr(mcp_server, "_clients", lambda: (odata or _OData(), sfapi or _SFAPI("")))
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
-    monkeypatch.setenv("PII_FILTER_TIER", tier)
     monkeypatch.setenv("PII_VAULT_DIR", str(vault_dir or tmp_path / "vault"))
-    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
     get_settings.cache_clear()
-    if production is not None:
-        TenantStore(get_settings().tenant_keys_dir).set_production("example-a", production)
+    if tier is not None:
+        file["pii_filter_tier"] = int(tier)
+    directory = write_system(get_settings().systems_dir, "example-a", production=production, **file)
+    if production is None:
+        (directory / "example-a.json").write_text('{"type": "successfactors"}', encoding="utf-8")
 
 
 def _national_id_record():
@@ -284,7 +293,7 @@ def test_odata_query_token_in_path_query_keeps_special_characters(monkeypatch, t
     assert params == {"$filter": "emailAddress eq 'a+b&c''s@x.com'"}
 
 
-# Tier 0 too: it only covers test tenants, a production tenant still tokenizes.
+# Tier 0 too: it only covers test systems, a production system still tokenizes.
 @pytest.mark.parametrize("tier", ["0", "1"])
 def test_main_quiets_httpx_request_logging_when_tokenizing(monkeypatch, tier):
     monkeypatch.setenv("PII_FILTER_TIER", tier)
@@ -372,19 +381,21 @@ class _SFAPICounting(_SFAPI):
         return await super().query(query_string, conn, params)
 
 
-@pytest.mark.parametrize(("default", "company_id"), [(None, ""), (False, "example-b")])
-def test_unset_tenant_is_refused_before_any_request(monkeypatch, tmp_path, default, company_id):
+@pytest.mark.parametrize(
+    ("system", "code"),
+    [("", "system_invalid"), ("example-a", "system_invalid"), ("nope", "system_unknown")],
+)
+def test_undeclared_or_unknown_system_is_refused_before_any_request(
+    monkeypatch, tmp_path, system, code
+):
     odata, sfapi = _OData([_national_id_record()]), _SFAPICounting()
-    _install(monkeypatch, tmp_path, odata=odata, sfapi=sfapi, production=default)
-    cid = company_id or "example-a"
+    _install(monkeypatch, tmp_path, odata=odata, sfapi=sfapi, production=None)
+    name = system or "example-a"
     for result in (
-        asyncio.run(mcp_server.odata_query("PerNationalId", company_id=company_id)),
-        asyncio.run(mcp_server.ce_query(company_id=company_id)),
+        asyncio.run(mcp_server.odata_query("PerNationalId", system=system)),
+        asyncio.run(mcp_server.ce_query(system=system)),
     ):
-        assert result["error"] == "tenant_environment_unset"
-        assert result["company_id"] == cid
-        assert f"{cid}/{cid}.json" in result["detail"]
-        assert f"/api/tenants/{cid}/environment" in result["detail"]
+        assert result["error"] == code and result["system"] == name
     assert odata.sent == [] and sfapi.calls == 0
     assert not (tmp_path / "results").exists() and not (tmp_path / "vault").exists()
 
@@ -393,31 +404,30 @@ def _person():
     return {"__metadata": {"type": "SFOData.PerPersonal"}, "firstName": "Alice"}
 
 
-@pytest.mark.parametrize("tier", ["0", "1"])
-def test_production_tenant_tokenizes_tier_three_whatever_the_setting(monkeypatch, tmp_path, tier):
+@pytest.mark.parametrize("tier", [None, "3"])
+def test_production_system_tokenizes_tier_three(monkeypatch, tmp_path, tier):
     _install(monkeypatch, tmp_path, odata=_OData([_person()]), tier=tier, production=True)
     result = asyncio.run(mcp_server.odata_query("PerPersonal", max_pages=1, preview=1))
     assert re.fullmatch(r"\[PII-T3-[0-9a-f]{16}\]", result["preview"][0]["firstName"])
     assert result["pii_filter_tier"] == 3
 
 
-def test_test_tenant_at_default_tier_leaves_tier_three_plain(monkeypatch, tmp_path):
+def test_test_system_at_default_tier_leaves_tier_three_plain(monkeypatch, tmp_path):
     _install(monkeypatch, tmp_path, odata=_OData([_person()]))
-    monkeypatch.delenv("PII_FILTER_TIER")
-    get_settings.cache_clear()
     result = asyncio.run(mcp_server.odata_query("PerPersonal", max_pages=1, preview=1))
     assert result["preview"][0]["firstName"] == "Alice" and result["pii_filter_tier"] == 1
 
 
-def test_each_call_uses_its_own_tenant_flag(monkeypatch, tmp_path):
+def test_each_call_uses_its_own_systems_flag(monkeypatch, tmp_path):
     _install(monkeypatch, tmp_path, production=True)
-    TenantStore(get_settings().tenant_keys_dir).set_production("example-b", False)
     assert asyncio.run(mcp_server.ce_query())["pii_filter_tier"] == 3
-    assert asyncio.run(mcp_server.ce_query(company_id="example-a"))["pii_filter_tier"] == 3
-    assert asyncio.run(mcp_server.ce_query(company_id="example-b"))["pii_filter_tier"] == 1
+    write_system(get_settings().systems_dir, "example-b")
+    assert asyncio.run(mcp_server.ce_query())["error"] == "system_required"
+    assert asyncio.run(mcp_server.ce_query(system="example-a"))["pii_filter_tier"] == 3
+    assert asyncio.run(mcp_server.ce_query(system="example-b"))["pii_filter_tier"] == 1
 
 
-# --- query guard, tenant-bound tokens, fail-closed results ---------------
+# --- query guard, system-bound tokens, fail-closed results ---------------
 
 
 def _query(path, params=None, **kwargs):
@@ -428,14 +438,14 @@ def _last_name_record(entity="PerPersonal", name="Smith"):
     return {"__metadata": {"type": f"SFOData.{entity}"}, "personIdExternal": "p1", "lastName": name}
 
 
-def test_a_token_from_another_tenant_is_unknown_and_nothing_is_sent(monkeypatch, tmp_path):
+def test_a_token_from_another_system_is_unknown_and_nothing_is_sent(monkeypatch, tmp_path):
     odata = _OData([_last_name_record()])
     _install(monkeypatch, tmp_path, odata=odata, production=True)
-    TenantStore(get_settings().tenant_keys_dir).set_production("example-b", False)
     token = _query("PerPersonal", preview=1)["preview"][0]["lastName"]
+    write_system(get_settings().systems_dir, "example-b")
     assert re.fullmatch(r"\[PII-T3-[0-9a-f]{16}\]", token)
     sent_before = len(odata.sent)
-    result = _query("PerPersonal", {"$filter": f"lastName eq '{token}'"}, company_id="example-b")
+    result = _query("PerPersonal", {"$filter": f"lastName eq '{token}'"}, system="example-b")
     assert result["error"] == "pii_unknown_token" and result["tokens"] == [token]
     assert "refresh" in result["detail"] or "re-run" in result["detail"]
     assert len(odata.sent) == sent_before
@@ -459,7 +469,7 @@ def _refused(monkeypatch, tmp_path, path, params=None, production=True):
 
 
 @pytest.mark.parametrize("probe", _PROBES)
-def test_production_tenant_refuses_a_probing_filter_in_path_or_params(monkeypatch, tmp_path, probe):
+def test_production_system_refuses_a_probing_filter_in_path_or_params(monkeypatch, tmp_path, probe):
     _refused(monkeypatch, tmp_path, f"PerPersonal?$filter={probe}")
     _refused(monkeypatch, tmp_path, "PerPersonal", {"$filter": probe})
 
@@ -468,13 +478,13 @@ def test_production_tenant_refuses_a_probing_filter_in_path_or_params(monkeypatc
     "option",
     ["$orderby=dateOfBirth", "$search=Smith", "$expand=personNav($filter=lastName ge 'M')"],
 )
-def test_production_tenant_refuses_orderby_search_and_nested_options(monkeypatch, tmp_path, option):
+def test_production_system_refuses_orderby_search_and_nested_options(monkeypatch, tmp_path, option):
     name, value = option.split("=", 1)
     _refused(monkeypatch, tmp_path, f"PerPersonal?{option}")
     _refused(monkeypatch, tmp_path, "PerPersonal", {name: value})
 
 
-def test_production_tenant_refuses_a_bad_second_filter_in_the_path(monkeypatch, tmp_path):
+def test_production_system_refuses_a_bad_second_filter_in_the_path(monkeypatch, tmp_path):
     _refused(
         monkeypatch,
         tmp_path,
@@ -482,7 +492,7 @@ def test_production_tenant_refuses_a_bad_second_filter_in_the_path(monkeypatch, 
     )
 
 
-def test_production_tenant_allows_token_equality_and_sends_plaintext(monkeypatch, tmp_path):
+def test_production_system_allows_token_equality_and_sends_plaintext(monkeypatch, tmp_path):
     odata = _OData()
     _install(monkeypatch, tmp_path, odata=odata, production=True)
     token = _seed(tmp_path, "Smith")
@@ -498,14 +508,14 @@ def test_production_tenant_allows_token_equality_and_sends_plaintext(monkeypatch
     "query",
     ["EmpJob?$filter=company in 'A','B'", "EmpJob?$filter=jobInfoNav/company eq 'X'"],
 )
-def test_production_tenant_allows_filters_on_non_pii_fields(monkeypatch, tmp_path, query):
+def test_production_system_allows_filters_on_non_pii_fields(monkeypatch, tmp_path, query):
     odata = _OData()
     _install(monkeypatch, tmp_path, odata=odata, production=True)
     assert "error" not in _query(query)
     assert len(odata.sent) == 1
 
 
-def test_tier_zero_test_tenant_has_no_query_guard(monkeypatch, tmp_path):
+def test_tier_zero_test_system_has_no_query_guard(monkeypatch, tmp_path):
     odata = _OData()
     _install(monkeypatch, tmp_path, odata=odata, tier="0", production=False)
     result = _query("PerNationalId", {"$filter": "nationalId ge '5'"})
@@ -514,7 +524,7 @@ def test_tier_zero_test_tenant_has_no_query_guard(monkeypatch, tmp_path):
 
 
 def _stub_keys(monkeypatch, keys):
-    async def fake(company_id, entity):
+    async def fake(system, entity):
         return keys
 
     monkeypatch.setattr(mcp_server, "_entity_key_properties", fake)
@@ -546,7 +556,7 @@ def _foo_and_job():
     ]
 
 
-def test_unknown_entity_records_are_tokenized_on_a_tier_one_tenant(monkeypatch, tmp_path):
+def test_unknown_entity_records_are_tokenized_on_a_tier_one_system(monkeypatch, tmp_path):
     _install(monkeypatch, tmp_path, odata=_OData(_foo_and_job()))
     result = _query("cust_Foo", preview=2)
     foo, job = result["preview"]
@@ -563,7 +573,6 @@ def test_untyped_records_take_the_entity_from_the_path(monkeypatch, tmp_path):
 
 
 def test_an_extra_fields_entry_marks_a_custom_entity_as_reviewed(monkeypatch, tmp_path):
-    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"cust_Foo": {}}')
-    _install(monkeypatch, tmp_path, odata=_OData(_foo_and_job()))
+    _install(monkeypatch, tmp_path, odata=_OData(_foo_and_job()), pii_extra_fields={"cust_Foo": {}})
     foo, job = _query("cust_Foo", preview=2)["preview"]
     assert foo["externalCode"] == "E1" and job["jobCode"] == "J1"

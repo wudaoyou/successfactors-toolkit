@@ -17,27 +17,18 @@ import pytest
 
 from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import get_settings
-from successfactors_toolkit.services.tenant_store import TenantStore
+from tests.systems import write_system
 
 
 @pytest.fixture(autouse=True)
 def _clear_entity_key_cache():
     # _entity_key_properties and _nav_properties cache per process (the
-    # latter per company_id); tests reuse the same company_id/entity names
+    # latter per system); tests reuse the same system/entity names
     # against different fakes, so a stale cache entry would leak into the
     # next test.
     mcp_server._key_cache.clear()
     mcp_server._nav_cache.clear()
     yield
-
-
-@pytest.fixture(autouse=True)
-def _declared_test_tenant(monkeypatch):
-    # odata_query / ce_query refuse a tenant that has not declared its
-    # environment; example-a doubles as the default tenant.
-    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
-    get_settings.cache_clear()
-    TenantStore(get_settings().tenant_keys_dir).set_production("example-a", False)
 
 
 _EDMX = """<?xml version="1.0" encoding="utf-8"?>
@@ -125,7 +116,7 @@ def _install(monkeypatch, tmp_path):
 def test_ce_query_writes_payload_to_disk_and_keeps_it_out_of_the_result(monkeypatch, tmp_path):
     _, sfapi = _install(monkeypatch, tmp_path)
 
-    result = asyncio.run(mcp_server.ce_query(company_id="example-a", person_id_external="4711"))
+    result = asyncio.run(mcp_server.ce_query(system="example-a", person_id_external="4711"))
 
     assert result["page_count"] == 2, "hasMore=true must trigger one queryMore"
     assert sfapi.sessions == ["SESSION-1"]
@@ -147,7 +138,7 @@ def test_ce_query_rejects_unvalidated_input_before_any_request(monkeypatch, tmp_
     with pytest.raises(ValueError, match="Unknown segment"):
         asyncio.run(
             mcp_server.ce_query(
-                company_id="example-a",
+                system="example-a",
                 user_id="u1",
                 select_segments=["person FROM CompoundEmployee where 1=1 --"],
             )
@@ -155,7 +146,7 @@ def test_ce_query_rejects_unvalidated_input_before_any_request(monkeypatch, tmp_
     with pytest.raises(ValueError, match="Invalid person_id_external"):
         asyncio.run(
             mcp_server.ce_query(
-                company_id="example-a", person_id_external="X') or person_id_external in('"
+                system="example-a", person_id_external="X') or person_id_external in('"
             )
         )
 
@@ -181,7 +172,7 @@ def test_ce_query_surfaces_soap_faults_without_writing_a_file(monkeypatch, tmp_p
         return {"status_code": 500, "headers": {}, "body": fault}
 
     monkeypatch.setattr(sfapi, "query", _faulting)
-    result = asyncio.run(mcp_server.ce_query(company_id="example-a"))
+    result = asyncio.run(mcp_server.ce_query(system="example-a"))
 
     assert result["error"] == "soap_fault"
     assert "INVALID_SFQL" in result["body"], "the model needs to see which segment failed"
@@ -191,7 +182,7 @@ def test_ce_query_surfaces_soap_faults_without_writing_a_file(monkeypatch, tmp_p
 def test_odata_metadata_summarises_edmx_fields_and_annotations(monkeypatch, tmp_path):
     _install(monkeypatch, tmp_path)
 
-    result = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="EmpJob"))
+    result = asyncio.run(mcp_server.odata_metadata(system="example-a", entity="EmpJob"))
 
     assert result["entity_count"] == 2
     assert result["field_count"] == 3
@@ -212,7 +203,7 @@ def test_odata_metadata_whole_service_pull_skips_navigation(monkeypatch, tmp_pat
     # per-entity on top of that isn't attempted (and isn't needed).
     _install(monkeypatch, tmp_path)
 
-    result = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity=""))
+    result = asyncio.run(mcp_server.odata_metadata(system="example-a", entity=""))
 
     assert "navigation" not in result
 
@@ -228,8 +219,8 @@ def test_odata_metadata_caches_the_full_metadata_fetch_per_company(monkeypatch, 
 
     monkeypatch.setattr(odata, "request", _counting)
 
-    asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="EmpJob"))
-    asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="FOCompany"))
+    asyncio.run(mcp_server.odata_metadata(system="example-a", entity="EmpJob"))
+    asyncio.run(mcp_server.odata_metadata(system="example-a", entity="FOCompany"))
 
     # One entity-scoped fetch per call, but the full-service $metadata that
     # navigation properties are resolved from is fetched once and reused.
@@ -253,7 +244,7 @@ def test_odata_metadata_navigation_failure_does_not_break_field_output(monkeypat
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     get_settings.cache_clear()
 
-    result = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="EmpJob"))
+    result = asyncio.run(mcp_server.odata_metadata(system="example-a", entity="EmpJob"))
 
     assert result["entity_count"] == 2
     assert result["fields"]["EmpJob"]["userId"]["label"] == "User", "field output is unaffected"
@@ -285,7 +276,7 @@ def test_metadata_tools_refuse_an_entity_that_is_not_a_plain_name(monkeypatch, t
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     get_settings.cache_clear()
 
-    single = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity=entity))
+    single = asyncio.run(mcp_server.odata_metadata(system="example-a", entity=entity))
     compared = asyncio.run(mcp_server.compare_metadata("example-a", "example-a", entity=entity))
 
     assert single["error"] == "invalid_entity"
@@ -299,7 +290,7 @@ def test_metadata_parse_error_does_not_echo_the_body(monkeypatch, tmp_path):
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     get_settings.cache_clear()
 
-    result = asyncio.run(mcp_server.odata_metadata(company_id="example-a", entity="EmpJob"))
+    result = asyncio.run(mcp_server.odata_metadata(system="example-a", entity="EmpJob"))
 
     assert result["error"] == "parse_error"
     assert "Jane" not in json.dumps(result)
@@ -339,7 +330,8 @@ def test_parse_edmx_navs_resolves_target_via_association_and_falls_back_to_role(
 def test_compare_metadata_reports_drift_between_two_instances(monkeypatch, tmp_path):
     _install(monkeypatch, tmp_path)
 
-    result = asyncio.run(mcp_server.compare_metadata(company_a="example-a", company_b="drifted"))
+    write_system(get_settings().systems_dir, "drifted")
+    result = asyncio.run(mcp_server.compare_metadata(system_a="example-a", system_b="drifted"))
 
     assert result["in_sync"] is False
     emp_job = result["differences"]["EmpJob"]
@@ -357,7 +349,8 @@ def test_compare_metadata_reports_drift_between_two_instances(monkeypatch, tmp_p
 def test_compare_metadata_is_in_sync_when_both_instances_match(monkeypatch, tmp_path):
     _install(monkeypatch, tmp_path)
 
-    result = asyncio.run(mcp_server.compare_metadata(company_a="example-a", company_b="example-b"))
+    write_system(get_settings().systems_dir, "example-b")
+    result = asyncio.run(mcp_server.compare_metadata(system_a="example-a", system_b="example-b"))
 
     assert result["in_sync"] is True
     assert result["differences"] == {}
@@ -447,8 +440,9 @@ def test_odata_query_omits_oversized_expanded_preview_but_saves_it(monkeypatch, 
     odata = _PreviewOData([record])
     monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
-    monkeypatch.setenv("PII_FILTER_TIER", "0")  # untyped nested records are tokenized otherwise
     get_settings.cache_clear()
+    # Untyped nested records are tokenized otherwise.
+    write_system(get_settings().systems_dir, "example-a", pii_filter_tier=0)
 
     result = asyncio.run(mcp_server.odata_query(path="EmpJob", preview=1))
 
@@ -464,7 +458,7 @@ def test_odata_query_failure_surfaces_the_upstream_error_body(monkeypatch, tmp_p
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     get_settings.cache_clear()
 
-    result = asyncio.run(mcp_server.odata_query(path="EmpJob", company_id="example-a"))
+    result = asyncio.run(mcp_server.odata_query(path="EmpJob", system="example-a"))
 
     assert result["error"] == "http_error"
     assert result["status_code"] == 403

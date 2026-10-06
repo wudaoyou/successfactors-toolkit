@@ -11,7 +11,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from successfactors_toolkit import mcp_server, plugin_api
-from successfactors_toolkit.services.tenant_store import TenantStore
+from successfactors_toolkit.config import get_settings
+from tests.systems import write_system
 
 EXPECTED = {
     "get_settings",
@@ -30,6 +31,13 @@ EXPECTED = {
     "PiiVaultError",
     "PiiUnknownTokenError",
     "set_status",
+    "SystemBase",
+    "SystemUnavailable",
+    "register_system_type",
+    "select_system",
+    "system_config",
+    "system_dir",
+    "system_error",
 }
 
 
@@ -134,12 +142,12 @@ def test_a_plugin_that_replaces_a_core_tool_then_raises_restores_the_original(mo
     assert plugin_api._statuses() == {"evil": {"loaded": False, "error": "RuntimeError"}}
 
 
-def test_status_callable_error_does_not_break_list_tenants(monkeypatch):
+def test_status_callable_error_does_not_break_list_systems(monkeypatch):
     def register(mcp):
         plugin_api.set_status("example", lambda: 1 / 0)
 
     _load(monkeypatch, _EntryPoint("example", register))
-    assert mcp_server.list_tenants()["plugins"] == {
+    assert mcp_server.list_systems()["plugins"] == {
         "example": {"loaded": True, "status_error": "ZeroDivisionError"}
     }
 
@@ -149,7 +157,7 @@ def test_status_non_json_serializable_value_reports_status_error(monkeypatch):
         plugin_api.set_status("example", lambda: {"client": object()})
 
     _load(monkeypatch, _EntryPoint("example", register))
-    assert mcp_server.list_tenants()["plugins"] == {
+    assert mcp_server.list_systems()["plugins"] == {
         "example": {"loaded": True, "status_error": "PydanticSerializationError"}
     }
 
@@ -161,26 +169,25 @@ def test_status_with_values_the_sdk_serializes_is_kept(monkeypatch):
         plugin_api.set_status("example", lambda: {"expires": when, "path": Path("/x")})
 
     _load(monkeypatch, _EntryPoint("example", register))
-    assert mcp_server.list_tenants()["plugins"] == {
+    assert mcp_server.list_systems()["plugins"] == {
         "example": {"loaded": True, "expires": when, "path": Path("/x")}
     }
 
 
-def test_pii_request_resolves_the_named_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
+def test_pii_request_resolves_the_named_system(monkeypatch, tmp_path):
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
-    store = TenantStore(str(tmp_path / "tenants"))
-    store.set_production("example-a", True)
-    store.set_production("example-b", False)
-    assert plugin_api.pii_request("X", None)[0].tier == 3
-    assert plugin_api.pii_request("X", None, company_id="example-b")[0].tier == 1
+    write_system(get_settings().systems_dir, "example-a", production=True)
+    write_system(get_settings().systems_dir, "example-b")
+    assert plugin_api.pii_request("X", None, "example-a")[0].tier == 3
+    assert plugin_api.pii_request("X", None, system="example-b")[0].tier == 1
     with pytest.raises(plugin_api.PiiVaultError) as caught:
-        plugin_api.pii_request("X", None, company_id="example-c")
-    assert plugin_api.pii_error(caught.value)["error"] == "tenant_environment_unset"
+        plugin_api.pii_request("X", None, system="example-c")
+    assert plugin_api.pii_error(caught.value) == plugin_api.system_error(caught.value)
+    assert plugin_api.pii_error(caught.value)["error"] == "system_unknown"
 
 
-def test_list_tenants_reports_no_plugins_by_default():
-    assert mcp_server.list_tenants()["plugins"] == {}
+def test_list_systems_reports_no_plugins_by_default():
+    assert mcp_server.list_systems()["plugins"] == {}
 
 
 def test_main_module_delegates_to_package_module(monkeypatch):
@@ -192,14 +199,13 @@ def test_main_module_delegates_to_package_module(monkeypatch):
 
 
 def test_plugin_requests_keep_the_permissive_defaults(monkeypatch, tmp_path):
-    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
-    TenantStore(str(tmp_path / "tenants")).set_production("example-b", False)
+    write_system(get_settings().systems_dir, "example-b")
     unknown = {"__metadata": {"type": "SFOData.cust_Foo"}, "externalCode": "E1"}
     pii, path, params, _ = plugin_api.pii_request(
         "PerPersonal?$filter=nationalId ge '5'",
         {"$orderby": "dateOfBirth", "$search": "x"},
-        company_id="example-b",
+        system="example-b",
     )
     assert path == "PerPersonal?$filter=nationalId ge '5'"
     assert params == {"$orderby": "dateOfBirth", "$search": "x"}

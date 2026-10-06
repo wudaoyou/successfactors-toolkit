@@ -64,6 +64,27 @@ def test_production_locks_tier_three(store):
     assert store.config("beta").pii_filter_tier == 3
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"pii_filter_tier": "2"},
+        {"pii_filter_tier": 4},
+        {"pii_filter_tier": True},
+        {"pii_extra_fields": {"PerPersonal": {"customString6": 4}}},
+        {"pii_extra_fields": ["PerPersonal"]},
+        {"host": 1},
+        {"client_key": 123},
+        {"user_id": ["APIUSER"]},
+        {"odata_version": "v3"},
+    ],
+)
+def test_each_bad_type_is_invalid(store, bad):
+    write_system(store.base, "alpha", **bad)
+    with pytest.raises(SystemUnavailable) as info:
+        store.config("alpha")
+    assert info.value.code == "system_invalid" and next(iter(bad)) in info.value.detail
+
+
 @pytest.mark.parametrize("text", ["{not json", "[]", '"x"'])
 def test_unreadable_or_non_object_json_is_invalid(store, text):
     (store.base / "x").mkdir()
