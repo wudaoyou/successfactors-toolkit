@@ -5,15 +5,13 @@ from pydantic import ValidationError
 
 from successfactors_toolkit.config import Settings
 
-SECRET_FIELDS = ["sf_private_key_pem", "admin_api_key", "api_key"]
+SECRET_FIELDS = ["admin_api_key", "api_key"]
 
 
 @pytest.mark.parametrize("field", SECRET_FIELDS)
 def test_startup_validation_error_does_not_echo_a_secret(monkeypatch, tmp_path, field):
     # The vault/results check is a model-level error, so pydantic reports the
     # whole input dict as input_value; that is where a secret would leak.
-    monkeypatch.delenv("SF_HOST")
-    monkeypatch.delenv("TENANT_KEYS_DIR")
     secret = "leaked-synthetic-secret-0123456789"
     with pytest.raises(ValidationError) as exc:
         Settings(
@@ -31,19 +29,17 @@ def test_startup_validation_error_does_not_echo_a_secret(monkeypatch, tmp_path, 
 def test_secrets_are_masked_in_repr_and_dump():
     settings = Settings(
         _env_file=None,
-        sf_private_key_pem="pem-secret",
         admin_api_key="admin-secret",
         api_key="api-secret",
     )
     shown = repr(settings) + str(settings.model_dump())
-    for secret in ("pem-secret", "admin-secret", "api-secret"):
+    for secret in ("admin-secret", "api-secret"):
         assert secret not in shown
 
 
 @pytest.mark.parametrize(
     ("env", "field"),
     [
-        ("SF_PRIVATE_KEY_PEM", "sf_private_key_pem"),
         ("ADMIN_API_KEY", "admin_api_key"),
         ("API_KEY", "api_key"),
     ],

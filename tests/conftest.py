@@ -1,26 +1,26 @@
 """Tests run with synthetic configuration and no external sockets."""
 
+import os
 import socket
+import tempfile
 
 import pytest
+
+# main.py reads the settings at import, before any fixture runs.
+os.environ.setdefault("SYSTEMS_DIR", tempfile.mkdtemp())
 
 
 @pytest.fixture(autouse=True)
 def isolated_configuration(monkeypatch, tmp_path):
     # Never read the developer's working-directory .env or inherited SF secrets.
     monkeypatch.chdir(tmp_path)
-    import os
-
     for name in list(os.environ):
         if name.startswith(("SF_", "PII_")) or name in {
             "API_KEY",
             "ADMIN_API_KEY",
-            "TENANT_KEYS_DIR",
             "SYSTEMS_DIR",
         }:
             monkeypatch.delenv(name)
-    monkeypatch.setenv("SF_HOST", "api.example.invalid")
-    monkeypatch.setenv("TENANT_KEYS_DIR", str(tmp_path / "tenants"))
     from tests.systems import write_system
 
     monkeypatch.setenv("SYSTEMS_DIR", str(tmp_path / "systems"))

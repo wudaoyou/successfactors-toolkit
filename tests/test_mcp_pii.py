@@ -250,11 +250,11 @@ def test_ce_query_tokenize_failure_writes_nothing(monkeypatch, tmp_path):
     assert not (tmp_path / "results").exists()
 
 
-def test_main_fails_fast_on_bad_pii_settings(monkeypatch):
-    monkeypatch.setenv("PII_FILTER_TIER", "9")
+def test_main_fails_fast_without_a_systems_dir(monkeypatch):
+    monkeypatch.delenv("SYSTEMS_DIR")
     get_settings.cache_clear()
     monkeypatch.setattr(mcp_server.mcp, "run", lambda: pytest.fail("must not serve"))
-    with pytest.raises(Exception, match="pii_filter_tier"):
+    with pytest.raises(Exception, match="SYSTEMS_DIR"):
         mcp_server.main()
 
 
@@ -293,10 +293,7 @@ def test_odata_query_token_in_path_query_keeps_special_characters(monkeypatch, t
     assert params == {"$filter": "emailAddress eq 'a+b&c''s@x.com'"}
 
 
-# Tier 0 too: it only covers test systems, a production system still tokenizes.
-@pytest.mark.parametrize("tier", ["0", "1"])
-def test_main_quiets_httpx_request_logging_when_tokenizing(monkeypatch, tier):
-    monkeypatch.setenv("PII_FILTER_TIER", tier)
+def test_main_quiets_httpx_request_logging_when_tokenizing(monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setattr(mcp_server.mcp, "run", lambda: None)
     logger = logging.getLogger("httpx")

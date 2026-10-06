@@ -1,6 +1,5 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,35 +12,10 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
     )
 
-    # SAP SuccessFactors host, e.g. "api4preview.sapsf.com"
-    sf_host: str = "example.invalid"
-    # Extra hosts a per-request connection override may point at, on top of
-    # sf_host and the SAP datacenter domains. See services/connection_policy.py.
+    # Extra hosts a system file's "host" / "token_url" may name, on top of the
+    # SAP datacenter domains. See services/connection_policy.py.
     sf_allowed_hosts: list[str] = []
 
-    # ── EC SFAPI (SOAP) — OAuth2 SAML Bearer Assertion ───────────────────────
-    sf_client_key: str = ""  # API key registered in SF Admin
-    sf_user_id: str = ""  # Technical user (CN from key pair certificate)
-    sf_company_id: str = ""
-    sf_token_url: str = ""  # https://{host}/oauth/token
-    # Private key — set exactly one of the two options below:
-    sf_private_key_path: str = ""  # Path to PEM file (Docker Secret: /run/secrets/sf_private_key)
-    sf_private_key_pem: SecretStr = SecretStr("")  # Base64-encoded PEM content (for CI/CD env vars)
-
-    # ── OData ─────────────────────────────────────────────────────────────────
-    # OData and SFAPI share the same OAuth2 SAML Bearer flow against the same
-    # /oauth/token endpoint (Dev Guide §2.3). They use the SAME OAuth2 client
-    # (sf_client_key / sf_user_id / sf_company_id / sf_token_url / tenant key).
-    # Only the OData REST version is OData-specific.
-    sf_odata_version: str = "v2"
-
-    # ── Tenant management API ─────────────────────────────────────────────────
-    # Directory where per-tenant key+cert subdirectories live. Each subdirectory
-    # is named by company_id and contains exactly:
-    #   sf_private_key_<company_id>.pem    (mode 600)
-    #   sf_saml_signing_<company_id>.crt   (mode 644)
-    # Populated via POST /api/systems/{name}/keypair.
-    tenant_keys_dir: str = "./tenants"
     # One directory per system: SYSTEMS_DIR/<name>/<name>.json ("type",
     # "production", ...) beside that system's secret files.
     systems_dir: Path | None = None
@@ -56,13 +30,8 @@ class Settings(BaseSettings):
 
     # ── PII tokenization (MCP only) ───────────────────────────────────────────
     # Values of mapped fields reach the model as [PII-T<tier>-<hex>] tokens;
-    # the plaintext stays in the vault. See services/pii_filter.py.
-    # The tier for test tenants: 0 = off; N = tokenize every field whose
-    # tier <= N. Production tenants are always 3. A tenant's
-    # {tenant}/{tenant}.json can override both of these (system_store).
-    pii_filter_tier: int = Field(default=1, ge=0, le=3)
-    # Tenant-specific additions, e.g. {"PerPersonal": {"customString6": 2}}.
-    pii_extra_fields: dict[str, dict[str, Annotated[int, Field(ge=1, le=3)]]] = {}
+    # the plaintext stays in the vault. The tier and extra fields are per
+    # system, in <name>.json. See services/pii_filter.py.
     # HMAC key + token vault. Must persist, and must stay out of RESULTS_DIR
     # (the model reads that directory).
     pii_vault_dir: Path = Path("pii_vault")
@@ -92,9 +61,19 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _vault_outside_results(self) -> "Settings":
-        # Whatever PII_FILTER_TIER says: production tenants always use the vault.
+        # Production systems always use the vault.
         if self.pii_vault_dir.resolve().is_relative_to(self.results_dir.resolve()):
             raise ValueError("PII_VAULT_DIR must not be inside RESULTS_DIR")
+        return self
+
+    @model_validator(mode="after")
+    def _systems_dir_exists(self) -> "Settings":
+        if self.systems_dir is None or not self.systems_dir.is_dir():
+            raise ValueError(
+                "SYSTEMS_DIR must name an existing directory with one subdirectory per "
+                'system: <name>/<name>.json holding "type" and "production", beside '
+                "that system's key files (docs/MCP_SERVER.md)."
+            )
         return self
 
 

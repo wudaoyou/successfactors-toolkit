@@ -195,40 +195,7 @@ def test_vault_a_fresh_vault_still_works_after_the_ownership_checks(tmp_path):
     assert vault.load(["aaaaaaaaaaaaaaaa"]) == {"aaaaaaaaaaaaaaaa": "value"}
 
 
-def test_settings_default_to_tier_one(monkeypatch):
-    settings = Settings()
-    assert settings.pii_filter_tier == 1
-    assert settings.pii_extra_fields == {}
-
-
-@pytest.mark.parametrize("tier", ["-1", "4"])
-def test_settings_reject_out_of_range_tier(monkeypatch, tier):
-    monkeypatch.setenv("PII_FILTER_TIER", tier)
-    with pytest.raises(ValidationError):
-        Settings()
-
-
-def test_settings_parse_extra_fields_json(monkeypatch):
-    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"PerPersonal": {"customString6": 2}}')
-    assert Settings().pii_extra_fields == {"PerPersonal": {"customString6": 2}}
-
-
-def test_settings_reject_extra_field_tier_outside_one_to_three(monkeypatch):
-    monkeypatch.setenv("PII_EXTRA_FIELDS", '{"PerPersonal": {"customString6": 0}}')
-    with pytest.raises(ValidationError):
-        Settings()
-
-
 def test_settings_reject_vault_inside_results_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
-    monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "results" / "vault"))
-    with pytest.raises(ValidationError, match="PII_VAULT_DIR"):
-        Settings()
-
-
-def test_settings_reject_vault_inside_results_dir_even_at_tier_zero(monkeypatch, tmp_path):
-    # Production tenants are tier 3 whatever PII_FILTER_TIER says.
-    monkeypatch.setenv("PII_FILTER_TIER", "0")
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "results" / "vault"))
     with pytest.raises(ValidationError, match="PII_VAULT_DIR"):

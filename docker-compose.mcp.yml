@@ -14,17 +14,14 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    env_file:
-      - path: ./credentials/sf.env
-        format: raw
     environment:
-      TENANT_KEYS_DIR: /credentials/tenants
+      SYSTEMS_DIR: /credentials/systems
       RESULTS_DIR: /data
       PII_VAULT_DIR: /vault/store
     volumes:
       - type: bind
-        source: ./credentials/tenants
-        target: /credentials/tenants
+        source: ./credentials/systems
+        target: /credentials/systems
         read_only: true
         bind:
           create_host_path: false

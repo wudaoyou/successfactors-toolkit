@@ -102,7 +102,9 @@ def test_token_cache_key_leads_with_the_system():
 
 
 def test_key_comes_only_from_the_system_directory(monkeypatch):
-    monkeypatch.setenv("SF_PRIVATE_KEY_PEM", base64.b64encode(b"env-key").decode())
+    monkeypatch.setenv(
+        "SF_PRIVATE_KEY_PEM", base64.b64encode(b"env-key").decode()
+    )  # no longer read
     settings = get_settings()
     (settings.systems_dir / "example-a" / "private-key.pem").unlink()
     with pytest.raises(ConnectionPolicyError):
