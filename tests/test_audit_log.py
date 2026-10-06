@@ -1,7 +1,6 @@
 """Security-relevant events leave an audit line; no line ever holds a secret."""
 
 import asyncio
-import base64
 import logging
 import os
 import subprocess
@@ -25,7 +24,8 @@ from successfactors_toolkit.services.connection_policy import (
 )
 from successfactors_toolkit.services.odata_client import ODataClient
 from successfactors_toolkit.services.sfapi_client import SFAPIClient
-from tests.test_tenants import _pem_pair
+from tests.systems import write_system
+from tests.test_mcp_systems import _pem_pair
 
 LOGGER = "successfactors_toolkit.audit"
 
@@ -77,8 +77,8 @@ def test_api_key_failures_are_logged_without_the_key(monkeypatch, lines):
     monkeypatch.setenv("API_KEY", "test-api-key")
     get_settings.cache_clear()
     with TestClient(app) as client:
-        assert client.get("/api/tenants").status_code == 401
-        assert client.get("/api/tenants", headers={"X-API-Key": "guess-123"}).status_code == 401
+        assert client.get("/api/systems").status_code == 401
+        assert client.get("/api/systems", headers={"X-API-Key": "guess-123"}).status_code == 401
     assert lines() == [
         "event=auth outcome=denied scope=api reason=missing",
         "event=auth outcome=denied scope=api reason=invalid",
@@ -87,17 +87,17 @@ def test_api_key_failures_are_logged_without_the_key(monkeypatch, lines):
 
 def test_disabled_rest_api_is_logged(lines):
     with TestClient(app) as client:
-        assert client.get("/api/tenants", headers={"X-API-Key": "x"}).status_code == 503
+        assert client.get("/api/systems", headers={"X-API-Key": "x"}).status_code == 503
     assert lines() == ["event=auth outcome=denied scope=api reason=disabled"]
 
 
 def test_admin_key_failures_are_logged_without_the_key(admin, lines):
     api_only = {"X-API-Key": admin["X-API-Key"]}
     with TestClient(app) as client:
-        assert client.get("/api/tenants", headers=api_only).status_code == 401
+        assert client.get("/api/systems", headers=api_only).status_code == 401
         wrong = {**api_only, "X-Admin-Key": "guess-456"}
-        assert client.get("/api/tenants", headers=wrong).status_code == 401
-        assert client.get("/api/tenants", headers=admin).status_code == 200
+        assert client.get("/api/systems", headers=wrong).status_code == 401
+        assert client.get("/api/systems", headers=admin).status_code == 200
     assert lines() == [
         "event=auth outcome=denied scope=admin reason=missing",
         "event=auth outcome=denied scope=admin reason=invalid",
@@ -108,14 +108,14 @@ def test_disabled_admin_api_is_logged(monkeypatch, lines):
     monkeypatch.setenv("API_KEY", "test-api-key")
     get_settings.cache_clear()
     with TestClient(app) as client:
-        assert client.get("/api/tenants", headers={"X-API-Key": "test-api-key"}).status_code == 503
+        assert client.get("/api/systems", headers={"X-API-Key": "test-api-key"}).status_code == 503
     assert lines() == ["event=auth outcome=denied scope=admin reason=disabled"]
 
 
 def test_key_install_and_delete_are_logged_without_key_material(admin, lines):
     pair = _pem_pair()
     with TestClient(app) as client:
-        url = "/api/tenants/example-a"
+        url = "/api/systems/example-a"
         assert client.post(f"{url}/keypair", headers=admin, files=_upload(pair)).status_code == 201
         assert client.post(f"{url}/keypair", headers=admin, files=_upload(pair)).status_code == 409
         forced = client.post(f"{url}/keypair?force=true", headers=admin, files=_upload(pair))
@@ -125,45 +125,39 @@ def test_key_install_and_delete_are_logged_without_key_material(admin, lines):
         assert client.delete(url, headers=admin).status_code == 204
         assert client.delete(url, headers=admin).status_code == 404
     assert lines() == [
-        "event=key_install outcome=ok company_id=example-a force=false",
-        "event=key_install outcome=failed company_id=example-a code=tenant_already_exists",
-        "event=key_install outcome=ok company_id=example-a force=true",
-        "event=key_install outcome=failed company_id=example-a code=invalid_private_key",
-        "event=key_delete outcome=ok company_id=example-a",
-        "event=key_delete outcome=failed company_id=example-a code=tenant_not_found",
+        "event=key_install outcome=ok system=example-a force=false",
+        "event=key_install outcome=failed system=example-a code=keypair_already_exists",
+        "event=key_install outcome=ok system=example-a force=true",
+        "event=key_install outcome=failed system=example-a code=invalid_private_key",
+        "event=key_delete outcome=ok system=example-a",
+        "event=key_delete outcome=failed system=example-a code=system_not_found",
     ]
     assert not any("PRIVATE KEY" in line or "CERTIFICATE" in line for line in lines())
 
 
 def test_production_flag_changes_are_logged_with_the_previous_value(admin, lines):
     with TestClient(app) as client:
-        client.post("/api/tenants/example-a/keypair", headers=admin, files=_upload(_pem_pair()))
-        url = "/api/tenants/example-a/environment"
+        url = "/api/systems/example-a/environment"
         assert client.put(url, headers=admin, json={"production": True}).status_code == 200
         assert client.put(url, headers=admin, json={"production": False}).status_code == 200
         assert (
             client.put(
-                "/api/tenants/nope/environment", headers=admin, json={"production": True}
+                "/api/systems/nope/environment", headers=admin, json={"production": True}
             ).status_code
             == 404
         )
-    assert lines()[1:] == [
-        "event=production_flag outcome=ok company_id=example-a previous=unset production=true",
-        "event=production_flag outcome=ok company_id=example-a previous=true production=false",
-        "event=production_flag outcome=failed company_id=nope code=tenant_not_found",
+    assert lines() == [
+        "event=production_flag outcome=ok system=example-a previous=false production=true",
+        "event=production_flag outcome=ok system=example-a previous=true production=false",
+        "event=production_flag outcome=failed system=nope code=system_not_found",
     ]
 
 
 @pytest.fixture
-def settings(tmp_path):
-    return Settings(
-        _env_file=None,
-        sf_host="api.example.invalid",
-        sf_company_id="demo",
-        sf_client_key="configured-key",
-        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
-        tenant_keys_dir=str(tmp_path / "tenants"),
-    )
+def settings():
+    settings = Settings(_env_file=None)
+    write_system(settings.systems_dir, "example-a", client_key="configured-key")
+    return settings
 
 
 def test_rejected_overrides_are_logged_by_field_not_by_value(settings, tmp_path, lines):
@@ -178,27 +172,22 @@ def test_rejected_overrides_are_logged_by_field_not_by_value(settings, tmp_path,
         with pytest.raises(ConnectionPolicyError):
             client._resolve(conn)
     with pytest.raises(ConnectionPolicyError):  # what saml_bearer.fetch_token runs
-        check_token_url("https://evil.invalid/oauth/token", settings, "demo")
+        check_token_url("https://evil.invalid/oauth/token", settings, "example-a")
     assert lines() == [
-        "event=connection_override outcome=denied company_id=demo field=host",
-        "event=connection_override outcome=denied company_id=demo field=private_key_path",
-        "event=connection_override outcome=denied company_id=demo field=client_key",
-        "event=connection_override outcome=denied company_id=demo field=token_url",
+        "event=connection_override outcome=denied system=example-a field=host",
+        "event=connection_override outcome=denied system=example-a field=private_key_path",
+        "event=connection_override outcome=denied system=example-a field=client_key",
+        "event=connection_override outcome=denied system=example-a field=token_url",
     ]
     assert not any("evil" in line or "secret-name" in line for line in lines())
 
 
-def _write_tenant_file(settings, text):
-    tenant = Path(settings.tenant_keys_dir) / "demo"
-    tenant.mkdir(parents=True)
-    (tenant / "demo.json").write_text(text)
+def _write_system_file(settings, **fields):
+    write_system(settings.systems_dir, "example-a", **fields)
 
 
 def test_a_bad_configured_value_is_a_config_failure_not_a_refused_override(settings, lines):
-    _write_tenant_file(
-        settings,
-        '{"production": false, "host": "evil.invalid", "token_url": "https://evil.invalid/oauth/token"}',
-    )
+    _write_system_file(settings, host="evil.invalid", token_url="https://evil.invalid/oauth/token")
     for client in (ODataClient(settings, None), SFAPIClient(settings, None)):
         with pytest.raises(ConnectionPolicyError):
             client._resolve(None)
@@ -206,17 +195,14 @@ def test_a_bad_configured_value_is_a_config_failure_not_a_refused_override(setti
     with pytest.raises(ConnectionPolicyError):
         ODataClient(settings, None)._resolve(ODataConnectionConfig(host="evil.invalid"))
     assert lines() == [
-        "event=connection_config outcome=failed company_id=demo field=host",
-        "event=connection_config outcome=failed company_id=demo field=host",
-        "event=connection_override outcome=denied company_id=demo field=host",
+        "event=connection_config outcome=failed system=example-a field=host",
+        "event=connection_config outcome=failed system=example-a field=host",
+        "event=connection_override outcome=denied system=example-a field=host",
     ]
 
 
 def test_token_url_denials_say_whether_the_request_or_the_config_supplied_it(settings, lines):
-    _write_tenant_file(
-        settings,
-        '{"production": false, "host": "api4preview.sapsf.com", "token_url": "https://evil.invalid/t"}',
-    )
+    _write_system_file(settings, host="api4preview.sapsf.com", token_url="https://evil.invalid/t")
 
     async def run():
         odata, sfapi = ODataClient(settings, None), SFAPIClient(settings, None)
@@ -228,8 +214,8 @@ def test_token_url_denials_say_whether_the_request_or_the_config_supplied_it(set
                 await sfapi._login(sfapi._resolve(conn))
 
     asyncio.run(run())
-    config = "event=connection_config outcome=failed company_id=demo field=token_url"
-    override = "event=connection_override outcome=denied company_id=demo field=token_url"
+    config = "event=connection_config outcome=failed system=example-a field=token_url"
+    override = "event=connection_override outcome=denied system=example-a field=token_url"
     # A denied token_url is never also logged as an accepted override.
     assert lines() == [config, override, config, override]
 
@@ -243,7 +229,7 @@ def test_denied_token_url_override_is_refused_with_a_warm_token_cache(settings, 
     with pytest.raises(ConnectionPolicyError):
         sfapi._resolve(SFAPIConnectionConfig(token_url="https://evil.invalid/t"))
     assert (
-        lines() == ["event=connection_override outcome=denied company_id=demo field=token_url"] * 2
+        lines() == ["event=connection_override outcome=denied system=example-a field=token_url"] * 2
     )
 
 
@@ -252,13 +238,17 @@ def test_accepted_overrides_are_logged_by_field_name_only(settings, lines):
     sfapi = SFAPIClient(settings, None)
     # Repeating what is configured is not an override.
     odata._resolve(ODataConnectionConfig(host="api.example.invalid", client_key="configured-key"))
-    sfapi._resolve(SFAPIConnectionConfig(company_id="demo"))
+    sfapi._resolve(SFAPIConnectionConfig(system="example-a"))
     assert lines() == []
-    odata._resolve(ODataConnectionConfig(host="api4preview.sapsf.com", user_id="SOMEONE"))
+    odata._resolve(
+        ODataConnectionConfig(
+            host="api4preview.sapsf.com", token_url="https://api4preview.sapsf.com/oauth/token"
+        )
+    )
     sfapi._resolve(SFAPIConnectionConfig(host="api4preview.sapsf.com"))
     assert lines() == [
-        "event=connection_override outcome=ok company_id=demo fields=host,user_id",
-        "event=connection_override outcome=ok company_id=demo fields=host",
+        "event=connection_override outcome=ok system=example-a fields=host,token_url",
+        "event=connection_override outcome=ok system=example-a fields=host",
     ]
 
 
@@ -269,10 +259,13 @@ def test_a_rejected_rest_override_is_logged(monkeypatch, lines):
         response = client.post(
             "/api/odata/execute",
             headers={"X-API-Key": "test-api-key"},
-            json={"path": "User", "connection": {"company_id": "demo", "host": "evil.invalid"}},
+            json={
+                "path": "User",
+                "connection": {"system": "example-a", "host": "evil.invalid"},
+            },
         )
     assert response.status_code == 400
-    assert lines() == ["event=connection_override outcome=denied company_id=demo field=host"]
+    assert lines() == ["event=connection_override outcome=denied system=example-a field=host"]
 
 
 def test_a_refused_sf_token_request_is_logged_without_the_assertion(settings, lines):
@@ -312,10 +305,11 @@ def test_audit_lines_reach_stderr_and_never_stdout():
 def test_mcp_stdio_keeps_audit_lines_off_the_protocol_stream(tmp_path):
     """A denied connection in MCP mode is logged on stderr; stdout stays JSON-RPC."""
     root = Path(__file__).resolve().parents[1]
-    tenant = tmp_path / "tenants" / "demo"
-    tenant.mkdir(parents=True)
-    (tenant / "demo.json").write_text(
-        '{"production": false, "host": "evil.invalid", "token_url": "https://evil.invalid/oauth/token"}'
+    write_system(
+        tmp_path / "systems",
+        "demo",
+        host="evil.invalid",
+        token_url="https://evil.invalid/oauth/token",
     )
     errlog = tmp_path / "stderr.txt"
 
@@ -328,8 +322,7 @@ def test_mcp_stdio_keeps_audit_lines_off_the_protocol_stream(tmp_path):
         env.update(
             {
                 "PYTHONPATH": str(root),
-                "SF_HOST": "api.example.invalid",
-                "TENANT_KEYS_DIR": str(tmp_path / "tenants"),
+                "SYSTEMS_DIR": str(tmp_path / "systems"),
             }
         )
         server = StdioServerParameters(
@@ -342,10 +335,10 @@ def test_mcp_stdio_keeps_audit_lines_off_the_protocol_stream(tmp_path):
             async with stdio_client(server, errlog=err) as (read, write):
                 async with ClientSession(read, write, read_timeout_seconds=15) as session:
                     await session.initialize()
-                    result = await session.call_tool("odata_metadata", {"company_id": "demo"})
+                    result = await session.call_tool("odata_metadata", {"system": "demo"})
                     assert result.is_error
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=60))
-    # The bad host is in the tenant's file, not in a request: a config failure.
-    assert "event=connection_config outcome=failed company_id=demo field=host" in errlog.read_text()
+    # The bad host is in the system file, not in a request: a config failure.
+    assert "event=connection_config outcome=failed system=demo field=host" in errlog.read_text()
     assert "event=connection_override" not in errlog.read_text()

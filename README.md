@@ -43,8 +43,8 @@ Ask IT to complete the one-time Docker Compose setup and provide approved
 connection files. Then:
 
 1. Check Docker Desktop or your IT-managed Docker service is running, then open your local AI application.
-2. Confirm with IT that the connection files are in `sf-toolkit/credentials`.
-3. Confirm the SuccessFactors environment and ask for the employee, date,
+2. Confirm with IT that the connection files are in `sf-toolkit/credentials/systems`, one folder per SuccessFactors system.
+3. Confirm which SuccessFactors system to use and ask for the employee, date,
    and information you need.
 4. Find results under `sf-toolkit/data/mcp`. Ask a file-capable AI application
    for CSV or another supported format, or a copy in an authorized folder.
@@ -59,7 +59,7 @@ CSV conversion requires local file tools in the AI application.
 | Page | Covers |
 |---|---|
 | [REST API](docs/REST_API.md) | Fail-closed setup, install and run, cheat sheet, response format |
-| [Connect to SuccessFactors](docs/CONNECT.md) | Key pair generation, environment variables, private key resolution order, tenant management |
+| [Connect to SuccessFactors](docs/CONNECT.md) | Key pair generation, system files (`SYSTEMS_DIR/<name>/<name>.json`), environment variables, system management |
 | [EC SFAPI (SOAP)](docs/SFAPI.md) | Compound Employee single lookup, structured filter query, pagination, known footguns |
 | [OData API](docs/ODATA.md) | `execute` / `extract` / `extract-by-filter-in`, OData v4 services, per-request connection override, known API footguns |
 | [MCP server](docs/MCP_SERVER.md) | Tools for AI agents, payload handling, export formats, PII tokenization, plugins |

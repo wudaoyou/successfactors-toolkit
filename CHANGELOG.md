@@ -4,6 +4,51 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-06
+
+### Changed
+
+- **Breaking:** every system is configured by one directory,
+  `SYSTEMS_DIR/<name>/`, holding `<name>.json` (`type`, `production`, and for
+  `successfactors` systems `company_id`, `host`, `token_url`, `client_key`,
+  `user_id`, optional `odata_version`, `pii_filter_tier`,
+  `pii_extra_fields`) plus `private-key.pem` and `signing-cert.crt`. A file
+  without a valid `type` or `production` is refused. `SYSTEMS_DIR` is
+  required at startup.
+- **Breaking:** MCP `list_tenants` is now `list_systems`; tools take `system`
+  (the directory name) instead of `company_id`, and `compare_metadata` takes
+  `system_a`/`system_b`. An empty `system` means the only `successfactors`
+  system; with several, the call is refused with `system_required`.
+- **Breaking:** errors `system_unknown`, `system_required`,
+  `system_unsupported` and `system_invalid` replace `tenant_environment_unset`
+  and `tenant_config_invalid`.
+- **Breaking:** the REST tenant API moved to `/api/systems/{name}`; key upload
+  needs an existing `successfactors` system file. Connection overrides take
+  `system` instead of `company_id`.
+- `docker-compose.mcp.yml` has no `env_file`: it mounts `credentials/systems`
+  read-only as `SYSTEMS_DIR`, and kept settings such as `SF_ALLOWED_HOSTS`
+  reach the container only through the service's `environment:` block.
+- Audit lines carry `system=` instead of `company_id=`; `sf_token` events
+  keep `company_id`.
+- `host` and `token_url` in a system file pass the host policy: a host outside
+  the SAP datacenter domains needs `SF_ALLOWED_HOSTS`.
+- REST error codes for `/api/systems`: `system_not_found` (404),
+  `keypair_already_exists` (409), `wrong_system_type` (400). `DELETE` removes
+  the system's whole directory.
+- `scripts/download_employee.py` takes `--system` instead of `--company-id`.
+- PII tokens are bound to the system name; tokens issued by earlier versions
+  no longer resolve. A test system's default tier is 1.
+- Plugins can register system types (`plugin_api.register_system_type`) and
+  read their systems (`select_system`, `system_config`, `system_dir`).
+
+### Removed
+
+- `TENANT_KEYS_DIR`, `SF_HOST`, `SF_COMPANY_ID`, `SF_CLIENT_KEY`,
+  `SF_USER_ID`, `SF_TOKEN_URL`, `SF_ODATA_VERSION`, `SF_PRIVATE_KEY_PEM`,
+  `SF_PRIVATE_KEY_PEM_<COMPANY_ID>`, `SF_PRIVATE_KEY_PATH`,
+  `PII_FILTER_TIER` and `PII_EXTRA_FIELDS`. `SF_ALLOWED_HOSTS` stays. Startup
+  refuses while any of them is set in the environment or `.env`; before, they were ignored.
+
 ## [0.5.5] - 2026-10-02
 
 ### Changed

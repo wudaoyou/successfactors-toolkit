@@ -4,8 +4,6 @@ import os
 import sqlite3
 import stat
 
-import pytest
-
 from successfactors_toolkit import pii_reveal
 from successfactors_toolkit.config import get_settings
 from successfactors_toolkit.services.pii_filter import Vault
@@ -104,11 +102,8 @@ def test_reveal_without_a_vault_fails_and_creates_none(monkeypatch, tmp_path):
     assert not (tmp_path / "missing").exists()
 
 
-@pytest.mark.parametrize(
-    ("name", "value"), [("PII_FILTER_TIER", "9"), ("PII_EXTRA_FIELDS", "{bad")]
-)
-def test_reveal_exits_2_on_invalid_settings(monkeypatch, tmp_path, capsys, name, value):
-    monkeypatch.setenv(name, value)
+def test_reveal_exits_2_on_invalid_settings(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("SYSTEMS_DIR")
     get_settings.cache_clear()
     report = tmp_path / "report.md"
     report.write_text("x", encoding="utf-8")

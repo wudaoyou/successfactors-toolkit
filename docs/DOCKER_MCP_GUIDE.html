@@ -415,7 +415,7 @@ check in step 3. The exact settings screen depends on your AI
 application.</p>
 <h2 id="put-the-connection-files-in-the-right-folder">2. Confirm the
 connection files are in place</h2>
-<p>Ask IT to confirm that the supplied files are in the <code>credentials</code> folder inside <code>sf-toolkit</code>, using the correct names and company ID. You do not need to open or edit these files.</p>
+<p>Ask IT to confirm that the supplied files are in the <code>credentials</code> folder inside <code>sf-toolkit</code>, using the correct system name. You do not need to open or edit these files.</p>
 <ul>
 <li><code>credentials</code>: connection settings and security files.
 Keep these private.</li>
@@ -522,8 +522,8 @@ file may contain only part of the requested data. Ask the AI to explain
 any incomplete result before using it in a report.</p>
 <h3 id="revealing-pii-in-a-saved-report">Revealing PII in a saved
 report</h3>
-<p>Fields in tiers 1 through <code>PII_FILTER_TIER</code> (all three
-tiers for a production tenant) are tokenized before the AI ever sees them, so a report it writes under
+<p>Fields in tiers 1 through the system’s <code>pii_filter_tier</code>
+(default 1; all three tiers for a production system) are tokenized before the AI ever sees them, so a report it writes under
 <code>sf-toolkit/data/mcp</code> contains tokens, not plaintext. To
 restore plaintext, run the reveal command from <code>~/sf-toolkit</code>
 (where <code>compose.yaml</code> lives) against the file inside the
@@ -570,16 +570,19 @@ destination folder in your AI application.</td>
 Docker.” Check <code>sf-toolkit/data/mcp</code>.</td>
 </tr>
 <tr class="even">
-<td>Results say <code>tenant_environment_unset</code></td>
-<td>The environment has not been declared as production or test, so
-queries are refused. Ask IT to create <code>&lt;company ID&gt;.json</code>
-for that company ID (setup step B).</td>
+<td>Results say <code>system_invalid</code></td>
+<td>The environment’s settings file is missing <code>type</code> or
+<code>production</code>, or has a wrong or misspelled entry, so queries
+are refused. Ask IT to fix the field named in the message (setup step
+B).</td>
 </tr>
 <tr class="odd">
-<td>Results say <code>tenant_config_invalid</code></td>
-<td>The environment’s settings file has a wrong or misspelled entry, so
-queries are refused. Ask IT to fix the field named in the message (setup
-step B).</td>
+<td>Results say <code>system_unknown</code>, <code>system_required</code>
+or <code>system_unsupported</code></td>
+<td>The system name is not one of the folders under
+<code>credentials/systems</code>, several systems exist and none was
+named, or the file’s <code>type</code> is not supported. Ask the AI to
+call <code>list_systems</code> and name one of the systems it lists.</td>
 </tr>
 <tr class="even">
 <td>Results say <code>pii_vault_unavailable</code></td>
@@ -665,7 +668,7 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
 <code>501:20</code>.</p>
 <pre class="yaml"><code>services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.5.5
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.6.0
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
@@ -679,17 +682,14 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    env_file:
-      - path: ./credentials/sf.env
-        format: raw
     environment:
-      TENANT_KEYS_DIR: /credentials/tenants
+      SYSTEMS_DIR: /credentials/systems
       RESULTS_DIR: /data
       PII_VAULT_DIR: /vault/store
     volumes:
       - type: bind
-        source: ./credentials/tenants
-        target: /credentials/tenants
+        source: ./credentials/systems
+        target: /credentials/systems
         read_only: true
         bind:
           create_host_path: false
@@ -707,6 +707,11 @@ Replace <code>YOUR_UID:YOUR_GID</code> with the output of
 volumes:
   pii_vault:
     name: sf-toolkit-pii-vault</code></pre>
+<p>Settings such as <code>SF_ALLOWED_HOSTS</code>,
+<code>REQUEST_TIMEOUT</code> or <code>RESULTS_RETENTION_DAYS</code> reach
+the container only through the service’s <code>environment:</code> block;
+there is no env file. Connection settings do not go there: they live in
+each system’s <code>&lt;name&gt;.json</code> (step B).</p>
 <p>The AI client starts this service with Docker Compose using the AI client connection settings below.
 Compose automatically obtains the pinned release image when needed. No
 separate image download, source checkout, Python installation, or local
@@ -718,19 +723,21 @@ check that <code>odata_query</code> results carry
 <code>pii_filter_tier</code>.</p>
 <h3 id="b.-connection-files">B. Connection files</h3>
 <p>Create a working directory outside the repository:</p>
-<pre class="sh"><code>mkdir -p &quot;$HOME/sf-toolkit/credentials/tenants/demo&quot; &quot;$HOME/sf-toolkit/data&quot;
+<pre class="sh"><code>mkdir -p &quot;$HOME/sf-toolkit/credentials/systems/demo&quot; &quot;$HOME/sf-toolkit/data&quot;
 chmod 700 &quot;$HOME/sf-toolkit/credentials&quot;</code></pre>
-<p>Use this layout. Replace <code>demo</code> with your actual company
-ID consistently in folder names, filenames, and configuration.</p>
+<p>Each SuccessFactors environment is a system: one folder under
+<code>credentials/systems</code>. Use this layout. Replace
+<code>demo</code> with a name of your choice (lowercase letters, digits,
+<code>_</code> and <code>-</code>) consistently in the folder name and
+file name.</p>
 <pre class="text"><code>~/sf-toolkit/
 ├── compose.yaml
 ├── credentials/
-│   ├── sf.env
-│   └── tenants/
+│   └── systems/
 │       └── demo/
-│           ├── sf_private_key_demo.pem
-│           ├── sf_saml_signing_demo.crt
-│           └── demo.json
+│           ├── demo.json
+│           ├── private-key.pem
+│           └── signing-cert.crt
 └── data/
     └── mcp/                      # Created on the first export</code></pre>
 <p>Place your matching PEM private key and X.509 certificate in this
@@ -744,64 +751,49 @@ SuccessFactors</a>. Use <code>scripts/generate-keypair.sh</code>, then
 register the certificate in SF. Placing files manually does not run the
 REST upload endpoint’s key-pair and expiry validation; verify that the
 files match and the certificate is valid.</p>
-<p>Declare whether the environment is production. The container mounts
-<code>tenants</code> read-only, so create the file on the host, with
-<code>true</code> for production or <code>false</code> for a test
-environment:</p>
-<pre class="sh"><code>printf &#39;{&quot;production&quot;: true}\n&#39; &gt; &quot;$HOME/sf-toolkit/credentials/tenants/demo/demo.json&quot;</code></pre>
+<p>Create <code>demo.json</code> with the connection settings. The
+container mounts <code>systems</code> read-only, so create the file on
+the host. Set <code>production</code> to <code>true</code> for a
+production environment or <code>false</code> for a test environment
+(without quotes):</p>
+<pre class="sh"><code>cat &gt; &quot;$HOME/sf-toolkit/credentials/systems/demo/demo.json&quot; &lt;&lt;&#39;EOF&#39;
+{
+  &quot;type&quot;: &quot;successfactors&quot;,
+  &quot;production&quot;: false,
+  &quot;company_id&quot;: &quot;demo&quot;,
+  &quot;host&quot;: &quot;your-api-host.sapsf.com&quot;,
+  &quot;token_url&quot;: &quot;https://your-api-host.sapsf.com/oauth/token&quot;,
+  &quot;client_key&quot;: &quot;REPLACE_WITH_OAUTH_CLIENT_API_KEY&quot;,
+  &quot;user_id&quot;: &quot;APIUSER&quot;
+}
+EOF</code></pre>
+<p><code>company_id</code> is the SuccessFactors company ID.
+<code>host</code> excludes <code>https://</code>; <code>token_url</code>
+includes the scheme and <code>/oauth/token</code>. Follow the project’s
+convention that the technical user matches the certificate CN. Optional
+keys are <code>odata_version</code> (<code>v2</code> by default, or
+<code>v4</code>), <code>pii_filter_tier</code> and
+<code>pii_extra_fields</code>; see <a
+href="CONNECT.md#2-create-the-system">Connect to SuccessFactors</a> for
+the full list. A file without a valid <code>type</code> or
+<code>production</code>, or with a misspelled entry, makes the queries
+refuse the environment with <code>system_invalid</code>, naming the
+field.</p>
 <p>A production environment always gets the strictest PII tokenization
-(tier 3, names included), whatever <code>PII_FILTER_TIER</code> says. A
-test environment uses <code>PII_FILTER_TIER</code>. Without this file,
-<code>odata_query</code> and <code>ce_query</code> refuse the environment
-with <code>tenant_environment_unset</code>. The value must be
-<code>true</code> or <code>false</code> without quotes. Version 0.3.3
-called this file <code>tenant.json</code>; rename an existing one to
-<code>demo.json</code>, since the old name is no longer read.</p>
-<p>The same file can also hold settings that differ per environment:
-<code>client_key</code>, <code>user_id</code>, <code>host</code> with
-<code>token_url</code>, <code>odata_version</code>,
-<code>pii_filter_tier</code> (test environments only) and
-<code>pii_extra_fields</code>. Each one replaces the matching
-<code>sf.env</code> value for that company ID only. A misspelled or wrong
-entry makes the queries refuse the environment with
-<code>tenant_config_invalid</code>, naming the field. See <a
-href="CONNECT.md#per-tenant-settings">Per-tenant settings</a> for the full
-list.</p>
+(tier 3, names included). A test environment uses its
+<code>pii_filter_tier</code>, default 1 (0 off to 3 most aggressive).</p>
 <p>One MCP server can serve several environments this way. For a second
-environment <code>demo2</code> that uses its own OAuth client and tier 2,
-add a folder next to <code>demo</code> with its key, certificate and
-settings file; no second compose service is needed:</p>
-<pre class="sh"><code>mkdir -p &quot;$HOME/sf-toolkit/credentials/tenants/demo2&quot;
-# Add sf_private_key_demo2.pem and sf_saml_signing_demo2.crt, then:
-printf &#39;{&quot;production&quot;: false, &quot;client_key&quot;: &quot;DEMO2_OAUTH_CLIENT_API_KEY&quot;, &quot;pii_filter_tier&quot;: 2}\n&#39; \
-  &gt; &quot;$HOME/sf-toolkit/credentials/tenants/demo2/demo2.json&quot;</code></pre>
-<p>The AI then passes <code>company_id=&quot;demo2&quot;</code> to reach it;
-<code>list_tenants</code> shows both environments with their effective
-settings.</p>
-<p>Create <code>~/sf-toolkit/credentials/sf.env</code> with your
-connection settings:</p>
-<pre class="dotenv"><code>SF_HOST=your-api-host.sapsf.com
-SF_CLIENT_KEY=REPLACE_WITH_OAUTH_CLIENT_API_KEY
-SF_USER_ID=APIUSER
-SF_COMPANY_ID=demo
-SF_TOKEN_URL=https://your-api-host.sapsf.com/oauth/token
-SF_ODATA_VERSION=v2
-TENANT_KEYS_DIR=/credentials/tenants
-RESULTS_DIR=/data
-PII_VAULT_DIR=/vault/store
-# Optional: raise or lower PII tokenization for test environments
-# (0 off - 3 most aggressive); default 1. Production is always 3.
-# PII_FILTER_TIER=1
-# Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
-# PII_EXTRA_FIELDS={&quot;PerPersonal&quot;: {&quot;customString6&quot;: 2}}</code></pre>
-<p><code>SF_HOST</code> excludes <code>https://</code>;
-<code>SF_TOKEN_URL</code> includes the scheme and
-<code>/oauth/token</code>. Follow the project’s convention that the
-technical user matches the certificate CN. Enter literal values in the
-environment file; do not rely on <code>$VARIABLE</code> expansion.</p>
+environment <code>demo2</code> with its own OAuth client and tier 2, add
+a folder next to <code>demo</code> with its key, certificate and settings
+file; no second compose service is needed:</p>
+<pre class="sh"><code>mkdir -p &quot;$HOME/sf-toolkit/credentials/systems/demo2&quot;
+# Add private-key.pem and signing-cert.crt, then create demo2.json like demo.json,
+# with &quot;client_key&quot;: &quot;DEMO2_OAUTH_CLIENT_API_KEY&quot; and &quot;pii_filter_tier&quot;: 2.</code></pre>
+<p>The AI then passes <code>system=&quot;demo2&quot;</code> to reach it;
+<code>list_systems</code> shows both environments. With one
+SuccessFactors system, <code>system</code> can stay empty.</p>
 <p>Set file permissions:</p>
-<pre class="sh"><code>chmod 600 &quot;$HOME/sf-toolkit/credentials/sf.env&quot; \
-  &quot;$HOME/sf-toolkit/credentials/tenants/demo/sf_private_key_demo.pem&quot;</code></pre>
+<pre class="sh"><code>chmod 600 &quot;$HOME/sf-toolkit/credentials/systems/demo/private-key.pem&quot;</code></pre>
 <p>This workflow starts MCP directly over stdio. <code>API_KEY</code>
 and <code>ADMIN_API_KEY</code> control REST access and are not required
 here.</p>
@@ -835,7 +827,7 @@ absolute executable path from <code>command -v docker</code>.</p>
 <p>The UID/GID in <code>compose.yaml</code> lets the container read the
 key and write exports as their owner. Create the credential and data
 directories first and allow Docker Desktop to share them. The client
-should discover <code>list_tenants</code>, <code>odata_metadata</code>,
+should discover <code>list_systems</code>, <code>odata_metadata</code>,
 <code>compare_metadata</code>, <code>odata_query</code>, and
 <code>ce_query</code>.</p>
 </details>
@@ -897,7 +889,7 @@ IT。完成后，日常使用不需要重复输入启动命令。</p>
 连接可用，或能回答第三步的连接检查。具体设置界面取决于所用 AI 应用。</p>
 <h2 id="zh-business-确认连接文件已就位">2.
 确认连接文件已就位</h2>
-<p>请 IT 确认文件已放入 sf-toolkit 下的 credentials 文件夹，文件名和 company ID 正确。你不需要打开或编辑这些文件。</p>
+<p>请 IT 确认文件已放入 sf-toolkit 下的 credentials 文件夹，系统名称正确。你不需要打开或编辑这些文件。</p>
 <ul>
 <li>credentials：连接参数和安全文件，请保密。</li>
 <li>data：查询结果和导出文件，是日常工作要使用的目录。</li>
@@ -979,8 +971,8 @@ data/mcp；若要改变今后的默认目录，请 IT 调整设置。</p>
 环境、日期范围、字段、记录数，以及查询是否完整结束。文件已生成不代表数据完整；如有缺失或限制，先让
 AI 解释再用于报告。</p>
 <h3 id="zh-business-还原已保存报告中的pii">还原已保存报告中的 PII</h3>
-<p>第 1 至 <code>PII_FILTER_TIER</code>
-层（生产环境为全部三层）的字段会在 AI 看到之前完成脱敏，因此它保存到
+<p>第 1 至该系统 <code>pii_filter_tier</code>
+层（默认 1；生产环境为全部三层）的字段会在 AI 看到之前完成脱敏，因此它保存到
 <code>sf-toolkit/data/mcp</code>
 下的报告只包含 token，不含明文。如需还原明文，请在
 <code>~/sf-toolkit</code>（<code>compose.yaml</code>
@@ -1024,14 +1016,13 @@ AI 解释再用于报告。</p>
 sf-toolkit/data/mcp。</td>
 </tr>
 <tr class="even">
-<td>结果显示 <code>tenant_environment_unset</code></td>
-<td>尚未声明该环境是生产还是测试，因此查询被拒绝。请 IT 为该公司 ID 创建
-<code>&lt;公司 ID&gt;.json</code>（见安装步骤二）。</td>
+<td>结果显示 <code>system_invalid</code></td>
+<td>该环境的设置文件缺少 <code>type</code> 或 <code>production</code>，或有写错或拼错的项，因此查询被拒绝。请 IT
+修正消息中指出的字段（见安装步骤二）。</td>
 </tr>
 <tr class="odd">
-<td>结果显示 <code>tenant_config_invalid</code></td>
-<td>该环境的设置文件中有写错或拼错的项，因此查询被拒绝。请 IT
-修正消息中指出的字段（见安装步骤二）。</td>
+<td>结果显示 <code>system_unknown</code>、<code>system_required</code> 或 <code>system_unsupported</code></td>
+<td>系统名称不是 <code>credentials/systems</code> 下的任何一个目录，或存在多个系统但未指定，或文件的 <code>type</code> 不受支持。请让 AI 调用 <code>list_systems</code>，并从中选择一个系统名称。</td>
 </tr>
 <tr class="even">
 <td>结果显示 <code>pii_vault_unavailable</code></td>
@@ -1094,7 +1085,7 @@ AI 应用中验证。</p>
 文件；用获准的配置替换所有示例值，并在交付前完成小范围查询测试。</p>
 <details><summary>展开连接参数与可复制配置</summary><h3 id="zh-一准备-docker-镜像">一、配置 Docker Compose</h3><p>使用 Docker Compose 2.30.0 或更新版本。创建 <code>~/sf-toolkit</code>，将以下内容保存为其中的 <code>compose.yaml</code>。把 <code>YOUR_UID:YOUR_GID</code> 替换为 <code>id -u</code> 与 <code>id -g</code> 的输出，例如 <code>501:20</code>。</p><pre class="yaml"><code>services:
   mcp:
-    image: docker.io/wudaoyou/successfactors-toolkit:v0.5.5
+    image: docker.io/wudaoyou/successfactors-toolkit:v0.6.0
     command: [&quot;python&quot;, &quot;-m&quot;, &quot;successfactors_toolkit.mcp_server&quot;]
     user: &quot;YOUR_UID:YOUR_GID&quot;
     stdin_open: true
@@ -1108,17 +1099,14 @@ AI 应用中验证。</p>
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    env_file:
-      - path: ./credentials/sf.env
-        format: raw
     environment:
-      TENANT_KEYS_DIR: /credentials/tenants
+      SYSTEMS_DIR: /credentials/systems
       RESULTS_DIR: /data
       PII_VAULT_DIR: /vault/store
     volumes:
       - type: bind
-        source: ./credentials/tenants
-        target: /credentials/tenants
+        source: ./credentials/systems
+        target: /credentials/systems
         read_only: true
         bind:
           create_host_path: false
@@ -1137,25 +1125,25 @@ volumes:
   pii_vault:
     name: sf-toolkit-pii-vault
 </code></pre>
+<p><code>SF_ALLOWED_HOSTS</code>、<code>REQUEST_TIMEOUT</code>、<code>RESULTS_RETENTION_DAYS</code> 等设置只能通过服务的 <code>environment:</code> 段传入容器，没有 env 文件。连接参数不放在这里，而是写在各系统的 <code>&lt;name&gt;.json</code> 中（步骤二）。</p>
 <p>按下方客户端配置，由 AI 客户端通过 Compose 启动 MCP，Compose 自动获取固定版本镜像。无需单独下载镜像、获取源码、安装 Python 或自行构建；不开放网络端口。</p><p>镜像 digest 固定此配置使用的具体发布版本。PII
 脱敏需要使用本版本或更新版本构建的镜像；旧版镜像会忽略 PII
 相关设置并直接返回明文，请检查 <code>odata_query</code>
 的结果是否带有 <code>pii_filter_tier</code>。</p><h3 id="zh-二配置-credentials-并放入指定目录">二、配置 credentials
 并放入指定目录</h3>
 <p>在代码仓库之外准备一个工作目录：</p>
-<pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo" "$HOME/sf-toolkit/data"
+<pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/systems/demo" "$HOME/sf-toolkit/data"
 chmod 700 "$HOME/sf-toolkit/credentials"</code></pre>
-<p>目录结构如下。<code>demo</code> 必须替换为实际 company
-ID，目录名、文件名和配置中的 ID 要一致。</p>
+<p>每个 SuccessFactors 环境是一个系统：<code>credentials/systems</code> 下的一个目录。目录结构如下。<code>demo</code>
+可替换为自选名称（小写字母、数字、<code>_</code> 和 <code>-</code>），目录名和文件名中的名称要一致。</p>
 <pre class="text"><code>~/sf-toolkit/
 ├── compose.yaml
 ├── credentials/
-│   ├── sf.env
-│   └── tenants/
+│   └── systems/
 │       └── demo/
-│           ├── sf_private_key_demo.pem
-│           ├── sf_saml_signing_demo.crt
-│           └── demo.json
+│           ├── demo.json
+│           ├── private-key.pem
+│           └── signing-cert.crt
 └── data/
     └── mcp/                      ← 首次导出时自动创建</code></pre>
 <p>将已有的、相互匹配的 PEM 私钥与 X.509
@@ -1166,54 +1154,39 @@ Application，技术用户应有目标 API
 SuccessFactors</strong>，使用 <code>scripts/generate-keypair.sh</code>
 生成，再完成 SF 端证书注册。直接摆放文件不会执行 REST
 上传接口的配对和过期校验，需要自行确保正确。</p>
-<p>声明该环境是否为生产环境。容器以只读方式挂载 <code>tenants</code>，
-因此请在主机上创建该文件：生产环境写 <code>true</code>，测试环境写
-<code>false</code>：</p>
-<pre class="sh"><code>printf '{"production": true}\n' &gt; "$HOME/sf-toolkit/credentials/tenants/demo/demo.json"</code></pre>
-<p>生产环境始终使用最严格的 PII 脱敏（第 3 层，包括姓名），不受
-<code>PII_FILTER_TIER</code> 影响；测试环境使用
-<code>PII_FILTER_TIER</code>。缺少该文件时，<code>odata_query</code> 和
-<code>ce_query</code> 会以 <code>tenant_environment_unset</code>
-拒绝查询。值必须是不带引号的 <code>true</code> 或 <code>false</code>。0.3.3
-版本中该文件名为 <code>tenant.json</code>，旧文件名已不再读取，请将已有文件改名为
-<code>demo.json</code>。</p>
-<p>同一文件还可以写入各环境不同的设置：<code>client_key</code>、<code>user_id</code>、<code>host</code>
-与 <code>token_url</code>（须同时设置）、<code>odata_version</code>、<code>pii_filter_tier</code>（仅限测试环境）和
-<code>pii_extra_fields</code>。每一项只替换该公司 ID 对应的
-<code>sf.env</code> 值。若有拼错或取值错误的项，查询会以
-<code>tenant_config_invalid</code> 拒绝该环境，并指出出错字段。完整列表见
-<a href="CONNECT.md#per-tenant-settings">Per-tenant settings</a>。</p>
+<p>创建包含连接参数的 <code>demo.json</code>。容器以只读方式挂载 <code>systems</code>，
+因此请在主机上创建该文件：<code>production</code> 生产环境写 <code>true</code>，测试环境写
+<code>false</code>（不带引号）：</p>
+<pre class="sh"><code>cat &gt; "$HOME/sf-toolkit/credentials/systems/demo/demo.json" &lt;&lt;'EOF'
+{
+  "type": "successfactors",
+  "production": false,
+  "company_id": "demo",
+  "host": "your-api-host.sapsf.com",
+  "token_url": "https://your-api-host.sapsf.com/oauth/token",
+  "client_key": "REPLACE_WITH_OAUTH_CLIENT_API_KEY",
+  "user_id": "APIUSER"
+}
+EOF</code></pre>
+<p><code>company_id</code> 是 SuccessFactors 公司 ID。<code>host</code> 不带
+<code>https://</code>；<code>token_url</code> 包含协议和
+<code>/oauth/token</code>。技术用户按项目约定与证书 CN
+一致。可选项有 <code>odata_version</code>（默认 <code>v2</code>，或 <code>v4</code>）、<code>pii_filter_tier</code> 和
+<code>pii_extra_fields</code>，完整列表见
+<a href="CONNECT.md#2-create-the-system">Connect to SuccessFactors</a>。文件缺少有效的 <code>type</code> 或 <code>production</code>，或有拼错的项，
+查询会以 <code>system_invalid</code> 拒绝该环境，并指出出错字段。</p>
+<p>生产环境始终使用最严格的 PII 脱敏（第 3 层，包括姓名）；测试环境使用其
+<code>pii_filter_tier</code>，默认 1（0 为关闭，3 最严格）。</p>
 <p>这样一个 MCP 服务即可服务多个环境。例如第二个环境 <code>demo2</code>
 使用自己的 OAuth 客户端和第 2 层脱敏，只需在 <code>demo</code>
 旁边新建一个目录，放入其私钥、证书和设置文件，无需第二个 compose 服务：</p>
-<pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/tenants/demo2"
-# 放入 sf_private_key_demo2.pem 和 sf_saml_signing_demo2.crt，然后：
-printf '{"production": false, "client_key": "DEMO2_OAUTH_CLIENT_API_KEY", "pii_filter_tier": 2}\n' \
-  &gt; "$HOME/sf-toolkit/credentials/tenants/demo2/demo2.json"</code></pre>
-<p>之后 AI 传入 <code>company_id="demo2"</code> 即可访问该环境；<code>list_tenants</code>
-会列出两个环境及各自生效的设置。</p>
-<p>在 <code>~/sf-toolkit/credentials/sf.env</code> 中填写：</p>
-<pre class="dotenv"><code>SF_HOST=your-api-host.sapsf.com
-SF_CLIENT_KEY=REPLACE_WITH_OAUTH_CLIENT_API_KEY
-SF_USER_ID=APIUSER
-SF_COMPANY_ID=demo
-SF_TOKEN_URL=https://your-api-host.sapsf.com/oauth/token
-SF_ODATA_VERSION=v2
-TENANT_KEYS_DIR=/credentials/tenants
-RESULTS_DIR=/data
-PII_VAULT_DIR=/vault/store
-# Optional: raise or lower PII tokenization for test environments
-# (0 off - 3 most aggressive); default 1. Production is always 3.
-# PII_FILTER_TIER=1
-# Optional: tenant-specific fields to tokenize, e.g. relabeled custom fields.
-# PII_EXTRA_FIELDS={&quot;PerPersonal&quot;: {&quot;customString6&quot;: 2}}</code></pre>
-<p><code>SF_HOST</code> 不带
-<code>https://</code>；<code>SF_TOKEN_URL</code> 包含协议和
-<code>/oauth/token</code>。技术用户按项目约定与证书 CN
-一致。环境文件使用实际值，不依赖 <code>$VARIABLE</code> 展开。</p>
+<pre class="sh"><code>mkdir -p "$HOME/sf-toolkit/credentials/systems/demo2"
+# 放入 private-key.pem 和 signing-cert.crt，然后按 demo.json 创建 demo2.json，
+# 其中 "client_key": "DEMO2_OAUTH_CLIENT_API_KEY"，"pii_filter_tier": 2。</code></pre>
+<p>之后 AI 传入 <code>system="demo2"</code> 即可访问该环境；<code>list_systems</code>
+会列出两个环境。只有一个 SuccessFactors 系统时，<code>system</code> 可以留空。</p>
 <p>设置文件权限：</p>
-<pre class="sh"><code>chmod 600 "$HOME/sf-toolkit/credentials/sf.env" \
-  "$HOME/sf-toolkit/credentials/tenants/demo/sf_private_key_demo.pem"</code></pre>
+<pre class="sh"><code>chmod 600 "$HOME/sf-toolkit/credentials/systems/demo/private-key.pem"</code></pre>
 <p>本指南通过 stdio 直接启动 MCP；<code>API_KEY</code> 和
 <code>ADMIN_API_KEY</code> 是 REST
 接口的访问配置，不是本流程的必填项。</p>
@@ -1234,7 +1207,7 @@ PII_VAULT_DIR=/vault/store
     }
   }
 }</code></pre>
-<p>重新加载配置，客户端通过 <code>docker compose run --rm -T mcp</code> 启动并以标准输入输出通信。保留 <code>-T</code>，不加 <code>-d</code>，不要用 <code>docker compose up</code> 启动这个 stdio 服务。若找不到 Docker，使用 <code>command -v docker</code> 返回的绝对路径。</p><p><code>compose.yaml</code> 中的 UID/GID 保持私钥权限及输出文件归属。先创建凭据和 data 目录，并允许 Docker Desktop 共享。连接后应发现 <code>list_tenants</code>、<code>odata_metadata</code>、<code>compare_metadata</code>、<code>odata_query</code>、<code>ce_query</code> 五个工具。</p></details></div><script>
+<p>重新加载配置，客户端通过 <code>docker compose run --rm -T mcp</code> 启动并以标准输入输出通信。保留 <code>-T</code>，不加 <code>-d</code>，不要用 <code>docker compose up</code> 启动这个 stdio 服务。若找不到 Docker，使用 <code>command -v docker</code> 返回的绝对路径。</p><p><code>compose.yaml</code> 中的 UID/GID 保持私钥权限及输出文件归属。先创建凭据和 data 目录，并允许 Docker Desktop 共享。连接后应发现 <code>list_systems</code>、<code>odata_metadata</code>、<code>compare_metadata</code>、<code>odata_query</code>、<code>ce_query</code> 五个工具。</p></details></div><script>
 const picker = document.getElementById('guide-language');
 picker.addEventListener('change', () => {
   const language = picker.value;

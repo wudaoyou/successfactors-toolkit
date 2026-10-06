@@ -34,7 +34,7 @@ from successfactors_toolkit.services.connection_policy import (
     check_token_url,
 )
 from successfactors_toolkit.services.credentials import load_key_pem
-from successfactors_toolkit.services.tenant_store import TenantStore
+from successfactors_toolkit.services.system_store import SF_TYPE, SystemStore
 
 _SOAP_ENVELOPE = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -70,7 +70,7 @@ class SFAPIClient:
     def __init__(self, settings: Settings, client: httpx.AsyncClient) -> None:
         self._settings = settings
         self._client = client
-        # JSESSIONID cache keyed by (host, company_id, user_id, client_key).
+        # JSESSIONID cache keyed by (system, host, user_id, client_key).
         # SFAPI sessions are long-lived (typically 60 min) but expire eventually;
         # _post invalidates on INVALID_SESSION and retries once.
         self._sessions: dict[tuple[str, str, str, str], str] = {}
@@ -83,36 +83,31 @@ class SFAPIClient:
     def _resolve(self, conn: SFAPIConnectionConfig | None) -> dict:
         s = self._settings
         c = conn or SFAPIConnectionConfig()
-        company_id = c.company_id or s.sf_company_id
-        # Per-request override, then the tenant's {company_id}.json, then SF_*.
-        t = TenantStore(s.tenant_keys_dir).connection(company_id)
+        store = SystemStore(s.systems_dir)
+        system = store.select(SF_TYPE, c.system or "")
+        cfg = store.config(system)
         resolved = {
+            "system": system,
             # Overrides are attacker-controlled on the REST path: only hosts the
             # policy allows may end up in _endpoint()'s URL.
-            "host": check_host(
-                _eff(c.host, t.get("host", s.sf_host)), s, company_id, requested=c.host is not None
-            ),
-            "client_key": check_identity(
-                "client_key", c.client_key, t.get("client_key", s.sf_client_key), company_id
-            ),
-            "user_id": check_identity(
-                "user_id", c.user_id, t.get("user_id", s.sf_user_id), company_id
-            ),
-            "company_id": company_id,
+            "host": check_host(_eff(c.host, cfg.host), s, system, requested=c.host is not None),
+            "client_key": check_identity("client_key", c.client_key, cfg.client_key, system),
+            "user_id": check_identity("user_id", c.user_id, cfg.user_id, system),
+            "company_id": cfg.company_id,
             # Checked here too, not only in fetch_token: a cached token skips that
             # call, and audit_overrides below must not log a denied URL as ok.
-            # An unset one is left for fetch_token to refuse.
-            "token_url": (token_url := _eff(c.token_url, t.get("token_url", s.sf_token_url)))
-            and check_token_url(token_url, s, company_id, requested=c.token_url is not None),
+            "token_url": check_token_url(
+                _eff(c.token_url, cfg.token_url), s, system, requested=c.token_url is not None
+            ),
             "token_url_requested": c.token_url is not None,
-            "private_key_pem": load_key_pem(c.private_key_path, s, company_id),
+            "private_key_pem": load_key_pem(c.private_key_path, s, system),
         }
-        audit_overrides(c, company_id, s, t)
+        audit_overrides(c, system, cfg)
         return resolved
 
     @staticmethod
     def _session_key(r: dict) -> tuple[str, str, str, str]:
-        return (r["host"], r["company_id"], r["user_id"], r["client_key"])
+        return (r["system"], r["host"], r["user_id"], r["client_key"])
 
     @staticmethod
     def _endpoint(r: dict) -> str:

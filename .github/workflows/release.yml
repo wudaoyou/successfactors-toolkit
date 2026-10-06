@@ -79,7 +79,7 @@ jobs:
           from pathlib import Path
           test = runpy.run_path("/app/tests/test_mcp_stdio.py")
           with tempfile.TemporaryDirectory() as directory:
-              test["test_mcp_stdio_initialization_discovery_and_tenant_call"](
+              test["test_mcp_stdio_initialization_discovery_and_system_call"](
                   Path(directory), request_timeout_seconds=120
               )
           '

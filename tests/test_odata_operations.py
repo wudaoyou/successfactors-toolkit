@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 from unittest.mock import AsyncMock
 
@@ -16,15 +15,11 @@ from successfactors_toolkit.services.odata_client import (
     _encoded_len,
     _parse_retry_after,
 )
+from tests.systems import write_system
 
 
 def client_for(handler, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        sf_host="api.example.invalid",
-        sf_company_id="example-a",
-        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
-    )
+    settings = Settings(_env_file=None)  # SYSTEMS_DIR holds conftest's example-a
     client = ODataClient(settings, httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     monkeypatch.setattr(client, "_get_token", AsyncMock(return_value="synthetic-token"))
     monkeypatch.setattr("successfactors_toolkit.services.odata_client.asyncio.sleep", AsyncMock())
@@ -111,10 +106,12 @@ def test_partial_results_preserved_on_later_http_error(monkeypatch):
     assert result["last_status_code"] == 403
 
 
-def test_token_cache_is_isolated_by_company(monkeypatch):
+def test_token_cache_is_isolated_by_system(monkeypatch):
     client = client_for(lambda request: httpx.Response(200), monkeypatch)
-    a = client._resolve(ODataConnectionConfig(company_id="example-a"))
-    b = client._resolve(ODataConnectionConfig(company_id="example-b"))
+    directory = write_system(client._settings.systems_dir, "example-b")
+    (directory / "private-key.pem").write_bytes(b"synthetic-key")
+    a = client._resolve(ODataConnectionConfig(system="example-a"))
+    b = client._resolve(ODataConnectionConfig(system="example-b"))
     assert client._token_key(a) != client._token_key(b)
 
 

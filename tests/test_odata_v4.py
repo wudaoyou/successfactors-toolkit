@@ -2,7 +2,6 @@
 and PII tokenization of full-metadata records. No tenant is contacted."""
 
 import asyncio
-import base64
 import json
 import re
 from pathlib import Path
@@ -15,7 +14,7 @@ from successfactors_toolkit import mcp_server
 from successfactors_toolkit.config import Settings, get_settings
 from successfactors_toolkit.services.odata_client import ODataClient, v4_service_root
 from successfactors_toolkit.services.pii_filter import PiiFilter, Vault
-from successfactors_toolkit.services.tenant_store import TenantStore
+from tests.systems import write_system
 
 _ROOT = "talent/cdp/Learning.svc/v1"
 _BASE = f"https://api.example.invalid/odatav4/{_ROOT}"
@@ -24,13 +23,8 @@ _TOKEN = re.compile(r"\[PII-T(\d)-[0-9a-f]{16}\]")
 
 
 def _v4_client(handler, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        sf_host="api.example.invalid",
-        sf_company_id="example-a",
-        sf_odata_version="v4",
-        sf_private_key_pem=base64.b64encode(b"synthetic-key").decode(),
-    )
+    settings = Settings(_env_file=None)
+    write_system(settings.systems_dir, "example-a", odata_version="v4")
     client = ODataClient(settings, httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     monkeypatch.setattr(client, "_get_token", AsyncMock(return_value="synthetic-token"))
     return client
@@ -241,7 +235,7 @@ def test_error_path_tokenizes_v4_collections_and_single_entities(tmp_path, body)
     assert _TOKEN.search(text)
 
 
-# --- MCP tools on a v4 tenant ------------------------------------------------
+# --- MCP tools on a v4 system ------------------------------------------------
 
 _CSDL = """<?xml version="1.0" encoding="utf-8"?>
 <edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx" Version="4.0">
@@ -298,15 +292,13 @@ class _V4OData:
 
 
 @pytest.fixture
-def v4_tenant(monkeypatch, tmp_path):
+def v4_system(monkeypatch, tmp_path):
     mcp_server._key_cache.clear()
     mcp_server._nav_cache.clear()
-    monkeypatch.setenv("SF_COMPANY_ID", "example-a")
-    monkeypatch.setenv("SF_ODATA_VERSION", "v4")
     monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
     monkeypatch.setenv("PII_VAULT_DIR", str(tmp_path / "vault"))
     get_settings.cache_clear()
-    TenantStore(get_settings().tenant_keys_dir).set_production("example-a", False)
+    write_system(get_settings().systems_dir, "example-a", odata_version="v4")
 
     def install(odata):
         monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, None))
@@ -326,8 +318,8 @@ def test_parse_edmx_navs_reads_v4_navigation_types():
     assert mcp_server._parse_edmx_keys(_CSDL)["Item"] == ["itemId", "itemType"]
 
 
-def test_odata_metadata_reads_the_v4_service_document_for_an_entity_set(v4_tenant):
-    odata = v4_tenant(_V4OData())
+def test_odata_metadata_reads_the_v4_service_document_for_an_entity_set(v4_system):
+    odata = v4_system(_V4OData())
     result = asyncio.run(mcp_server.odata_metadata(entity=f"{_ROOT}/Items"))
 
     assert odata.paths == [f"{_ROOT}/$metadata"] * 2
@@ -344,30 +336,31 @@ def test_odata_metadata_reads_the_v4_service_document_for_an_entity_set(v4_tenan
     assert odata.paths.count(f"{_ROOT}/$metadata") == 3
 
 
-def test_odata_metadata_v4_service_root_is_the_whole_service(v4_tenant):
-    v4_tenant(_V4OData())
+def test_odata_metadata_v4_service_root_is_the_whole_service(v4_system):
+    v4_system(_V4OData())
     result = asyncio.run(mcp_server.odata_metadata(entity=_ROOT))
     assert sorted(result["fields"]) == ["Item", "Owner", "Session"]
 
 
-def test_compare_metadata_on_v4_services(v4_tenant):
+def test_compare_metadata_on_v4_services(v4_system):
     class _Drifted(_V4OData):
         async def request(self, method, path, conn=None, **kwargs):
             body = self.csdl
-            if conn is not None and conn.company_id == "drifted":
+            if conn is not None and conn.system == "drifted":
                 body = body.replace(' MaxLength="90"', ' MaxLength="128"')
             return {"status_code": 200, "headers": {}, "body": body}
 
-    v4_tenant(_Drifted())
+    v4_system(_Drifted())
+    write_system(get_settings().systems_dir, "drifted", odata_version="v4")
     result = asyncio.run(mcp_server.compare_metadata("example-a", "drifted", f"{_ROOT}/Items"))
     assert result["in_sync"] is False
     assert result["differences"]["Item"]["changed"] == {"itemId": {"MaxLength": ["90", "128"]}}
 
 
-def test_odata_query_on_v4_orders_by_key_without_snapshot_paging(v4_tenant, monkeypatch):
-    monkeypatch.setenv("PII_FILTER_TIER", "0")  # keys of an unknown entity are tokenized otherwise
-    get_settings.cache_clear()
-    odata = v4_tenant(_V4OData([{"itemId": "1", "itemType": "A"}]))
+def test_odata_query_on_v4_orders_by_key_without_snapshot_paging(v4_system, monkeypatch):
+    odata = v4_system(_V4OData([{"itemId": "1", "itemType": "A"}]))
+    # Keys of an unknown entity are tokenized otherwise.
+    write_system(get_settings().systems_dir, "example-a", odata_version="v4", pii_filter_tier=0)
     result = asyncio.run(mcp_server.odata_query(f"{_ROOT}/Items?$select=itemId,itemType"))
 
     assert odata.paths == [f"{_ROOT}/$metadata"]
@@ -376,11 +369,10 @@ def test_odata_query_on_v4_orders_by_key_without_snapshot_paging(v4_tenant, monk
     assert "paging_added" not in result
 
 
-def test_odata_query_on_v4_tokenizes_full_metadata_records(v4_tenant, monkeypatch):
-    monkeypatch.setenv("PII_FILTER_TIER", "1")
-    get_settings.cache_clear()
+def test_odata_query_on_v4_tokenizes_full_metadata_records(v4_system, monkeypatch):
+    write_system(get_settings().systems_dir, "example-a", odata_version="v4", pii_filter_tier=1)
     untyped = {"personIdExternal": "p2", "nationalId": "A1234567"}
-    v4_tenant(_V4OData([_v4_national_id(), untyped]))
+    v4_system(_V4OData([_v4_national_id(), untyped]))
     result = asyncio.run(mcp_server.odata_query(f"{_ROOT}/PerNationalId", max_pages=1))
 
     saved = Path(result["file"]).read_text(encoding="utf-8")

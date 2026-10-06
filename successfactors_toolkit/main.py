@@ -11,7 +11,7 @@ from fastapi.security import APIKeyHeader
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
 from successfactors_toolkit.config import get_settings
-from successfactors_toolkit.routers import odata, sfapi, tenants
+from successfactors_toolkit.routers import odata, sfapi, systems
 from successfactors_toolkit.services.audit import audit
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError
 from successfactors_toolkit.services.odata_client import ODataClient
@@ -33,8 +33,8 @@ async def lifespan(app: FastAPI):
     )
     settings = get_settings()
     # Singleton SFAPIClient so its JSESSIONID cache persists across requests
-    # AND the tenant management router can invalidate cached sessions when a
-    # tenant's key is replaced or deleted.
+    # AND the system management router can invalidate cached sessions when a
+    # system's key is replaced or deleted.
     app.state.sfapi_client = SFAPIClient(settings, app.state.http_client)
     # Singleton ODataClient so its OAuth token cache survives across requests.
     app.state.odata_client = ODataClient(settings, app.state.http_client)
@@ -82,7 +82,7 @@ def require_api_key(key: Annotated[str | None, Depends(_api_key_header)]) -> Non
 
 app.include_router(sfapi.router, prefix="/api", dependencies=[Depends(require_api_key)])
 app.include_router(odata.router, prefix="/api", dependencies=[Depends(require_api_key)])
-app.include_router(tenants.router, dependencies=[Depends(require_api_key)])
+app.include_router(systems.router, dependencies=[Depends(require_api_key)])
 
 
 @app.get("/health", tags=["System"])

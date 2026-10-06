@@ -19,7 +19,7 @@ PRIVATE_DIRS = {
     "certs",
     "credentials",
     "data",
-    "tenants",
+    "systems",
     "results",
     "logs",
     ".codex",

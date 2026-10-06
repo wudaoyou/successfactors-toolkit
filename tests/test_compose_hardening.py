@@ -10,7 +10,7 @@ import yaml
 ROOT = Path(__file__).parents[1]
 # service name -> paths its settings say the app writes to (see config.py)
 WRITE_VARS = {
-    "docker-compose.yml": ("api", ["TENANT_KEYS_DIR"]),
+    "docker-compose.yml": ("api", ["SYSTEMS_DIR"]),
     "docker-compose.mcp.yml": ("mcp", ["RESULTS_DIR", "PII_VAULT_DIR"]),
 }
 
@@ -59,9 +59,10 @@ def test_every_write_path_stays_writable(name: str) -> None:
         assert writable(service, service["environment"][var]), var
 
 
-def test_mcp_tenant_keys_stay_read_only() -> None:
+def test_mcp_systems_stay_read_only() -> None:
     service = load("docker-compose.mcp.yml")
-    assert not writable(service, service["environment"]["TENANT_KEYS_DIR"])
+    assert service["environment"]["SYSTEMS_DIR"] == "/credentials/systems"
+    assert not writable(service, "/credentials/systems")
 
 
 def test_image_writes_no_bytecode() -> None:
