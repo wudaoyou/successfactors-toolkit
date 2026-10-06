@@ -10,8 +10,6 @@ SuccessFactors instance is a system under `SYSTEMS_DIR` (see
 empty `system` means the only `successfactors` system; with several, the call
 is refused with `system_required`.
 
-
-
 | Tool | Arguments | Returns |
 |---|---|---|
 | `list_systems` | — | Every system under `SYSTEMS_DIR` with its `type`, `production`, `pii_filter_tier` and, for SuccessFactors systems, certificate expiry; a system whose file is refused carries `error` and `detail`. Also `plugins`. |

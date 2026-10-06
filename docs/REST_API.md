@@ -63,7 +63,8 @@ docker compose up --build
 Binds to `127.0.0.1:8000` by default (see `docker-compose.yml`). Systems
 are stored in a named volume mounted at `SYSTEMS_DIR=/data/systems`
 inside the container; a system's `<name>/<name>.json` must exist there before
-you upload its key. The container's root filesystem is read-only and all
+you upload its key. Copy a prepared system directory in with
+`docker compose cp ./demo api:/data/systems/demo`. The container's root filesystem is read-only and all
 capabilities are dropped; only that volume and `/tmp` are writable. This
 Compose service runs the REST API, not the MCP server. For Docker MCP, use the client configuration in the [business user guide](DOCKER_MCP_GUIDE.md).
 

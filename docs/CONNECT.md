@@ -75,7 +75,7 @@ through the REST API (see [System management](#system-management)). Point
 | `client_key` | yes | OAuth2 client API key from SF Admin Center. |
 | `user_id` | yes | Technical user; must equal the certificate's CN. |
 | `odata_version` | no | `v2` (default) or `v4`. `v4` sends paths to `/odatav4/` and expects them to start at a service root; see [OData v4](ODATA.md#odata-v4). |
-| `pii_filter_tier` | no | `0`–`3`, test systems only. See [Production or test](#production-or-test). |
+| `pii_filter_tier` | no | `0`–`3` for a test system; `3` or absent for production. See [Production or test](#production-or-test). |
 | `pii_extra_fields` | no | Fields beyond the built-in list to tokenize, per entity, e.g. `{"PerPersonal": {"customString6": 2}}`; `{}` for an entity marks it reviewed, so it isn't tokenized whole (see [PII tokenization](MCP_SERVER.md#pii-tokenization)). |
 
 A file without a valid `type` or `production`, with an unknown key (a typo
@@ -107,7 +107,11 @@ systems/
 
 See `.env.example` for a filled-in starting point and
 `successfactors_toolkit/config.py` for the authoritative field list.
-Connection settings live in the system files, not in the environment.
+Connection settings live in the system files, not in the environment: the
+server does not start while a removed variable (`SF_HOST`, `SF_COMPANY_ID`,
+`SF_CLIENT_KEY`, `SF_USER_ID`, `SF_TOKEN_URL`, `SF_ODATA_VERSION`,
+`SF_PRIVATE_KEY_*`, `TENANT_KEYS_DIR`, `PII_FILTER_TIER`, `PII_EXTRA_FIELDS`)
+is set.
 
 | Variable | Description |
 |---|---|
@@ -180,6 +184,7 @@ The keypair endpoint validates the key and certificate cryptographically
 valid) before writing anything, and stores them as `private-key.pem` and
 `signing-cert.crt`, leaving the directory's other files alone. It returns
 `404` (`system_not_found`) when `{name}/{name}.json` does not exist, `400`
+(`system_invalid`) when the file fails validation, `400`
 (`wrong_system_type`) for a system that is not `successfactors`, `409`
 (`keypair_already_exists`) if the system already has a keypair (bypass with
 `?force=true`), and certificate metadata including a `days_until_expiry`
@@ -189,6 +194,8 @@ key invalidates any cached SFAPI session or OData token for that system.
 List and get return each system's `name`, `type`, `production` (`null` = not
 declared), `directory`, key and certificate metadata, and, for a file that is
 refused, `error` (`system_invalid` or `system_unsupported`) with its `detail`.
+The REST service loads no plugins, so a system of a type added by a plugin is
+listed with `system_unsupported`.
 
 ### Production or test
 
@@ -235,7 +242,7 @@ Tool errors have the form `{"error": code, "system": name, "detail": text}`:
 | Code | Meaning |
 |---|---|
 | `system_unknown` | No such system, or it is of another type. |
-| `system_required` | Several systems fit; pass `system`. |
+| `system_required` | Several systems fit, or a file has no readable `type`; pass `system`. |
 | `system_unsupported` | The file's `type` has no installed handler. |
 | `system_invalid` | The file can't be read or fails validation; `detail` names the field. |
 

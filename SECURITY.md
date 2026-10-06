@@ -50,9 +50,8 @@ object is bounded as follows:
 - `private_key_path` must resolve inside the directory of the system the
   request names (`SYSTEMS_DIR/<system>/`); a key of another system, or
   any other file, is rejected.
-- `user_id` and `client_key` must equal what the operator configured in that
-  system's `<system>.json`. A request can supply them only where nothing is
-  configured.
+- `user_id` and `client_key` are required in that system's `<system>.json`. A
+  request may repeat them but not change them.
 - `host` and `token_url` must pass the host allowlist: SAP datacenter domains
   plus `SF_ALLOWED_HOSTS`. The same check applies to the values in the system
   file.

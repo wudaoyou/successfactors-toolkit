@@ -20,7 +20,7 @@ secrets/
 certs/
 credentials/
 data/
-tenants/
+systems/
 results/
 logs/
 *.log

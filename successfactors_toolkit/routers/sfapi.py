@@ -26,7 +26,7 @@ router = APIRouter(prefix="/sfapi", tags=["EC SFAPI — Compound Employee (SOAP)
 
 def get_sfapi_client(request: Request) -> SFAPIClient:
     """Return the app-state singleton so JSESSIONID cache survives between
-    requests, and the tenant management router can invalidate entries."""
+    requests, and the system management router can invalidate entries."""
     return request.app.state.sfapi_client
 
 

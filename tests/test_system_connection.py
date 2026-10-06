@@ -1,7 +1,5 @@
 """SF connections come from SYSTEMS_DIR/<system>/<system>.json only."""
 
-import base64
-
 import httpx
 import pytest
 
@@ -101,10 +99,7 @@ def test_token_cache_key_leads_with_the_system():
     assert key_a[0] == "a" and key_b[0] == "b" and key_a != key_b
 
 
-def test_key_comes_only_from_the_system_directory(monkeypatch):
-    monkeypatch.setenv(
-        "SF_PRIVATE_KEY_PEM", base64.b64encode(b"env-key").decode()
-    )  # no longer read
+def test_key_comes_only_from_the_system_directory():
     settings = get_settings()
     (settings.systems_dir / "example-a" / "private-key.pem").unlink()
     with pytest.raises(ConnectionPolicyError):
@@ -121,7 +116,8 @@ def test_key_lookup_refuses_a_directory_spelled_in_another_case():
     settings = get_settings()
     write_system(settings.systems_dir, "Demo")
     (settings.systems_dir / "Demo" / "private-key.pem").write_bytes(b"key-Demo")
-    with pytest.raises(ConnectionPolicyError):
+    with pytest.raises(ConnectionPolicyError, match="has no private-key.pem"):
         load_key_pem(None, settings, "demo")
-    with pytest.raises(ConnectionPolicyError):
+    # Selection refuses the wrong spelling before any key lookup.
+    with pytest.raises(ConnectionPolicyError, match="No system 'demo'"):
         _odata()._resolve(ODataConnectionConfig(system="demo"))
