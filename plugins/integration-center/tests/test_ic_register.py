@@ -1,4 +1,4 @@
-"""register(): the declared entry point loads, and it adds no tools yet."""
+"""register(): the declared entry point loads and adds the one read-only tool."""
 
 import asyncio
 import tomllib
@@ -20,7 +20,7 @@ def test_the_declared_entry_point_loads_a_callable_register():
     )
 
 
-def test_register_adds_no_tools_and_reports_the_package_version(monkeypatch):
+def test_register_adds_ic_integrations_and_reports_the_package_version(monkeypatch):
     monkeypatch.setattr(plugin_api, "_plugins", {})
     monkeypatch.setattr(plugin_api, "_status_fns", {})
     entry = EntryPoint("integration_center", DECLARED["integration_center"], plugin_api.GROUP)
@@ -29,7 +29,7 @@ def test_register_adds_no_tools_and_reports_the_package_version(monkeypatch):
 
     plugin_api._load_plugins(server)
 
-    assert asyncio.run(server.list_tools()) == []
+    assert [t.name for t in asyncio.run(server.list_tools())] == ["ic_integrations"]
     assert plugin_api._statuses() == {
         "integration_center": {"loaded": True, "version": PROJECT["version"]}
     }
