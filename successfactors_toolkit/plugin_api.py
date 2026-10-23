@@ -22,6 +22,7 @@ from pydantic_core import to_jsonable_python
 
 from successfactors_toolkit import mcp_server as _server
 from successfactors_toolkit.config import Settings, get_settings
+from successfactors_toolkit.models.common import ODataConnectionConfig
 from successfactors_toolkit.services import system_store as _systems
 from successfactors_toolkit.services.connection_policy import ConnectionPolicyError
 from successfactors_toolkit.services.odata_client import _parse_retry_after as parse_retry_after
@@ -37,6 +38,7 @@ __all__ = [
     "split_path_query",
     "parse_retry_after",
     "http_client",
+    "odata_get",
     "write_result",
     "attach_preview",
     "pii_request",
@@ -73,6 +75,22 @@ def http_client() -> httpx.AsyncClient:
     """The server's shared, bounded httpx pool (closed by the server lifespan)."""
     _server._clients()
     return _server._http  # type: ignore[return-value]
+
+
+async def odata_get(
+    system: str, path: str, params: dict[str, Any] | None = None, max_pages: int = 100
+) -> dict[str, Any]:
+    """GET an OData v2 `path` (under /odata/v2/, which it can't leave) as the
+    successfactors system `system` ("" = the only one): the system file's
+    host and SAML bearer identity, the core host policy, next links followed
+    up to `max_pages`. GET only. Returns extract_all's dict ("results",
+    "stopped_reason", "last_status_code", ...; no error body). The records
+    are NOT PII-tokenized: tokenize what you return (pii_request's filter)
+    and never hand them on raw. Raises SystemUnavailable (answer it with
+    system_error) and ConnectionPolicyError."""
+    odata, _ = _server._clients()
+    conn = ODataConnectionConfig(system=_server._select(system), odata_version="v2")
+    return await odata.extract_all(path, conn=conn, params=params, max_pages=max_pages)
 
 
 def set_status(name: str, fn: Callable[[], dict[str, Any]]) -> None:

@@ -436,12 +436,43 @@ def _v4_entity_type(xml: str, entity: str) -> str:
     EntityType="NS.Item">; the set name itself if no EntitySet matches; ""
     for a bare service root (the whole service)."""
     name = v4_service_root(entity)[1].split("/", 1)[0].split("(", 1)[0]
-    if not name:
-        return ""
+    return _set_entity_type(xml, name) if name else ""
+
+
+# A v2 entity set under one of SF's restricted services: SF serves their
+# $metadata per service only, and 400s "<service>/<set>/$metadata".
+_RESTRICTED_SET = re.compile(r"(restricted/[A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)")
+
+
+def _set_entity_type(xml: str, name: str) -> str:
+    """The EntityType behind entity set `name`; `name` itself if no EntitySet matches."""
     for entity_set in _edmx_root(xml).iter("{*}EntitySet"):
         if entity_set.get("Name") == name:
             return entity_set.get("EntityType", "").rsplit(".", 1)[-1] or name
     return name
+
+
+def _scoped_entity_type(system: str, xml: str, entity: str) -> str:
+    """The EntityType to narrow a per-service $metadata document to (see
+    _metadata_path), or "" when the document is entity-scoped or whole."""
+    if entity and _v4(system):
+        return _v4_entity_type(xml, entity)
+    if restricted := _RESTRICTED_SET.fullmatch(entity):
+        return _set_entity_type(xml, restricted[2])
+    return ""
+
+
+def _metadata_path(system: str, entity: str) -> str:
+    """The $metadata document for `entity` ("" = the whole v2 service). v4
+    and SF's restricted v2 services serve $metadata per service only, so
+    there an entity set reads its service root's document."""
+    if not entity:
+        return "$metadata"
+    if _v4(system):
+        return f"{v4_service_root(entity)[0]}/$metadata"
+    if restricted := _RESTRICTED_SET.fullmatch(entity):
+        return f"{restricted[1]}/$metadata"
+    return f"{entity}/$metadata"
 
 
 # Path segments of identifiers (dots only inside one, as in "Learning.svc"),
@@ -454,11 +485,10 @@ async def _fetch_metadata_xml(system: str, entity: str) -> tuple[str, dict[str, 
     service. Returns (xml, error); shared by every metadata consumer below so
     the request shape (path, system) stays in one place. v4 serves
     $metadata per service only, so there `entity` (a service root, optionally
-    followed by an entity set) fetches its service root's document."""
+    followed by an entity set) fetches its service root's document, as does
+    a restricted v2 service's "restricted/<Service>/<EntitySet>"."""
     odata, _ = _clients()
-    path = f"{entity}/$metadata" if entity else "$metadata"
-    if entity and _v4(system):
-        path = f"{v4_service_root(entity)[0]}/$metadata"
+    path = _metadata_path(system, entity)
     # Metadata output is never PII-tokenized, so the path must not be able to
     # reach anything but a $metadata document: an entity like "EmpJob?x=" would
     # turn the request into a data query whose records come back untokenized.
@@ -487,12 +517,11 @@ async def _field_map(system: str, entity: str) -> tuple[_FieldMap, dict[str, Any
         return {}, error
     try:
         fields = _parse_edmx(xml)
-        if entity and _v4(system):
-            # The service document holds every entity type; narrow it to the
-            # entity set's type, as v2's entity-scoped $metadata does.
-            type_ = _v4_entity_type(xml, entity)
-            if type_:
-                fields = {k: v for k, v in fields.items() if k == type_}
+        # A service document holds every entity type; narrow it to the
+        # entity set's type, as v2's entity-scoped $metadata does.
+        type_ = _scoped_entity_type(system, xml, entity)
+        if type_:
+            fields = {k: v for k, v in fields.items() if k == type_}
         return fields, None
     except etree.XMLSyntaxError as exc:
         return {}, {
@@ -526,7 +555,7 @@ async def _entity_key_properties(system: str, entity: str) -> list[str] | None:
     try:
         xml, error = await _fetch_metadata_xml(system, entity)
         if error is None:
-            type_ = _v4_entity_type(xml, entity) if _v4(system) else entity
+            type_ = _scoped_entity_type(system, xml, entity) or entity
             keys = _parse_edmx_keys(xml).get(type_)
     except Exception:
         keys = None
@@ -549,9 +578,9 @@ async def _nav_properties(system: str, entity: str = "") -> tuple[_NavMap, dict[
     failure (or an unreachable/oversized full $metadata) is returned as a
     warning dict and cached as such, so it can't break odata_metadata's
     existing field output and isn't retried on every call. entity="" is the
-    v2 service; a v4 entity path selects its service's document.
+    v2 service; a v4 or restricted entity path selects its service's document.
     """
-    cache_key = (system, v4_service_root(entity)[0] if entity else "")
+    cache_key = (system, _metadata_path(system, entity))
     if cache_key in _nav_cache:
         return _nav_cache[cache_key]
     navs: _NavMap = {}
@@ -726,7 +755,9 @@ async def odata_metadata(system: str = "", entity: str = "") -> dict[str, Any]:
 
     On a v4 system, entity is a service path: its root for the whole service
     ("talent/cdp/Learning.svc/v1"), or root plus entity set for one
-    (".../Learning.svc/v1/Items"); both read that service's $metadata.
+    (".../Learning.svc/v1/Items"); both read that service's $metadata. So
+    does a v2 restricted service: "restricted/<Service>" for all of it,
+    "restricted/<Service>/<EntitySet>" for one set.
     """
     try:
         system = _select(system)
@@ -740,14 +771,14 @@ async def odata_metadata(system: str = "", entity: str = "") -> dict[str, Any]:
     navigation: list[dict[str, str]] = []
     nav_warning: str | None = None
     if entity:
-        v4 = _v4(system)
-        nav_map, nav_error = await _nav_properties(system, entity if v4 else "")
+        scoped = _v4(system) or bool(_RESTRICTED_SET.fullmatch(entity))
+        nav_map, nav_error = await _nav_properties(system, entity if scoped else "")
         if nav_error is not None:
             nav_warning = (
                 f"navigation properties unavailable: {nav_error.get('error', 'unknown error')}"
             )
-        # v4 fields are keyed by the entity set's EntityType (see _field_map).
-        name = (next(iter(fields)) if len(fields) == 1 else "") if v4 else entity
+        # Service-scoped fields are keyed by the set's EntityType (see _field_map).
+        name = (next(iter(fields)) if len(fields) == 1 else "") if scoped else entity
         navigation = nav_map.get(name, [])
 
     file_doc = json.dumps(

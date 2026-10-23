@@ -573,3 +573,19 @@ def test_an_extra_fields_entry_marks_a_custom_entity_as_reviewed(monkeypatch, tm
     _install(monkeypatch, tmp_path, odata=_OData(_foo_and_job()), pii_extra_fields={"cust_Foo": {}})
     foo, job = _query("cust_Foo", preview=2)["preview"]
     assert foo["externalCode"] == "E1" and job["jobCode"] == "J1"
+
+
+_IC = "restricted/_IntegrationCenterRestrictedService/IntegrationProcessDefinition"
+
+
+@pytest.mark.parametrize("production", [False, True])
+def test_restricted_service_records_stay_fail_closed_in_odata_query(
+    monkeypatch, tmp_path, production
+):
+    # Restricted services aren't in the PII map: odata_query tokenizes every
+    # text value there and refuses to filter or sort on them, on any tier.
+    record = {"__metadata": {"type": "SFOData.IntegrationProcessDefinition"}, "name": "N1"}
+    _install(monkeypatch, tmp_path, odata=_OData([record]), production=production)
+    assert re.fullmatch(r"\[PII-T[13]-[0-9a-f]{16}\]", _query(_IC, preview=1)["preview"][0]["name"])
+    _refused(monkeypatch, tmp_path, f"{_IC}?$filter=name eq 'N1'", production=production)
+    _refused(monkeypatch, tmp_path, _IC, {"$orderby": "name"}, production=production)
