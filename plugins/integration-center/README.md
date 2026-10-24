@@ -50,8 +50,10 @@ are copied into a row, on every PII tier including tier 0; a value of an
 unexpected type is dropped. Connection tokens, usernames and keys, operation
 encryption and signing keys, the `Keypairs`, `X509Keypairs`, `OAuthSettings`
 and `KnownHostKeys` entities, and anything SAP adds later are never returned.
-`endpoint` is the URI without userinfo, query or fragment, which can carry
-credentials. Person references (`createdBy`, `lastModifiedBy`) are not
+`endpoint` is the URI's scheme, host, port and path: everything up to its
+last `@`, and its query and fragment, are dropped, since they can carry
+credentials; a value that isn't a plain URI gives `null`. A date outside the
+representable range gives `null` too. Person references (`createdBy`, `lastModifiedBy`) are not
 returned either. The tool takes no path, filter or expand from the caller and
 only ever sends that one GET.
 

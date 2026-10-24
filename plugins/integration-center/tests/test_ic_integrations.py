@@ -256,6 +256,15 @@ def test_ran_within_includes_the_cutoff_boundary():
         ("user@sftp.example.invalid:2222/in", "sftp.example.invalid:2222/in"),
         ("https://h.invalid:notaport/x", None),
         (None, None),
+        # A password holding "/", "?", "#", "@" or "://" hides the userinfo from a URL parser.
+        ("https://admin:1234/abc@host.invalid/path", "https://host.invalid/path"),
+        ("admin:9876?x@host.invalid", "host.invalid"),
+        ("https://admin:1234#x@h.invalid", "https://h.invalid"),
+        ("https://admin/S3cret@host.invalid/p", "https://host.invalid/p"),
+        ("https://a:p@ss://w@host.invalid/p?u=http://x", "https://host.invalid/p"),
+        ("x@y://host.invalid", None),
+        ("https://", None),
+        ("https://[::1]:8443/p", "https://[::1]:8443/p"),
     ],
 )
 def test_endpoint_drops_userinfo_query_and_fragment(uri, endpoint):
@@ -279,3 +288,19 @@ def test_port_takes_int64_as_a_number_or_a_digit_string_only():
         None,
         None,
     ]
+
+
+@pytest.mark.parametrize(
+    "value", ["/Date(253402300800000)/", "/Date(" + "9" * 22 + ")/", "x", None]
+)
+def test_time_is_none_for_anything_but_an_in_range_date(value):
+    assert ic._time(value) is None
+
+
+def test_unexpanded_or_empty_navigations_give_empty_fields():
+    deferred = {"externalCode": "IC4", "latestVersionNav": {"__deferred": {"uri": SECRET}}}
+    row = ic.integration_row(deferred)
+    assert row["last_attempted_run"] is None and row["downstream"] == []
+    no_connection = {"latestVersionNav": {"destinationOperation": {"connection": {"results": []}}}}
+    (downstream,) = ic.integration_row(no_connection)["downstream"]
+    assert downstream["endpoint"] is None and SECRET not in json.dumps(row)

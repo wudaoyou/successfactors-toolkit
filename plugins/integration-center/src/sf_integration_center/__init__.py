@@ -44,6 +44,7 @@ EXPAND = ",".join(nav for nav in _FIELDS if nav)
 _MAX_PAGES = 50
 
 _DATE = re.compile(r"/Date\((-?\d+)(?:[+-]\d{4})?\)/")
+_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
 
 
 def _scalar(record: Any, field: str, kind: type = str) -> Any:
@@ -71,23 +72,34 @@ def _nav(record: Any, name: str) -> list[dict[str, Any]]:
 
 
 def _time(value: Any) -> str | None:
-    """A v2 JSON DateTimeOffset ("/Date(<ms>+0000)/") as ISO 8601 UTC."""
+    """A v2 JSON DateTimeOffset ("/Date(<ms>+0000)/") as ISO 8601 UTC; None
+    for anything else, out-of-range dates included."""
     match = _DATE.fullmatch(value) if isinstance(value, str) else None
-    return datetime.fromtimestamp(int(match[1]) / 1000, UTC).isoformat() if match else None
+    try:
+        return datetime.fromtimestamp(int(match[1]) / 1000, UTC).isoformat() if match else None
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def _endpoint(value: Any) -> str | None:
-    """A connection URI without userinfo, query or fragment: those can carry
-    credentials, and the endpoint is scheme, host, port and path."""
+    """A connection URI as scheme, host, port and path only. Userinfo,
+    query and fragment can carry credentials: everything up to the last "@"
+    goes first (a password may hold "/", "?" or "#", so the userinfo can't be
+    found by parsing), then query and fragment; None if what is left isn't a
+    plain URI."""
     if not isinstance(value, str):
         return None
+    scheme, sep, rest = value.partition("://") if "://" in value else ("", "", value)
+    if sep and not _SCHEME.fullmatch(scheme):
+        return None
     try:
-        parts = urlsplit(value if "://" in value else f"//{value}")
+        parts = urlsplit("//" + rest.rpartition("@")[2])
         parts.port  # raises ValueError on a malformed port
     except ValueError:
         return None
-    scheme = f"{parts.scheme}://" if parts.scheme else ""
-    return scheme + parts.netloc.rpartition("@")[2] + parts.path
+    if not parts.netloc:
+        return None
+    return f"{scheme}{sep}{parts.netloc}{parts.path}"
 
 
 def _downstream(operation: dict[str, Any]) -> dict[str, Any]:
