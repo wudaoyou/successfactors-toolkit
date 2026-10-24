@@ -53,15 +53,13 @@ version = { file = "VERSION" }
 include = ["successfactors_toolkit*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "plugins/integration-center/tests"]
-pythonpath = [".", "plugins/integration-center/src"]
+testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-# So isort treats the plugin package as first-party, like successfactors_toolkit.
-src = [".", "plugins/integration-center/src"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]

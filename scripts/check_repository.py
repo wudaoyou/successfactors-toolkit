@@ -5,7 +5,6 @@ import json
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -15,7 +14,6 @@ SEMVER = re.compile(
     r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
 )
-PLUGIN_GROUP = "successfactors_toolkit.plugins"
 PRIVATE_DIRS = {
     "secrets",
     "certs",
@@ -98,14 +96,6 @@ def main():
     label = f'LABEL io.modelcontextprotocol.server.name="{server["name"]}"'
     if label not in (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines():
         errors.append(f"Dockerfile must contain: {label}")
-    for pyproject in sorted(ROOT.glob("plugins/*/pyproject.toml")):
-        rel = pyproject.relative_to(ROOT).as_posix()
-        project = tomllib.loads(pyproject.read_text(encoding="utf-8")).get("project", {})
-        plugin_version = project.get("version", "")
-        if not SEMVER.fullmatch(plugin_version):
-            errors.append(f"{rel}: version must be a static valid SemVer, got: {plugin_version!r}")
-        if not project.get("entry-points", {}).get(PLUGIN_GROUP):
-            errors.append(f"{rel}: must declare an entry point in group {PLUGIN_GROUP}")
     names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
     for name in filter(None, names):
         path = Path(name)

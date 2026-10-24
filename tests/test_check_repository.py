@@ -89,32 +89,3 @@ def test_tracked_base64_pem_fails(repo, capsys) -> None:
 def test_tracked_credentials_and_data_fail(repo, capsys, name: str) -> None:
     assert repo(**{name: b"x\n"}) == 1
     assert "Private or generated artifact is tracked" in capsys.readouterr().err
-
-
-PLUGIN = "plugins__example__pyproject.toml"
-PLUGIN_TOML = (
-    b'[project]\nname = "x"\nversion = "0.1.0"\n'
-    b'[project.entry-points."successfactors_toolkit.plugins"]\nexample = "x:register"\n'
-)
-
-
-def test_valid_plugin_passes(repo) -> None:
-    assert repo(**{PLUGIN: PLUGIN_TOML}) == 0
-
-
-@pytest.mark.parametrize(
-    ("toml", "message"),
-    [
-        (PLUGIN_TOML.replace(b"0.1.0", b"0.1"), "version must be a static valid SemVer"),
-        (PLUGIN_TOML.replace(b'version = "0.1.0"\n', b""), "version must be a static valid SemVer"),
-        (
-            PLUGIN_TOML.replace(b"toolkit.plugins", b"toolkit.plugin"),
-            "must declare an entry point in group successfactors_toolkit.plugins",
-        ),
-        (PLUGIN_TOML.split(b"[project.entry")[0], "must declare an entry point"),
-    ],
-    ids=["bad-semver", "no-version", "wrong-group", "no-entry-point"],
-)
-def test_invalid_plugin_fails(repo, capsys, toml: bytes, message: str) -> None:
-    assert repo(**{PLUGIN: toml}) == 1
-    assert f"plugins/example/pyproject.toml: {message}" in capsys.readouterr().err
