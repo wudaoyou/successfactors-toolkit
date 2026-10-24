@@ -4,6 +4,25 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- `plugin_api.odata_get(system, path, params, max_pages)`: an authenticated,
+  GET-only OData v2 read for plugins, as a registered SuccessFactors system
+  and under the core host and path checks. Its records are not
+  PII-tokenized; the plugin is responsible for that.
+- `plugins/integration-center` (0.1.0): a separate, read-only plugin package
+  with the MCP tool `ic_integrations(system, ran_within_days, preview)`,
+  which lists Integration Center integrations with their run times and
+  downstream endpoint. Only allowlisted properties are returned, on every
+  tier; credentials and key material never are. Not installed in the
+  published image.
+
+### Fixed
+
+- `odata_metadata` and `compare_metadata` read an entity set of a restricted
+  v2 service (`restricted/<Service>/<EntitySet>`) from the service's
+  `$metadata`; SF rejects the entity-scoped request with 400.
+
 ## [0.6.0] - 2026-10-06
 
 ### Changed

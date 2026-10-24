@@ -13,7 +13,7 @@ is refused with `system_required`.
 | Tool | Arguments | Returns |
 |---|---|---|
 | `list_systems` | — | Every system under `SYSTEMS_DIR` with its `type`, `production`, `pii_filter_tier` and, for SuccessFactors systems, certificate expiry; a system whose file is refused carries `error` and `detail`. Also `plugins`. |
-| `odata_metadata` | `system`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. When `entity` is given, its navigation properties (name, target entity, filterable) are included too — resolved from the full service `$metadata` (cached per system) since entity-scoped `$metadata` omits them. On a v4 system `entity` is a service root (`talent/cdp/Learning.svc/v1`) or root plus entity set; both read that service's `$metadata`. v4 CSDL has no `sap:` attributes: navigations report `filterable` `"true"` and keys count as sortable. |
+| `odata_metadata` | `system`, `entity` | `{entity: {field: attributes}}` map; inlined when small, always written to file. When `entity` is given, its navigation properties (name, target entity, filterable) are included too — resolved from the full service `$metadata` (cached per system) since entity-scoped `$metadata` omits them. On a v4 system `entity` is a service root (`talent/cdp/Learning.svc/v1`) or root plus entity set; both read that service's `$metadata`. A restricted v2 service works the same way: `restricted/<Service>` or `restricted/<Service>/<EntitySet>`, since SF serves its `$metadata` per service only. v4 CSDL has no `sap:` attributes: navigations report `filterable` `"true"` and keys count as sortable. |
 | `compare_metadata` | `system_a`, `system_b`, `entity` | `in_sync`, a summary, and the per-entity drift, diffed server-side. |
 | `odata_query` | `path`, `system`, `params`, `max_pages`, `preview` | Counts, field names, file path; `preview` accepts 0-20 and values above zero inline only when at most 16 KiB. Query options may be passed in `path` (`"EmpJob?$select=..."`) or `params` — both are merged, `params` wins on conflict. When paging and no `$orderby` is given, one is added automatically from the entity's key properties (reported as `orderby_added`); `duplicate_records` and `warnings` (missing keys, suspected silent truncation) are surfaced when relevant. On a v4 system `path` starts at the service root (`talent/cdp/Learning.svc/v1/Items`) and `paging=snapshot` is never added. `max_pages` is 1-1000; responses and extracts are bounded, see [Limits](CONNECT.md#limits). |
 | `ce_query` | `system`, `person_id_external`, `user_id`, `last_modified_on`, `include_contingent_workers`, `select_segments`, `max_rows`, `max_pages` | Counts and one XML file path per page. `select_segments` takes only documented segment names; ID filters take letters, digits, space and `_ . @ : / + -`. |
@@ -247,7 +247,18 @@ to report a status block in `list_systems`. A plugin can register its own
 system type with `register_system_type`, so `<name>.json` files of that
 `type` validate against its model and live in `SYSTEMS_DIR` beside the
 SuccessFactors systems; `select_system`, `system_config` and `system_dir`
-read them. Keep secrets in separate files in the system's directory, never in
+read them.
+
+`await odata_get(system, path, params=None, max_pages=100)` sends a GET to
+`/odata/v2/<path>` as a registered `successfactors` system: the host and SAML
+bearer identity come from the system file and pass the same host and path
+checks as the core tools, the path can't leave `/odata/v2/`, and next links
+are followed up to `max_pages`. It returns `results`, `stopped_reason` and
+`last_status_code` (no error body). Its records are **not** PII-tokenized:
+the plugin must tokenize or drop whatever it returns (see `pii_request`) and
+never hand raw records on. It adds no MCP tool.
+
+Keep secrets in separate files in the system's directory, never in
 `<name>.json`: `list_systems` shows a plugin's file in full. A plugin that fails to load is
 skipped: it is logged to stderr and listed as `loaded: false`. Plugins run
 with the server's full privileges, so install only packages you trust.

@@ -953,3 +953,49 @@ def test_write_deletes_payloads_older_than_the_retention(monkeypatch, tmp_path):
     mcp_server._write("{}", "odata_query", "example-a", "json")
 
     assert recent.exists(), "0 keeps payloads forever"
+
+
+_RESTRICTED = "restricted/_ExampleRestrictedService"
+_RESTRICTED_EDMX = _EDMX.replace(
+    '<EntityType Name="EmpJob">',
+    '<EntityType Name="EmpJob"><Key><PropertyRef Name="userId"/></Key>',
+).replace(
+    "</Schema>",
+    '<EntityContainer Name="C"><EntitySet Name="Jobs" EntityType="SFOData.EmpJob"/>'
+    "</EntityContainer></Schema>",
+)
+
+
+class _RestrictedOData:
+    """A restricted v2 service: $metadata only at its root, as SF answers 400
+    to "<service>/<set>/$metadata"."""
+
+    def __init__(self):
+        self.paths: list[str] = []
+
+    async def request(self, method, path, conn=None, params=None, body=None, extra_headers=None):
+        self.paths.append(path)
+        if path == f"{_RESTRICTED}/$metadata":
+            return {"status_code": 200, "headers": {}, "body": _RESTRICTED_EDMX}
+        return {"status_code": 400, "headers": {}, "body": "illegal format"}
+
+
+def test_odata_metadata_reads_a_restricted_entity_set_from_its_service_document(
+    monkeypatch, tmp_path
+):
+    odata = _RestrictedOData()
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (odata, _FakeSFAPI()))
+    monkeypatch.setenv("RESULTS_DIR", str(tmp_path / "results"))
+    get_settings.cache_clear()
+
+    result = asyncio.run(
+        mcp_server.odata_metadata(system="example-a", entity=f"{_RESTRICTED}/Jobs")
+    )
+
+    assert odata.paths == [f"{_RESTRICTED}/$metadata"] * 2
+    assert list(result["fields"]) == ["EmpJob"]
+    assert result["navigation"] == [{"name": "userNav", "target": "User", "filterable": "true"}]
+    whole = asyncio.run(mcp_server.odata_metadata(system="example-a", entity=_RESTRICTED))
+    assert sorted(whole["fields"]) == ["EmpJob", "FOCompany"]
+    keys = asyncio.run(mcp_server._entity_key_properties("example-a", f"{_RESTRICTED}/Jobs"))
+    assert keys == ["userId"]

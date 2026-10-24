@@ -35,6 +35,13 @@ jobs:
         run: ruff format --check .
       - name: Test
         run: pytest
+      - name: Build the Integration Center plugin wheel
+        run: |
+          # Packaging proof only: the plugin is not installed into this environment.
+          pip wheel --no-deps ./plugins/integration-center --wheel-dir "$RUNNER_TEMP/wheels"
+          unzip -l "$RUNNER_TEMP"/wheels/*.whl | grep 'sf_integration_center/__init__.py'
+          unzip -p "$RUNNER_TEMP"/wheels/*.whl '*.dist-info/entry_points.txt' \
+            | grep -x 'integration_center = sf_integration_center:register'
       - name: Repository hygiene and version
         run: python3 scripts/check_repository.py
       - name: Conventional PR title

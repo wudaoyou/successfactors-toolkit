@@ -5,13 +5,16 @@ import runpy
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from successfactors_toolkit import mcp_server, plugin_api
 from successfactors_toolkit.config import get_settings
+from successfactors_toolkit.services.odata_client import ODataClient
 from tests.systems import write_system
 
 EXPECTED = {
@@ -22,6 +25,7 @@ EXPECTED = {
     "split_path_query",
     "parse_retry_after",
     "http_client",
+    "odata_get",
     "write_result",
     "attach_preview",
     "pii_request",
@@ -218,3 +222,51 @@ def test_system_dir_fails_closed_for_names_that_are_not_valid_systems():
     for name in ("../x", "nope", "EXAMPLE-A", ""):
         with pytest.raises(plugin_api.SystemUnavailable):
             plugin_api.system_dir(name)
+
+
+def _odata_get_client(monkeypatch):
+    """A real ODataClient on a mock transport, with the token step skipped."""
+    sent: list[httpx.Request] = []
+
+    def handler(request):
+        sent.append(request)
+        return httpx.Response(200, json={"d": {"results": [{"id": "1"}]}})
+
+    client = ODataClient(get_settings(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(client, "_get_token", AsyncMock(return_value="synthetic-token"))
+    monkeypatch.setattr(mcp_server, "_clients", lambda: (client, None))
+    return sent
+
+
+@pytest.mark.parametrize("odata_version", ["v2", "v4"])
+def test_odata_get_sends_one_authenticated_v2_get_to_the_system_host(monkeypatch, odata_version):
+    write_system(get_settings().systems_dir, "example-a", odata_version=odata_version)
+    sent = _odata_get_client(monkeypatch)
+    path = "restricted/_ExampleService/Things"
+    result = asyncio.run(plugin_api.odata_get("example-a", path, {"$select": "id"}))
+    assert result["results"] == [{"id": "1"}]
+    (request,) = sent
+    assert request.method == "GET"
+    assert request.url.host == "api.example.invalid"
+    assert request.url.path == f"/odata/v2/{path}"
+    assert request.headers["Authorization"] == "Bearer synthetic-token"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../../oauth/token", "%2e%2e/%2e%2e/oauth/token", "https://elsewhere.invalid/x", "//x/y"],
+)
+def test_odata_get_refuses_paths_outside_odata_v2(monkeypatch, path):
+    sent = _odata_get_client(monkeypatch)
+    with pytest.raises(plugin_api.ConnectionPolicyError):
+        asyncio.run(plugin_api.odata_get("example-a", path))
+    assert sent == []
+
+
+def test_odata_get_only_serves_registered_successfactors_systems(monkeypatch, widget_type):
+    write_system(get_settings().systems_dir, "gadget", {"type": "widget", "production": False})
+    sent = _odata_get_client(monkeypatch)
+    for name in ("nope", "../example-a", "gadget"):
+        with pytest.raises(plugin_api.SystemUnavailable):
+            asyncio.run(plugin_api.odata_get(name, "Things"))
+    assert sent == []
