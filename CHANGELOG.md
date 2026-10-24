@@ -4,6 +4,21 @@ Notable changes are recorded here. Version identifiers follow Semantic Versionin
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-23
+
+### Added
+
+- `plugin_api.odata_get(system, path, params, max_pages)`: an authenticated,
+  GET-only OData v2 read for plugins, as a registered SuccessFactors system
+  and under the core host and path checks. Its records are not
+  PII-tokenized; the plugin is responsible for that.
+
+### Fixed
+
+- `odata_metadata` and `compare_metadata` read an entity set of a restricted
+  v2 service (`restricted/<Service>/<EntitySet>`) from the service's
+  `$metadata`; SF rejects the entity-scoped request with 400.
+
 ## [0.6.0] - 2026-10-06
 
 ### Changed
